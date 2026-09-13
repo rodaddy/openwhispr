@@ -7576,6 +7576,8 @@ class IPCHandlers {
             language: meetingLocalLanguage,
             wav,
             fetchImpl: proxyFetch,
+            // Same key the Dictation self-hosted route uses (keyRef: "custom").
+            apiKey: this.environmentManager.getCustomTranscriptionKey(),
           });
           debugLogger.debug("Self-hosted meeting chunk transcribed", {
             source,

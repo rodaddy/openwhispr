@@ -78,3 +78,52 @@ test("throws with the status and response body on a failed request", async () =>
     /404 no router/
   );
 });
+
+test("sends a bearer Authorization header when apiKey is set", async () => {
+  const { transcribeSelfHostedChunk } = await load();
+
+  let init = null;
+  const fetchImpl = async (_url, requestInit) => {
+    init = requestInit;
+    return { ok: true, json: async () => ({ text: "ok" }) };
+  };
+
+  await transcribeSelfHostedChunk({
+    endpoint: "http://localhost:8000/v1/audio/transcriptions",
+    model: "whisper-1",
+    language: "en",
+    wav: Buffer.from([1, 2, 3, 4]),
+    fetchImpl,
+    apiKey: "  sk-test-key  ",
+  });
+
+  assert.equal(init.headers.Authorization, "Bearer sk-test-key");
+  // FormData must own the Content-Type so the multipart boundary is set.
+  assert.equal(init.headers["Content-Type"], undefined);
+});
+
+test("sends no Authorization header when apiKey is missing or blank", async () => {
+  const { transcribeSelfHostedChunk } = await load();
+
+  const seen = [];
+  const fetchImpl = async (_url, requestInit) => {
+    seen.push(requestInit.headers);
+    return { ok: true, json: async () => ({ text: "ok" }) };
+  };
+
+  for (const apiKey of [undefined, null, "", "   "]) {
+    await transcribeSelfHostedChunk({
+      endpoint: "http://localhost:8000/v1/audio/transcriptions",
+      model: "whisper-1",
+      language: "en",
+      wav: Buffer.from([1, 2, 3, 4]),
+      fetchImpl,
+      apiKey,
+    });
+  }
+
+  assert.equal(seen.length, 4);
+  for (const headers of seen) {
+    assert.equal(headers?.Authorization, undefined);
+  }
+});
