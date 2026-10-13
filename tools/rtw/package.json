@@ -1,0 +1,25 @@
+{
+  "name": "@rtech/whisper-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local CLI and MCP server for a running rTech Whisper app, over its loopback CLI bridge.",
+  "bin": {
+    "rtw": "bin/rtw"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.0",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,9 +1,9 @@
 const { spawn } = require("child_process");
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 const debugLogger = require("./debugLogger");
 const { createAbortError } = require("./abortError");
+const { getSafeTempDir } = require("./safeTempDir");
 
 let cachedFFmpegPath = null;
 
@@ -111,14 +111,18 @@ function isWavFormat(buffer) {
 }
 
 function convertToWav(inputPath, outputPath, options = {}) {
-  const { sampleRate = 16000, channels = 1 } = options;
+  const { sampleRate = 16000, channels = 1, signal } = options;
 
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createAbortError());
+      return;
+    }
     const ffmpegPath = getFFmpegPath();
     if (!ffmpegPath) {
       reject(
         new Error(
-          "FFmpeg not found - the bundled FFmpeg is missing from this install and no system FFmpeg was found on PATH; reinstalling OpenWhispr should fix this"
+          "FFmpeg not found - the bundled FFmpeg is missing from this install and no system FFmpeg was found on PATH; reinstalling rTech Whisper should fix this"
         )
       );
       return;
@@ -150,16 +154,29 @@ function convertToWav(inputPath, outputPath, options = {}) {
     });
 
     let stderr = "";
+    let aborted = false;
+    const onAbort = () => {
+      aborted = true;
+      proc.kill("SIGKILL");
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     proc.stderr.on("data", (data) => {
       stderr += data.toString();
     });
 
     proc.on("error", (error) => {
+      signal?.removeEventListener("abort", onAbort);
+      if (aborted) return;
       reject(new Error(`FFmpeg process error: ${error.message}`));
     });
 
     proc.on("close", (code) => {
+      signal?.removeEventListener("abort", onAbort);
+      if (aborted) {
+        reject(createAbortError());
+        return;
+      }
       if (code !== 0) {
         const stderrPreview = stderr.slice(-500).trim();
         debugLogger.debug("FFmpeg conversion failed", { code, stderr: stderrPreview });
@@ -386,7 +403,7 @@ async function mergeAudioSegments(segments) {
   const ffmpegPath = getFFmpegPath();
   if (!ffmpegPath) throw new Error("FFmpeg not found - required for audio segment recovery");
 
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-audio-merge-"));
+  const tempDir = fs.mkdtempSync(path.join(getSafeTempDir(), "openwhispr-audio-merge-"));
   const outputPath = path.join(tempDir, "merged.webm");
   try {
     const inputPaths = segments.map((segment, index) => {

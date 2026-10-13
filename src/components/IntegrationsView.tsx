@@ -1,31 +1,31 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { CalendarDays, Code2, Info, Loader2, Mail, Plus, Unlink } from "lucide-react";
+import { CalendarDays, Info, Loader2, Mail, Plus, Unlink } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { SettingsPanel, SettingsPanelRow, SettingsRow } from "./ui/SettingsSection";
 import { Toggle } from "./ui/toggle";
-import {
-  AlertDialog,
-  ConfirmDialog,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "./ui/dialog";
+import { AlertDialog, ConfirmDialog } from "./ui/dialog";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useSystemAudioPermission } from "../hooks/useSystemAudioPermission";
 import { canManageSystemAudioInApp } from "../utils/systemAudioAccess";
-import type { CalendarAccount } from "../types/calendar";
-import ApiKeysSection from "./ApiKeysSection";
+import type {
+  CalendarAccount,
+  CalendarAccountSyncHealth,
+  CalendarSyncHealthMap,
+} from "../types/calendar";
+import {
+  syncNowStateFromResult,
+  syncNowStatusLine,
+  type SyncNowState,
+} from "../utils/calendarSyncNowState";
 import CliIntegrationCard from "./CliIntegrationCard";
 import McpIntegrationCard from "./McpIntegrationCard";
+import CrmIntegrationCard from "./CrmIntegrationCard";
+import PipelineIntegrationCard from "./PipelineIntegrationCard";
 import googleCalendarIcon from "../assets/icons/google-calendar.svg";
 import microsoftCalendarIcon from "../assets/icons/microsoft-calendar.svg";
 import appleCalendarIcon from "../assets/icons/apple-calendar.svg";
-
-const API_DOCS_URL = "https://docs.openwhispr.com/api/overview";
 
 interface IntegrationsViewProps {
   isPaid: boolean;
@@ -46,10 +46,44 @@ interface ProviderRowProps {
   connected: boolean;
   isConnecting: boolean;
   onConnect: () => void;
+  onSyncNow?: () => Promise<{ success: boolean; error?: string } | undefined> | undefined;
 }
 
-function ProviderRow({ icon, i18nKey, connected, isConnecting, onConnect }: ProviderRowProps) {
+const SYNC_NOW_TICK_MS = 30 * 1000;
+
+function ProviderRow({
+  icon,
+  i18nKey,
+  connected,
+  isConnecting,
+  onConnect,
+  onSyncNow,
+}: ProviderRowProps) {
   const { t } = useTranslation();
+  const [syncNow, setSyncNow] = useState<SyncNowState>({ status: "idle" });
+  const [now, setNow] = useState(() => Date.now());
+
+  // Keeps "Synced 3 min ago" moving while the result is on screen
+  useEffect(() => {
+    if (syncNow.status !== "synced") return;
+    const timer = setInterval(() => setNow(Date.now()), SYNC_NOW_TICK_MS);
+    return () => clearInterval(timer);
+  }, [syncNow.status]);
+
+  const handleSyncNow = async () => {
+    setSyncNow({ status: "running" });
+    let result: { success: boolean; error?: string } | undefined;
+    try {
+      result = await onSyncNow?.();
+    } catch (err) {
+      result = { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+    const finishedAt = Date.now();
+    setNow(finishedAt);
+    setSyncNow(syncNowStateFromResult(result, finishedAt));
+  };
+
+  const statusLine = connected ? syncNowStatusLine(syncNow, now) : null;
   return (
     <SettingsPanelRow>
       <div className="flex items-center gap-3">
@@ -66,11 +100,35 @@ function ProviderRow({ icon, i18nKey, connected, isConnecting, onConnect }: Prov
           <p className="text-xs text-muted-foreground/70 mt-0.5 leading-relaxed">
             {t(`${i18nKey}.description`)}
           </p>
+          {statusLine && (
+            <p
+              className={`text-xs mt-0.5 leading-relaxed break-words ${
+                statusLine.kind === "error" ? "text-warning" : "text-muted-foreground/70"
+              }`}
+            >
+              {"text" in statusLine
+                ? statusLine.text
+                : t(`integrations.calendarSyncNow.${statusLine.key}`, {
+                    count: "count" in statusLine ? statusLine.count : undefined,
+                  })}
+            </p>
+          )}
         </div>
         {connected ? (
-          <Badge variant="success" className="shrink-0">
-            {t(`${i18nKey}.connected`)}
-          </Badge>
+          <div className="flex items-center gap-2 shrink-0">
+            {onSyncNow && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleSyncNow}
+                disabled={syncNow.status === "running"}
+              >
+                {syncNow.status === "running" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {t("integrations.calendarSyncNow.syncNow")}
+              </Button>
+            )}
+            <Badge variant="success">{t(`${i18nKey}.connected`)}</Badge>
+          </div>
         ) : (
           <Button size="sm" onClick={onConnect} disabled={isConnecting} className="shrink-0">
             {isConnecting ? (
@@ -94,6 +152,44 @@ interface CalendarAccountRowsProps {
   onPrimaryOnlyChange: (value: boolean) => void;
   isConnecting: boolean;
   onAddAnother: () => void;
+  syncHealth: CalendarSyncHealthMap;
+}
+
+const SYNC_FAILING_NOTICE_MS = 30 * 60 * 1000;
+
+function SyncHealthNotice({
+  health,
+  isConnecting,
+  onReconnect,
+}: {
+  health?: CalendarAccountSyncHealth;
+  isConnecting: boolean;
+  onReconnect: () => void;
+}) {
+  const { t } = useTranslation();
+  const failure = health?.failure;
+  if (failure?.kind === "auth") {
+    return (
+      <>
+        <span className="text-xs text-warning shrink-0">
+          {t("integrations.calendarSyncHealth.needsReconnect")}
+        </span>
+        <Button size="sm" variant="outline" onClick={onReconnect} disabled={isConnecting}>
+          {t("integrations.calendarSyncHealth.reconnect")}
+        </Button>
+      </>
+    );
+  }
+  if (failure && Date.now() - failure.since > SYNC_FAILING_NOTICE_MS) {
+    return (
+      <span className="text-xs text-warning shrink-0">
+        {t("integrations.calendarSyncHealth.failingSince", {
+          time: new Date(failure.since).toLocaleString(),
+        })}
+      </span>
+    );
+  }
+  return null;
 }
 
 function CalendarAccountRows({
@@ -105,6 +201,7 @@ function CalendarAccountRows({
   onPrimaryOnlyChange,
   isConnecting,
   onAddAnother,
+  syncHealth,
 }: CalendarAccountRowsProps) {
   const { t } = useTranslation();
   if (accounts.length === 0) return null;
@@ -115,6 +212,11 @@ function CalendarAccountRows({
           <div className="group flex items-center gap-3 pl-12">
             <Mail className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
             <span className="text-xs text-muted-foreground truncate flex-1">{account.email}</span>
+            <SyncHealthNotice
+              health={syncHealth[account.email]}
+              isConnecting={isConnecting}
+              onReconnect={onAddAnother}
+            />
             <button
               onClick={() => onUnlink(account.email)}
               disabled={disconnectingEmail === account.email}
@@ -185,7 +287,8 @@ export default function IntegrationsView({ isPaid, onUpgrade }: IntegrationsView
   const [appleConnectError, setAppleConnectError] = useState<"denied" | "failed" | null>(null);
   // i18n prefix of the provider whose OAuth flow failed, e.g. "integrations.googleCalendar"
   const [oauthErrorKey, setOauthErrorKey] = useState<string | null>(null);
-  const [apiKeysDialogOpen, setApiKeysDialogOpen] = useState(false);
+  const [gcalSyncHealth, setGcalSyncHealth] = useState<CalendarSyncHealthMap>({});
+  const [mcalSyncHealth, setMcalSyncHealth] = useState<CalendarSyncHealthMap>({});
   const systemAudio = useSystemAudioPermission();
   const { request: requestSystemAudioAccess } = systemAudio;
   const hasAccounts = gcalAccounts.length > 0;
@@ -339,6 +442,17 @@ export default function IntegrationsView({ isPaid, onUpgrade }: IntegrationsView
   }, [setMcalAccounts]);
 
   useEffect(() => {
+    window.electronAPI?.gcalGetSyncHealth?.().then((h) => h && setGcalSyncHealth(h));
+    window.electronAPI?.mcalGetSyncHealth?.().then((h) => h && setMcalSyncHealth(h));
+    const unsubG = window.electronAPI?.onGcalSyncHealthChanged?.(setGcalSyncHealth);
+    const unsubM = window.electronAPI?.onMcalSyncHealthChanged?.(setMcalSyncHealth);
+    return () => {
+      unsubG?.();
+      unsubM?.();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isMac) return;
     window.electronAPI?.acalGetConnectionStatus?.().then((status) => {
       if (status) {
@@ -369,6 +483,7 @@ export default function IntegrationsView({ isPaid, onUpgrade }: IntegrationsView
             connected={hasAccounts}
             isConnecting={isConnecting}
             onConnect={handleConnect}
+            onSyncNow={() => window.electronAPI?.gcalSyncNow?.()}
           />
           <CalendarAccountRows
             i18nKey="integrations.googleCalendar"
@@ -379,6 +494,7 @@ export default function IntegrationsView({ isPaid, onUpgrade }: IntegrationsView
             onPrimaryOnlyChange={setGcalPrimaryOnly}
             isConnecting={isConnecting}
             onAddAnother={handleConnect}
+            syncHealth={gcalSyncHealth}
           />
 
           <ProviderRow
@@ -387,6 +503,7 @@ export default function IntegrationsView({ isPaid, onUpgrade }: IntegrationsView
             connected={mcalAccounts.length > 0}
             isConnecting={isMsConnecting}
             onConnect={handleMicrosoftConnect}
+            onSyncNow={() => window.electronAPI?.mcalSyncNow?.()}
           />
           <CalendarAccountRows
             i18nKey="integrations.microsoftCalendar"
@@ -397,6 +514,7 @@ export default function IntegrationsView({ isPaid, onUpgrade }: IntegrationsView
             onPrimaryOnlyChange={setMcalPrimaryOnly}
             isConnecting={isMsConnecting}
             onAddAnother={handleMicrosoftConnect}
+            syncHealth={mcalSyncHealth}
           />
 
           {isMac && (
@@ -406,6 +524,7 @@ export default function IntegrationsView({ isPaid, onUpgrade }: IntegrationsView
               connected={appleCalendarConnected}
               isConnecting={isAppleConnecting}
               onConnect={handleAppleConnect}
+              onSyncNow={() => window.electronAPI?.acalSyncNow?.()}
             />
           )}
 
@@ -430,38 +549,15 @@ export default function IntegrationsView({ isPaid, onUpgrade }: IntegrationsView
       </div>
 
       <div>
-        <SectionLabel>{t("integrations.sections.api")}</SectionLabel>
-        <SettingsPanel>
-          <SettingsPanelRow>
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-primary/5 dark:bg-primary/10 flex items-center justify-center shrink-0">
-                <Code2 className="h-4 w-4 text-primary/80" strokeWidth={2} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold text-foreground">
-                  {t("integrations.api.title")}
-                </p>
-                <p className="text-xs text-muted-foreground/70 mt-0.5 leading-relaxed">
-                  {isPaid ? t("integrations.api.description") : t("integrations.api.proRequired")}
-                </p>
-              </div>
-              {isPaid ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setApiKeysDialogOpen(true)}
-                  className="shrink-0"
-                >
-                  {t("integrations.api.manage")}
-                </Button>
-              ) : (
-                <Button size="sm" onClick={onUpgrade} className="shrink-0">
-                  {t("integrations.api.viewPlans")}
-                </Button>
-              )}
-            </div>
-          </SettingsPanelRow>
-        </SettingsPanel>
+        <SectionLabel>
+          {t("integrations.sections.crm", { defaultValue: "GoHighLevel" })}
+        </SectionLabel>
+        <CrmIntegrationCard />
+      </div>
+
+      <div>
+        <SectionLabel>{t("integrations.sections.pipeline")}</SectionLabel>
+        <PipelineIntegrationCard />
       </div>
 
       <div>
@@ -471,7 +567,7 @@ export default function IntegrationsView({ isPaid, onUpgrade }: IntegrationsView
 
       <div>
         <SectionLabel>{t("integrations.sections.cli")}</SectionLabel>
-        <CliIntegrationCard isPaid={isPaid} onUpgrade={onUpgrade} />
+        <CliIntegrationCard />
       </div>
 
       {!hasAccounts && (
@@ -487,28 +583,6 @@ export default function IntegrationsView({ isPaid, onUpgrade }: IntegrationsView
           </div>
         </div>
       )}
-
-      <Dialog open={apiKeysDialogOpen} onOpenChange={setApiKeysDialogOpen}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{t("integrations.api.dialogTitle")}</DialogTitle>
-            <DialogDescription asChild>
-              <span className="text-xs text-muted-foreground/80 leading-relaxed">
-                {t("apiKeysSection.description")}
-                <span className="mx-1.5 text-muted-foreground/30">·</span>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 text-primary/80 hover:text-primary transition-colors"
-                  onClick={() => window.electronAPI?.openExternal?.(API_DOCS_URL)}
-                >
-                  {t("apiKeysSection.docsLink")}
-                </button>
-              </span>
-            </DialogDescription>
-          </DialogHeader>
-          <ApiKeysSection />
-        </DialogContent>
-      </Dialog>
 
       <ConfirmDialog
         open={!!confirmDisconnectEmail}

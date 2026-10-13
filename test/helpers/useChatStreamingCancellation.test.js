@@ -51,7 +51,15 @@ const EMPTY_RESPONSE_TEXT = JSON.parse(
 
 async function renderChatStreaming(
   t,
-  { electronAPI = {}, settings = {}, onStreamComplete, live = false } = {}
+  {
+    electronAPI = {},
+    settings = {},
+    onStreamComplete,
+    onDeliverableComplete,
+    captureDeliverableToken,
+    cancelNoteDestinationRequest,
+    live = false,
+  } = {}
 ) {
   installBrowserGlobals(t, { window: { electronAPI } });
   const container = live ? installHookDom(t) : null;
@@ -108,6 +116,9 @@ async function renderChatStreaming(
       messages,
       setMessages,
       onStreamComplete,
+      onDeliverableComplete,
+      captureDeliverableToken,
+      cancelNoteDestinationRequest,
       onResponseContent: () => {
         responseContentCalls += 1;
       },
@@ -138,6 +149,49 @@ async function renderChatStreaming(
     unmount,
   };
 }
+
+test("cancelling a stream also cancels a pending note destination choice", async (t) => {
+  const reasons = [];
+  const { captured } = await renderChatStreaming(t, {
+    cancelNoteDestinationRequest: (reason) => reasons.push(reason),
+  });
+
+  captured.cancelStream();
+
+  assert.deepEqual(reasons, ["stream-cancelled"]);
+});
+
+test("a completed response keeps the turn token captured before lifecycle invalidation", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  let release;
+  globalThis.fetch = async () => {
+    await new Promise((resolve) => {
+      release = resolve;
+    });
+    const content = `data: ${JSON.stringify(createOpenAiChunk({ content: "Old reply" }))}\n\n`;
+    return new Response(`${content}data: [DONE]\n\n`, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+  };
+  let generation = 0;
+  const received = [];
+  const { captured } = await renderChatStreaming(t, {
+    captureDeliverableToken: () => generation,
+    onDeliverableComplete: (_content, token) => received.push(token),
+  });
+  const pending = captured.sendToAI("hello", []);
+  await new Promise((resolve) => setImmediate(resolve));
+  generation += 1; // disabled/closed/recording
+  generation += 1; // re-enabled/idle must not revive the old turn
+  release();
+  await pending;
+  assert.deepEqual(received, [0]);
+  assert.notEqual(received[0], generation);
+});
 
 test("a genuine empty completion still shows the empty-response fallback", async (t) => {
   const originalFetch = globalThis.fetch;
@@ -335,19 +389,17 @@ test("an unmount mid-stream persists the partial reply without delivering it", a
 
   let completionCalls = 0;
   let sendPromise;
-  const waitForMicrotasks = () => new Promise((resolve) => setImmediate(resolve));
+  // The hook flushes streamed text to state on a short timer, so the partial
+  // token lands on real time, not on the next microtask.
+  const waitForFlush = () => new Promise((resolve) => setTimeout(resolve, 10));
   await React.act(async () => {
     sendPromise = captured.sendToAI("hello", [], {
       onComplete: () => {
         completionCalls += 1;
       },
     });
-    for (
-      let i = 0;
-      i < 50 && !getMessages().some((m) => m.content === "Partial reply");
-      i++
-    ) {
-      await waitForMicrotasks();
+    for (let i = 0; i < 50 && !getMessages().some((m) => m.content === "Partial reply"); i++) {
+      await waitForFlush();
     }
   });
   assert.ok(
@@ -367,6 +419,49 @@ test("an unmount mid-stream persists the partial reply without delivering it", a
   assert.equal(completionCalls, 0, "an unmounted request must never deliver a response");
   const assistantMessage = getMessages().find((m) => m.role === "assistant");
   assert.equal(assistantMessage.isStreaming, false);
+});
+
+test("an unmount in the middle of a sound tag does not persist the half tag", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  let releaseTail;
+  const tailGate = new Promise((resolve) => {
+    releaseTail = resolve;
+  });
+  globalThis.fetch = async () =>
+    new Response(
+      new ReadableStream({
+        async start(controller) {
+          const event = `data: ${JSON.stringify(createOpenAiChunk({ content: "Fine. [sig" }))}\n\n`;
+          controller.enqueue(new TextEncoder().encode(event));
+          await tailGate;
+          controller.close();
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } }
+    );
+
+  const persisted = [];
+  const { captured, getMessages, unmount } = await renderChatStreaming(t, {
+    live: true,
+    onStreamComplete: (_id, content) => persisted.push(content),
+  });
+  let sendPromise;
+  await React.act(async () => {
+    sendPromise = captured.sendToAI("hello", []);
+    for (let i = 0; i < 50 && !getMessages().some((m) => m.content.startsWith("Fine.")); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  });
+
+  await unmount();
+  releaseTail();
+  await sendPromise;
+
+  assert.deepEqual(persisted, ["Fine. "]);
+  assert.equal(getMessages().find((m) => m.role === "assistant").content, "Fine. ");
 });
 
 test("cancelling a tool-ineligible raw stream after reading starts shows no error", async (t) => {

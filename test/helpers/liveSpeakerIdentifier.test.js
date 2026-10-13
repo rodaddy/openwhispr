@@ -74,6 +74,21 @@ const voiceB = unit([0, 1, 0]);
 const ambiguousVoice = unit([0.7, 0.7, 0.14]);
 const voiceC = unit([0.05, 0.05, 0.99]);
 
+test("keeps distinct live clusters above the previous eight-speaker cap", () => {
+  const { LiveSpeakerIdentifier } = loadIdentifier();
+  const identifier = new LiveSpeakerIdentifier();
+  identifier.setMaxSpeakers(16);
+
+  const speakerIds = Array.from({ length: 16 }, (_, index) => {
+    const embedding = new Float32Array(16);
+    embedding[index] = 1;
+    return identifier._resolveSpeakerForEmbedding(embedding, { updateCentroid: true }).speakerId;
+  });
+
+  assert.equal(new Set(speakerIds).size, 16);
+  assert.equal(Object.keys(identifier.getTransientState()).length, 16);
+});
+
 function seedMergedSession(identifier) {
   identifier.setMaxSpeakers(3);
   identifier._resolveSpeakerForEmbedding(voiceA, { updateCentroid: true });

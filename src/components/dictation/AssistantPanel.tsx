@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Copy, Plus, X } from "lucide-react";
+import { Check, Copy, Plus, Volume2, X } from "lucide-react";
 import { BrandMarkIcon } from "./BrandMarkIcon";
 import { MarkdownRenderer } from "../ui/MarkdownRenderer";
 import { Button } from "../ui/button";
@@ -42,6 +42,13 @@ import {
   deliverAssistantResponse,
   type AssistantResponseDelivery,
 } from "../../helpers/assistantResponseDelivery";
+import {
+  getPanelCloseCancellation,
+  type NoteDestinationRequestState,
+} from "../../hooks/useNoteDestinationRequest";
+import { NoteDestinationDialog } from "../chat/NoteDestinationDialog";
+import { useAssistantSpeech } from "../../hooks/useAssistantSpeech";
+import { AssistantSpeechSetupDialog } from "./AssistantSpeechSetupDialog";
 
 export interface AssistantCommand {
   id: number;
@@ -79,6 +86,7 @@ interface AssistantPanelProps {
   onResponseContent: () => void;
   onConversationReset: () => void;
   onSelectionContextChange: (context: AgentSelectionContext | null) => void;
+  noteDestination: NoteDestinationRequestState;
 }
 
 // Updating the selection indicator must not rerender react-markdown: its
@@ -105,24 +113,52 @@ export function AssistantPanel({
   onResponseContent,
   onConversationReset,
   onSelectionContextChange,
+  noteDestination,
 }: AssistantPanelProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { handleMouseDown, handleMouseUp } = useWindowDrag();
   const voiceAgentKey = useSettingsStore((state) => state.voiceAgentKey);
+  const assistantSpeechEnabled = useSettingsStore((state) => state.assistantSpeechEnabled);
+  const setAssistantSpeechEnabled = useSettingsStore((state) => state.setAssistantSpeechEnabled);
+  const assistantSpeech = useAssistantSpeech(
+    assistantSpeechEnabled && open && voiceState === "idle"
+  );
+  const spokenDestinationPromptRef = useRef("");
+  const [speechSetupOpen, setSpeechSetupOpen] = useState(false);
   const readableVoiceHotkey = formatHotkeyListLabel(voiceAgentKey);
 
   const persistence = useChatPersistence({ conversationId: initialConversationId });
   const { messages, setMessages } = persistence;
-
   const streaming = useChatStreaming({
     messages,
     setMessages,
-    onStreamComplete: (_assistantId, content, toolCalls) => {
-      void persistence.saveAssistantMessage(content, toolCalls);
+    onStreamComplete: async (_assistantId, content, toolCalls) => {
+      await persistence.saveAssistantMessage(content, toolCalls);
     },
+    onDeliverableComplete: async (content, token) => {
+      if (assistantSpeechEnabled && typeof token === "number")
+        await assistantSpeech.speak(content, token);
+    },
+    captureDeliverableToken: assistantSpeech.captureGeneration,
     onResponseContent,
+    requestNoteDestination: noteDestination.requestNoteDestination,
+    cancelNoteDestinationRequest: noteDestination.cancel,
+    getNoteDestinationCancellationGeneration: noteDestination.getCancellationGeneration,
   });
+
+  useEffect(() => {
+    const pending = noteDestination.pending;
+    if (!pending || !assistantSpeechEnabled || !open || voiceState !== "idle") return;
+    const proposedName = pending.request.requestedFolderName?.trim();
+    const promptKey = `${pending.id}:${proposedName ?? "choose"}`;
+    if (spokenDestinationPromptRef.current === promptKey) return;
+    spokenDestinationPromptRef.current = promptKey;
+    const prompt = proposedName
+      ? `Create folder ${proposedName}? Say yes to confirm, choose an existing folder, or say cancel.`
+      : "Which folder should I use? Say an existing folder name, say create folder followed by a name, or say cancel.";
+    void assistantSpeech.speak(prompt);
+  }, [assistantSpeech, assistantSpeechEnabled, noteDestination.pending, open, voiceState]);
 
   const createConversation = useCallback(
     (text: string) => {
@@ -307,6 +343,7 @@ export function AssistantPanel({
 
   const handleNewConversation = useCallback(() => {
     if (isBusy || submissionInFlight) return;
+    noteDestination.cancel("new-conversation");
     persistence.handleNewChat();
     onConversationIdChange(null);
     clearSelectedContext();
@@ -318,18 +355,41 @@ export function AssistantPanel({
     onConversationIdChange,
     onConversationReset,
     persistence,
+    noteDestination,
     submissionInFlight,
   ]);
 
   const handleTextSubmit = useCallback(
     (text: string): void => {
       if (!historyReady) return;
+      assistantSpeech.stop();
       const context = selectedContext;
       if (context) clearSelectedContext();
       void sendMessage(text, context ? { selectedContext: context } : undefined);
     },
-    [clearSelectedContext, historyReady, selectedContext, sendMessage]
+    [assistantSpeech, clearSelectedContext, historyReady, selectedContext, sendMessage]
   );
+
+  useEffect(() => {
+    if (!open || voiceState !== "idle") assistantSpeech.stop();
+  }, [assistantSpeech, open, voiceState]);
+
+  const toggleSpeech = useCallback(async () => {
+    if (assistantSpeechEnabled) {
+      assistantSpeech.stop();
+      setAssistantSpeechEnabled(false);
+      return;
+    }
+    try {
+      const profile = await window.electronAPI.getAssistantSpeechProfile();
+      if (profile.configured) setAssistantSpeechEnabled(true);
+      else setSpeechSetupOpen(true);
+    } catch (error) {
+      assistantSpeech.reportError(
+        error instanceof Error ? error.message : "Could not check spoken reply setup"
+      );
+    }
+  }, [assistantSpeech, assistantSpeechEnabled, setAssistantSpeechEnabled]);
 
   const showEmptyState =
     historyReady &&
@@ -339,9 +399,21 @@ export function AssistantPanel({
     !thinking &&
     pendingCommand === null;
 
+  const cancelNoteDestination = noteDestination.cancel;
+  const previousPanelOpenRef = useRef(open);
+
   useEffect(() => {
     if (!open && selectedContext) clearSelectedContext();
   }, [clearSelectedContext, open, selectedContext]);
+
+  useEffect(() => {
+    const wasOpen = previousPanelOpenRef.current;
+    previousPanelOpenRef.current = open;
+    if (open) return;
+    const reason = getPanelCloseCancellation(wasOpen, open);
+    if (!reason) return;
+    cancelNoteDestination(reason);
+  }, [cancelNoteDestination, open]);
 
   useEffect(() => {
     if (!open || !isResponseReady || !latestAssistantMessage) return undefined;
@@ -428,12 +500,42 @@ export function AssistantPanel({
 
   return (
     <>
+      <NoteDestinationDialog
+        key={noteDestination.pending?.id ?? "no-note-destination"}
+        pending={noteDestination.pending}
+        onResolve={noteDestination.settle}
+        onCreateFolder={noteDestination.confirmFolderCreation}
+      />
+      <AssistantSpeechSetupDialog
+        open={speechSetupOpen}
+        onOpenChange={setSpeechSetupOpen}
+        onConfigured={() => setAssistantSpeechEnabled(true)}
+      />
+      {assistantSpeech.error && (
+        <p role="alert" className="px-5 text-xs text-destructive">
+          Spoken reply failed: {assistantSpeech.error}
+        </p>
+      )}
       <header
         className="flex h-16 shrink-0 cursor-grab items-center gap-3 px-5 active:cursor-grabbing"
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
       >
         <BrandMarkIcon size={20} className="shrink-0 text-muted-foreground" />
+        <button
+          type="button"
+          className={
+            "inline-flex size-7 items-center justify-center rounded-full transition-colors " +
+            (assistantSpeechEnabled
+              ? "bg-foreground/10 text-foreground"
+              : "text-muted-foreground hover:bg-foreground/10")
+          }
+          aria-pressed={assistantSpeechEnabled}
+          aria-label="Spoken replies"
+          onClick={() => void toggleSpeech()}
+        >
+          <Volume2 size={15} />
+        </button>
         {messages.length > 0 && (
           <button
             type="button"

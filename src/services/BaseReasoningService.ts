@@ -23,6 +23,11 @@ export interface ReasoningConfig {
   requireCompleteOutput?: boolean;
   requiresAgent?: boolean;
   inferenceScope?: InferenceScope;
+  /**
+   * Per-call timeout for long inputs (note/action generation). Omitted, a request
+   * keeps its provider default. Set, a timed-out request is not retried.
+   */
+  timeoutSeconds?: number;
 }
 
 export abstract class BaseReasoningService {

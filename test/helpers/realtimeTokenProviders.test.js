@@ -49,40 +49,21 @@ test("openai byok returns the key; dual-stream duplicates it", async () => {
   );
 });
 
-test("openai cloud mints per-stream client secrets and validates the dual pair", async () => {
+test("managed realtime modes fail locally without requesting a server token", async () => {
   const { fetchRealtimeTokenForProvider } = await load();
-  const calls = [];
+  let calls = 0;
   const cloudDeps = deps({
-    postServerToken: async (path, body) => {
-      calls.push({ path, body });
-      return { clientSecret: "cs-single", clientSecrets: ["cs-a", "cs-b"] };
+    postServerToken: async () => {
+      calls += 1;
     },
   });
-  const options = { mode: "openwhispr", model: "gpt-4o-mini-transcribe", language: "en" };
-
-  assert.equal(
-    await fetchRealtimeTokenForProvider("openai-realtime", cloudDeps, options),
-    "cs-single"
-  );
-  assert.deepEqual(
-    await fetchRealtimeTokenForProvider("openai-realtime", cloudDeps, options, { streams: 2 }),
-    ["cs-a", "cs-b"]
-  );
-  assert.deepEqual(calls[0], {
-    path: "/api/openai-realtime-token",
-    body: { model: "gpt-4o-mini-transcribe", language: "en", streams: 1 },
-  });
-  assert.equal(calls[1].body.streams, 2);
-
-  await assert.rejects(
-    fetchRealtimeTokenForProvider(
-      "openai-realtime",
-      deps({ postServerToken: async () => ({ clientSecrets: ["only-one"] }) }),
-      options,
-      { streams: 2 }
-    ),
-    /Expected two client secrets/
-  );
+  for (const provider of ["openai-realtime", "deepgram-realtime", "assemblyai-realtime"]) {
+    await assert.rejects(
+      fetchRealtimeTokenForProvider(provider, cloudDeps, { mode: "openwhispr" }),
+      (error) => error.code === "MANAGED_CLOUD_REMOVED"
+    );
+  }
+  assert.equal(calls, 0);
 });
 
 test("tinfoil missing key carries the NO_API code the renderer's fallback keys on", async () => {
@@ -111,7 +92,7 @@ test("assemblyai byok mints one live token per stream", async () => {
   );
 });
 
-test("deepgram byok duplicates the key; cloud mints per stream", async () => {
+test("deepgram byok duplicates the key", async () => {
   const { fetchRealtimeTokenForProvider } = await load();
   assert.deepEqual(
     await fetchRealtimeTokenForProvider(
@@ -121,17 +102,6 @@ test("deepgram byok duplicates the key; cloud mints per stream", async () => {
       { streams: 2 }
     ),
     ["dg-key", "dg-key"]
-  );
-  let mints = 0;
-  const cloudDeps = deps({ postServerToken: async () => ({ token: `dg-${++mints}` }) });
-  assert.deepEqual(
-    await fetchRealtimeTokenForProvider(
-      "deepgram-realtime",
-      cloudDeps,
-      { mode: "openwhispr" },
-      { streams: 2 }
-    ),
-    ["dg-1", "dg-2"]
   );
 });
 
@@ -157,43 +127,4 @@ test("missing byok keys throw configuration errors, not token errors", async () 
       /key configured/
     );
   }
-});
-
-test('wire bodies: dictation posts the bare {"streams":1}; meetings post model+language+streams', async () => {
-  const { fetchRealtimeTokenForProvider } = await load();
-  const wire = [];
-  const cloudDeps = deps({
-    postServerToken: async (path, body) => {
-      // JSON.stringify drops undefined keys exactly like the real fetch does.
-      wire.push({ path, json: JSON.stringify(body) });
-      return { clientSecret: "cs-single", clientSecrets: ["cs-a", "cs-b"] };
-    },
-  });
-
-  // Dictation: ipcHandlers' connectDictationStreaming passes only { mode, provider }.
-  await fetchRealtimeTokenForProvider("openai-realtime", cloudDeps, { mode: "openwhispr" });
-  // Meeting with system audio.
-  await fetchRealtimeTokenForProvider(
-    "openai-realtime",
-    cloudDeps,
-    { mode: "openwhispr", model: "gpt-4o-mini-transcribe", language: "en" },
-    { streams: 2 }
-  );
-  // Meeting whose system audio is unsupported (connectRealtimeStreaming's single-stream
-  // branch) — still carries model+language; streams defaults to 1.
-  await fetchRealtimeTokenForProvider(
-    "openai-realtime",
-    cloudDeps,
-    { mode: "openwhispr", model: "gpt-4o-mini-transcribe", language: undefined },
-    { streams: 1 }
-  );
-
-  assert.deepEqual(wire, [
-    { path: "/api/openai-realtime-token", json: '{"streams":1}' },
-    {
-      path: "/api/openai-realtime-token",
-      json: '{"model":"gpt-4o-mini-transcribe","language":"en","streams":2}',
-    },
-    { path: "/api/openai-realtime-token", json: '{"model":"gpt-4o-mini-transcribe","streams":1}' },
-  ]);
 });

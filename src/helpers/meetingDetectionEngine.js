@@ -4,19 +4,26 @@ const { getMeetingJoinUrl } = require("./meetingJoinUrl");
 const createMeetingAutoEndController = require("./meetingAutoEndController");
 const { createMeetingAudioActivityMonitor } = require("./meetingAudioActivityMonitor");
 const { broadcastToWindows } = require("./windowBroadcast");
+const { createGrillStartChannel } = require("./grillStartChannel");
 
 const IMMINENT_THRESHOLD_MS = 5 * 60 * 1000;
 const AUTO_END_TICK_MS = 1000;
+// Auto-end asks before it stops: the recording keeps running while the card
+// counts down, so a false trigger the user answers loses nothing, and one
+// nobody answers (the forgotten recording auto-end exists for) still ends.
+const AUTO_END_CONFIRM_MS = 2 * 60_000;
+// Only a stop nobody answered offers this restart card; Stop now does not.
 const AUTO_END_RESTART_WINDOW_MS = 30_000;
-// Clicking Restart is the user saying the meeting is still live. Honour that for
-// a while, or the same silence that just ended the recording ends it again a
-// minute later and they have to keep clicking.
+// Keep recording (or a restart) is the user saying the meeting is still live.
+// Honour that for a while, or the same silence asks again a minute later and
+// they have to keep clicking.
 const AUTO_END_RESTART_GRACE_MS = 5 * 60_000;
 // The grace belongs to the recording the user restarted, which starts within a
 // second or two. Main cannot see a restart the renderer drops (its context died
 // with a reload, or a manual recording won the race), so an unclaimed grace has
 // to lapse rather than wait to be taken by whatever recording starts next.
 const AUTO_END_RESTART_CLAIM_MS = 30_000;
+const CALENDAR_END_REPEAT_MS = 15 * 60_000;
 
 const PLACEHOLDER_PREFIX = { __detected__: "detected", __manual__: "manual" };
 
@@ -50,9 +57,15 @@ class MeetingDetectionEngine {
       now = Date.now,
       setInterval = global.setInterval,
       clearInterval = global.clearInterval,
+      setTimeout = global.setTimeout,
+      clearTimeout = global.clearTimeout,
+      // Without a channel wired to ipcMain nothing can subscribe, so a
+      // "Start grill" click is logged and dropped.
+      grillStartChannel = createGrillStartChannel(),
     } = {}
   ) {
     this.reminderScheduler = reminderScheduler;
+    this.grillStartChannel = grillStartChannel;
     this.meetingProcessDetector = meetingProcessDetector;
     this.audioActivityDetector = audioActivityDetector;
     this.windowManager = windowManager;
@@ -65,10 +78,15 @@ class MeetingDetectionEngine {
     this._postRecordingCooldown = null;
     this._recordingSession = null;
     this._pendingAutoEnd = null;
+    this._autoEndProposal = null;
     this._autoEndRestartGrace = null;
     this._now = now;
     this._setInterval = setInterval;
     this._clearInterval = clearInterval;
+    this._setTimeout = setTimeout;
+    this._clearTimeout = clearTimeout;
+    this._calendarEndTimer = null;
+    this._calendarEndOfferSessionId = null;
     // True only between controller.beginSession and endSession — meeting audio
     // starts streaming before the session is registered, and chunks fed to the
     // monitor before the controller exists would leave the two out of sync.
@@ -83,7 +101,9 @@ class MeetingDetectionEngine {
     });
     this._autoEndController = createAutoEndController({
       now,
-      onStop: (sessionId, reason) => this._requestRecordingStop(sessionId, reason),
+      onPropose: (sessionId, reason, activity) => this._proposeAutoEnd(sessionId, reason, activity),
+      onCancel: (sessionId, reason, trigger) =>
+        this._cancelAutoEndProposal(sessionId, reason, trigger),
     });
     this._bindListeners();
   }
@@ -137,33 +157,147 @@ class MeetingDetectionEngine {
     });
   }
 
-  _requestRecordingStop(sessionId, reason) {
+  _proposeAutoEnd(sessionId, reason, activity) {
     const session = this._recordingSession;
     if (!session || session.sessionId !== sessionId) return;
+    this._clearAutoEndProposal();
+    const expiresAt = this._now() + AUTO_END_CONFIRM_MS;
+    const timer = this._setTimeout(() => {
+      if (this._autoEndProposal?.timer !== timer) return;
+      this._clearAutoEndProposal();
+      debugLogger.info(
+        "Meeting auto-end prompt unanswered, stopping",
+        { sessionId, reason },
+        "meeting"
+      );
+      this._requestRecordingStop(sessionId, reason, activity, { offerRestart: true });
+    }, AUTO_END_CONFIRM_MS);
+    timer?.unref?.();
+    this._autoEndProposal = { sessionId, reason, activity, expiresAt, timer };
+    // The confirm card replaces a calendar-end card in the one overlay; forget
+    // that offer so clearing it later cannot dismiss the confirm card.
+    this._calendarEndOfferSessionId = null;
+    debugLogger.info(
+      "Meeting auto-end proposed; asking before stopping",
+      { sessionId, reason, expiresAt, ...activity },
+      "meeting"
+    );
+    // The countdown runs even if the card cannot be shown: the stop is still
+    // the fallback for a recording nobody remembered to end.
+    Promise.resolve(
+      this.windowManager.showMeetingAutoEndNotification?.({
+        sessionId,
+        reason,
+        expiresAt,
+        phase: "confirm",
+      })
+    ).catch((error) => {
+      debugLogger.error(
+        "Failed to show meeting auto-end prompt",
+        { error: error?.message, sessionId },
+        "meeting"
+      );
+    });
+  }
+
+  _clearAutoEndProposal() {
+    const proposal = this._autoEndProposal;
+    if (!proposal) return;
+    this._autoEndProposal = null;
+    this._clearTimeout(proposal.timer);
+    this.windowManager.dismissMeetingAutoEndNotification?.(proposal.sessionId);
+  }
+
+  _cancelAutoEndProposal(sessionId, reason, trigger) {
+    if (this._autoEndProposal?.sessionId !== sessionId) return;
+    this._clearAutoEndProposal();
+    debugLogger.info(
+      "Meeting auto-end prompt withdrawn by renewed activity",
+      { sessionId, reason, trigger },
+      "meeting"
+    );
+    this._resumeDeferredCalendarEnd();
+  }
+
+  // A calendar-end offer that waited behind the confirm card comes back as soon
+  // as the card resolves with the recording still running.
+  _resumeDeferredCalendarEnd() {
+    const session = this._recordingSession;
+    if (!session?.calendarEndDeferred) return;
+    session.calendarEndDeferred = false;
+    if (!session.calendarEvent) return;
+    session.calendarEndDueAt = this._now();
+    this._scheduleCalendarMeetingEnd();
+  }
+
+  _respondToAutoEndProposal(sessionId, action) {
+    const proposal = this._autoEndProposal;
+    if (!proposal || proposal.sessionId !== sessionId) return false;
+    this._clearAutoEndProposal();
+    debugLogger.info(
+      "Meeting auto-end prompt answered",
+      { sessionId, reason: proposal.reason, action },
+      "meeting"
+    );
+    if (action === "keep") {
+      this._autoEndController.suppress(sessionId, this._now() + AUTO_END_RESTART_GRACE_MS);
+      this._resumeDeferredCalendarEnd();
+      return true;
+    }
+    return this._requestRecordingStop(sessionId, proposal.reason, proposal.activity, {
+      offerRestart: false,
+    });
+  }
+
+  // Returns whether the stop request reached the recording renderer.
+  _requestRecordingStop(sessionId, reason, activity, { offerRestart = true } = {}) {
+    const session = this._recordingSession;
+    if (!session || session.sessionId !== sessionId) return false;
 
     debugLogger.info(
       "Meeting end detected, requesting automatic stop",
-      { sessionId, reason },
+      { sessionId, reason, ...activity },
       "meeting"
     );
     const ownerWebContents = session.ownerWebContents;
-    if (!ownerWebContents || ownerWebContents.isDestroyed?.()) return;
+    if (!ownerWebContents || ownerWebContents.isDestroyed?.()) {
+      debugLogger.warn(
+        "Meeting auto-end not delivered: recording window is gone",
+        { sessionId, reason },
+        "meeting"
+      );
+      // Nothing can answer or stop; let the controller ask again later instead
+      // of holding a proposal forever.
+      this._autoEndController.suppress(sessionId, this._now());
+      return false;
+    }
     this._clearAutoEndRecovery();
     this._pendingAutoEnd = {
       sessionId,
       reason,
       ownerWebContents,
+      offerRestart,
       expiresAt: null,
     };
     try {
-      ownerWebContents.send("meeting-auto-end-requested", { sessionId, reason });
+      // A stop the user chose needs no "stopped automatically" notice.
+      ownerWebContents.send("meeting-auto-end-requested", {
+        sessionId,
+        reason,
+        ...(offerRestart ? {} : { userConfirmed: true }),
+      });
+      return true;
     } catch (error) {
       this._pendingAutoEnd = null;
+      // Nothing will stop the recording, so let the controller ask again after
+      // a full window instead of staying proposed forever.
+      this._autoEndController.suppress(sessionId, this._now());
       debugLogger.error(
         "Failed to request meeting auto-end from recording renderer",
         { error: error?.message, sessionId },
         "meeting"
       );
+      return false;
     }
   }
 
@@ -195,6 +329,11 @@ class MeetingDetectionEngine {
       this._recordingSession !== null ||
       ownerWebContents?.isDestroyed?.()
     ) {
+      return false;
+    }
+    // The user chose Stop now, so there is nothing to offer back.
+    if (!pending.offerRestart) {
+      this._clearAutoEndRecovery({ dismiss: false });
       return false;
     }
 
@@ -234,12 +373,11 @@ class MeetingDetectionEngine {
   }
 
   respondToAutoEndNotification(sessionId, action, responderWebContents) {
-    if (
-      (action !== "restart" && action !== "dismiss") ||
-      !this.windowManager.isMeetingNotificationSender?.(responderWebContents)
-    ) {
-      return false;
+    if (!this.windowManager.isMeetingNotificationSender?.(responderWebContents)) return false;
+    if (action === "keep" || action === "stop") {
+      return this._respondToAutoEndProposal(sessionId, action);
     }
+    if (action !== "restart" && action !== "dismiss") return false;
 
     const pending = this._pendingAutoEnd;
     if (!pending || pending.sessionId !== sessionId || pending.expiresAt === null) return false;
@@ -346,6 +484,7 @@ class MeetingDetectionEngine {
   // feeding it audio. Safe to call when nothing is active.
   _deactivateAutoEnd() {
     const session = this._recordingSession;
+    this._clearAutoEndProposal();
     this._autoEndActive = false;
     this._stopAutoEndTicker();
     this._audioActivityMonitor.reset();
@@ -383,8 +522,11 @@ class MeetingDetectionEngine {
     autoEndEligible,
     ownerWebContents,
     systemAudioAvailable = false,
+    calendarEvent = null,
+    calendarEventId = null,
   }) {
     this._clearAutoEndRecovery();
+    this._clearCalendarEndOffer();
     if (this._recordingSession) this._deactivateAutoEnd();
 
     this._recordingSession = {
@@ -392,7 +534,10 @@ class MeetingDetectionEngine {
       autoEndEligible: autoEndEligible === true,
       ownerWebContents,
       systemAudioAvailable: systemAudioAvailable === true,
+      calendarEvent: calendarEvent ?? (calendarEventId ? { id: calendarEventId } : null),
+      calendarEndDueAt: calendarEvent?.end_time ? new Date(calendarEvent.end_time).getTime() : null,
     };
+    this._scheduleCalendarMeetingEnd();
     this._syncMeetingProcessDetector();
 
     if (!this._isAutoEndWanted()) {
@@ -444,6 +589,8 @@ class MeetingDetectionEngine {
     }
 
     this._deactivateAutoEnd();
+    this._clearCalendarMeetingEnd();
+    this._clearCalendarEndOffer();
     debugLogger.info(
       "Recording session ended",
       { sessionId: session.sessionId, autoEndEligible: session.autoEndEligible },
@@ -464,6 +611,127 @@ class MeetingDetectionEngine {
   // the recording gates, queueing, cooldowns, and the overlay window.
   handleCalendarReminder(event) {
     this._handleDetection("calendar", event.id, { event, detectedAt: Date.now() });
+  }
+
+  // A grill block uses the same prompt pipeline (gates, queueing, overlay),
+  // but its only action hands off to the grill session; it never records.
+  handleGrillReminder(event, grill) {
+    this._handleDetection("grill", event.id, { event, grill, detectedAt: Date.now() });
+  }
+
+  _clearCalendarMeetingEnd() {
+    if (!this._calendarEndTimer) return;
+    this._clearTimeout(this._calendarEndTimer);
+    this._calendarEndTimer = null;
+  }
+
+  _clearCalendarEndOffer() {
+    if (!this._calendarEndOfferSessionId) return;
+    this._calendarEndOfferSessionId = null;
+    this.windowManager.dismissMeetingNotification?.();
+  }
+
+  _scheduleCalendarMeetingEnd() {
+    this._clearCalendarMeetingEnd();
+    const session = this._recordingSession;
+    const event = session?.calendarEvent;
+    if (!event?.id || !Number.isFinite(session.calendarEndDueAt)) return;
+    const delay = Math.max(0, session.calendarEndDueAt - this._now());
+    this._calendarEndTimer = this._setTimeout(() => {
+      this._calendarEndTimer = null;
+      this.handleCalendarMeetingEnd(event);
+    }, delay);
+    this._calendarEndTimer?.unref?.();
+  }
+
+  updateCalendarMeeting(event) {
+    const session = this._recordingSession;
+    if (!session?.calendarEvent || session.calendarEvent.id !== event?.id) return false;
+    const previousEnd = session.calendarEvent.end_time
+      ? new Date(session.calendarEvent.end_time).getTime()
+      : null;
+    const nextEnd = event.end_time ? new Date(event.end_time).getTime() : null;
+    session.calendarEvent = event;
+    if (previousEnd === nextEnd) return true;
+    this._clearCalendarEndOffer();
+    // A held offer belonged to the old end; the new end schedules its own.
+    session.calendarEndDeferred = false;
+    session.calendarEndDueAt = Number.isFinite(nextEnd) ? Math.max(this._now(), nextEnd) : null;
+    this._scheduleCalendarMeetingEnd();
+    return true;
+  }
+
+  reconcileCalendarMeeting(provider, lookupEvent) {
+    const event = this._recordingSession?.calendarEvent;
+    if (!event?.id || (provider && event.provider !== provider)) return false;
+    const current = lookupEvent(event.id);
+    if (!current || current.status === "cancelled" || current.provider !== event.provider) {
+      return this.removeCalendarMeeting(event);
+    }
+    return this.updateCalendarMeeting(current);
+  }
+
+  removeCalendarMeeting(event) {
+    const session = this._recordingSession;
+    if (!session?.calendarEvent || session.calendarEvent.id !== event?.id) return false;
+    session.calendarEvent = null;
+    session.calendarEndDueAt = null;
+    session.calendarEndDeferred = false;
+    this._clearCalendarMeetingEnd();
+    this._clearCalendarEndOffer();
+    return true;
+  }
+
+  handleCalendarMeetingEnd(event) {
+    const session = this._recordingSession;
+    if (!session?.calendarEvent || session.calendarEvent.id !== event?.id) return false;
+    if (Number.isFinite(session.calendarEndDueAt) && this._now() < session.calendarEndDueAt) {
+      return false;
+    }
+    session.calendarEvent = event;
+    // One overlay: the auto-end confirm card is on a countdown that stops the
+    // recording, so it keeps the slot and the calendar offer comes back on its
+    // repeat timer.
+    if (this._autoEndProposal) {
+      session.calendarEndDeferred = true;
+      session.calendarEndDueAt = this._now() + CALENDAR_END_REPEAT_MS;
+      this._scheduleCalendarMeetingEnd();
+      return false;
+    }
+    // Shown now, so nothing is held behind the confirm card any more.
+    session.calendarEndDeferred = false;
+    this._calendarEndOfferSessionId = session.sessionId;
+    this.windowManager.showMeetingNotification({
+      kind: "calendar-end",
+      sessionId: session.sessionId,
+      eventId: event.id,
+      summary: event.summary,
+    });
+    session.calendarEndDueAt = this._now() + CALENDAR_END_REPEAT_MS;
+    this._scheduleCalendarMeetingEnd();
+    return true;
+  }
+
+  respondToCalendarMeetingEnd(sessionId, action, responderWebContents) {
+    if (
+      (action !== "stop" && action !== "keep") ||
+      !this.windowManager.isMeetingNotificationSender?.(responderWebContents)
+    ) {
+      return false;
+    }
+    const session = this._recordingSession;
+    if (!session || session.sessionId !== sessionId || !session.calendarEvent) return false;
+    this._calendarEndOfferSessionId = null;
+    this.windowManager.dismissMeetingNotification?.();
+    if (action === "keep") {
+      session.calendarEndDueAt = this._now() + CALENDAR_END_REPEAT_MS;
+      this._scheduleCalendarMeetingEnd();
+      return true;
+    }
+    this._clearCalendarMeetingEnd();
+    if (!session.ownerWebContents || session.ownerWebContents.isDestroyed?.()) return false;
+    session.ownerWebContents.send("meeting-calendar-end-stop-requested", { sessionId });
+    return true;
   }
 
   _handleDetection(source, key, data) {
@@ -521,7 +789,10 @@ class MeetingDetectionEngine {
   _notificationsEnabledFor(source) {
     const nPrefs = this.windowManager.notificationPrefs || {};
     if (nPrefs.notificationsEnabled === false) return false;
-    const prefKey = source === "calendar" ? "notifyCalendarReminders" : "notifyMeetingDetection";
+    const prefKey =
+      source === "calendar" || source === "grill"
+        ? "notifyCalendarReminders"
+        : "notifyMeetingDetection";
     return nPrefs[prefKey] !== false;
   }
 
@@ -576,6 +847,7 @@ class MeetingDetectionEngine {
       event,
       variant,
       joinUrl,
+      ...(source === "grill" && data?.grill ? { grill: data.grill } : {}),
     });
   }
 
@@ -583,6 +855,31 @@ class MeetingDetectionEngine {
     debugLogger.info("Notification response", { detectionId, action }, "meeting");
     try {
       const detection = this.activeDetections.get(detectionId);
+
+      // A grill prompt never starts a meeting recording: its one action hands
+      // the session to the renderer, and any other action just settles it.
+      if (detection?.source === "grill") {
+        const grill = detection.data?.grill;
+        if (action === "start-grill" && grill) {
+          // Bring the control panel forward first (it may be hidden in the
+          // tray), so the grill starts where Rico can see it.
+          try {
+            await this.windowManager.createControlPanelWindow?.();
+          } catch (error) {
+            debugLogger.warn(
+              "Could not show the control panel for a grill",
+              { error: error?.message },
+              "grill"
+            );
+          }
+          this.grillStartChannel.emit({
+            kind: grill.kind,
+            chapter: grill.chapter ?? null,
+            eventId: detection.event?.id ?? detection.key ?? null,
+          });
+        }
+        return;
+      }
 
       if ((action === "start" || action === "join") && detection) {
         if (action === "join") {
@@ -908,6 +1205,8 @@ class MeetingDetectionEngine {
     this._clearAutoEndRecovery();
     this._autoEndRestartGrace = null;
     this._deactivateAutoEnd();
+    this._clearCalendarMeetingEnd();
+    this._clearCalendarEndOffer();
     this._recordingSession = null;
     this.meetingProcessDetector.stop();
     this.audioActivityDetector.stop();
@@ -922,6 +1221,7 @@ class MeetingDetectionEngine {
 }
 
 module.exports = MeetingDetectionEngine;
+module.exports.AUTO_END_CONFIRM_MS = AUTO_END_CONFIRM_MS;
 module.exports.AUTO_END_RESTART_WINDOW_MS = AUTO_END_RESTART_WINDOW_MS;
 module.exports.AUTO_END_RESTART_GRACE_MS = AUTO_END_RESTART_GRACE_MS;
 module.exports.AUTO_END_RESTART_CLAIM_MS = AUTO_END_RESTART_CLAIM_MS;

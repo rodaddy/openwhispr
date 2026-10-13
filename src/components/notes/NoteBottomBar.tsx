@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { Mic, Square, Loader2 } from "lucide-react";
+import { Mic, Square, Loader2, RefreshCw } from "lucide-react";
 import { cn } from "../lib/utils";
 import { SendIcon } from "../ui/SendIcon";
 import { LiveWaveform } from "../ui/LiveWaveform";
@@ -37,6 +37,12 @@ interface NoteBottomBarProps {
   hideInput?: boolean;
   /** False hides the record control (e.g. read-only shared notes). */
   canRecord?: boolean;
+  crmConfigured?: boolean;
+  crmSyncedAt?: string | null;
+  crmDisabled?: boolean;
+  onOpenCrmSync?: () => void;
+  /** An extra note action shown before the CRM button (e.g. Send to pipeline). */
+  pipelineAction?: React.ReactNode;
 }
 
 export default function NoteBottomBar({
@@ -51,6 +57,11 @@ export default function NoteBottomBar({
   actionPicker,
   hideInput,
   canRecord = true,
+  crmConfigured = false,
+  crmSyncedAt,
+  crmDisabled = false,
+  onOpenCrmSync,
+  pipelineAction,
 }: NoteBottomBarProps) {
   const { t } = useTranslation();
   const [inputText, setInputText] = useState("");
@@ -127,6 +138,41 @@ export default function NoteBottomBar({
       className="absolute bottom-0 left-0 right-0 z-10 px-5 pb-4 pt-6 pointer-events-none bg-gradient-to-t from-background from-45% to-transparent"
     >
       <div className="flex items-end pointer-events-auto w-full max-w-[600px] mx-auto">
+        {pipelineAction}
+        {onOpenCrmSync && (
+          <button
+            type="button"
+            onClick={onOpenCrmSync}
+            disabled={!crmConfigured || crmDisabled}
+            className={cn(
+              "shrink-0 h-11 mr-2 px-3 rounded-full border border-black/10 dark:border-white/14",
+              GLASS_SURFACE,
+              "inline-flex items-center gap-1.5 text-xs font-medium text-foreground/65",
+              "hover:text-foreground hover:border-primary/25 transition-colors",
+              "disabled:opacity-35 disabled:pointer-events-none"
+            )}
+            title={
+              !crmConfigured
+                ? t("notes.crm.configureFirst", {
+                    defaultValue: "Add your GoHighLevel token in Settings > Integrations first.",
+                  })
+                : undefined
+            }
+          >
+            <RefreshCw size={13} />
+            <span className="hidden min-[760px]:inline">
+              {crmSyncedAt
+                ? t("notes.crm.update", { defaultValue: "Update GoHighLevel note" })
+                : t("notes.crm.sync", { defaultValue: "Sync to GoHighLevel" })}
+            </span>
+            {crmSyncedAt && (
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-success"
+                aria-label={t("notes.crm.synced", { defaultValue: "Synced" })}
+              />
+            )}
+          </button>
+        )}
         {canRecord && (
           <div
             className={cn(

@@ -436,4 +436,13 @@ describe("modelDirUtils cache policy (#1279, #1399)", () => {
     assert.strictEqual(fs.readFileSync(path.join(newDir, "ggml-base.bin"), "utf8"), "new");
     assert.strictEqual(fs.readFileSync(path.join(legacyDir, "ggml-base.bin"), "utf8"), "old");
   });
+
+  it("getCacheBaseRoot follows OPENWHISPR_CACHE_ROOT, else the home cache", () => {
+    const { getCacheBaseRoot } = loadFresh(tempRoot);
+    const custom = path.join(tempRoot, "data", "cache");
+    process.env.OPENWHISPR_CACHE_ROOT = custom;
+    assert.strictEqual(getCacheBaseRoot(), custom);
+    delete process.env.OPENWHISPR_CACHE_ROOT;
+    assert.strictEqual(getCacheBaseRoot(), path.join(os.homedir(), ".cache", "openwhispr"));
+  });
 });

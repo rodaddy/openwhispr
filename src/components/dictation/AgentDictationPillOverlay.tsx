@@ -12,6 +12,7 @@ import { useLiveTranscriptPanel } from "../../hooks/useLiveTranscriptPanel";
 import {
   LIVE_TRANSCRIPT_ENTRANCE_TIMING,
   VOICE_PILL_FOOTPRINT,
+  resolveLiveTranscriptStageDurationMs,
   resolveCompanionPillInteractive,
   resolveListeningEntrancePresentation,
   resolveLiveTranscriptEntrancePresentation,
@@ -24,6 +25,8 @@ import { LiquidCancelButton } from "./LiquidCancelButton";
 import { LiveTranscriptPanel, type LiveTranscriptPhase } from "./LiveTranscriptPanel";
 import { VoiceModePanelCore, type VoiceModePanelStage } from "./VoiceModePanelCore";
 import { VoicePill, type VoicePillState } from "./VoicePill";
+import type { DictationActivationState } from "./VoicePill";
+import { useSettingsStore } from "../../stores/settingsStore";
 import "../../styles/agent-dictation-pill.css";
 
 type DictationLifecycle = "idle" | "preparing" | "recording" | "processing";
@@ -44,9 +47,33 @@ const UNAVAILABLE_RESIZE = { success: false, message: "Window not available" };
 export default function AgentDictationPillOverlay() {
   const { t } = useTranslation();
   const [companionState, setCompanionState] = useState(DEFAULT_STATE);
+  const [dictationActivationState, setDictationActivationState] =
+    useState<DictationActivationState>("idle");
+  const transcriptionPreviewLayout = useSettingsStore((state) => state.transcriptionPreviewLayout);
   const [hovered, setHovered] = useState(false);
   const audioLevelRef = useRef<number | null>(null);
   const assistantOpenRef = useRef(false);
+
+  useEffect(() => {
+    let disposed = false;
+    let eventSeen = false;
+    const applyState = (state: DictationActivationState) => {
+      if (disposed) return;
+      eventSeen = true;
+      setDictationActivationState(state);
+    };
+    const unsubscribe = window.electronAPI.onDictationActivationStateChanged?.(applyState);
+    window.electronAPI
+      .getDictationActivationState?.()
+      .then((state) => {
+        if (!eventSeen) applyState(state);
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -127,13 +154,16 @@ export default function AgentDictationPillOverlay() {
     void window.electronAPI.setAgentDictationPillInteractivity?.(captureMouseEvents);
   }, [captureMouseEvents]);
 
-  const listeningEntrancePhase = useListeningEntrancePhase(isRecording);
+  // #563: lifecycle "preparing" is a dictation start still opening the mic;
+  // it arms the pill (listening shape, still bars) rather than processing.
+  const listeningEntrancePhase = useListeningEntrancePhase(isRecording, { isArming: isPreparing });
   useLayoutEffect(() => {
     if (!isRecording) audioLevelRef.current = null;
   }, [isRecording]);
 
   const listeningEntrance = resolveListeningEntrancePresentation({
     isRecording,
+    isArming: isPreparing,
     phase: listeningEntrancePhase,
   });
   const voiceActivity = resolveVoiceActivityPresentation({
@@ -159,18 +189,16 @@ export default function AgentDictationPillOverlay() {
     panelStartPosition: `bottom-${horizontalDirection}`,
     horizontalDirection,
   });
-  const voicePillTravelDuration =
+  const voicePillTravelDuration = resolveLiveTranscriptStageDurationMs(
     liveTranscript.open && liveTranscript.entrancePhase === "encapsulate"
       ? LIVE_TRANSCRIPT_ENTRANCE_TIMING.encapsulateMs
-      : LIVE_TRANSCRIPT_ENTRANCE_TIMING.horizontalMs;
+      : LIVE_TRANSCRIPT_ENTRANCE_TIMING.horizontalMs
+  );
   const state = (listeningEntrance.activeState ||
     voiceActivity.activeState ||
-    (isPreparing
-      ? "processing"
-      : hovered && companionState.interactive
-        ? "hover"
-        : "idle")) as VoicePillState;
-  const expanded = isRecording ? listeningEntrance.compactPill : voiceActivity.compactPill;
+    (hovered && companionState.interactive ? "hover" : "idle")) as VoicePillState;
+  const expanded =
+    isRecording || isPreparing ? listeningEntrance.compactPill : voiceActivity.compactPill;
   // Same liquid cancel as the main pill (App.jsx): footprint targets for the
   // skin's geometry tween, and the pill goes headless while the skin owns the
   // fused surface.
@@ -194,11 +222,13 @@ export default function AgentDictationPillOverlay() {
   });
   const label = isRecording
     ? t("app.mic.recording")
-    : isProcessing || isPreparing
-      ? t("app.mic.processing")
-      : canReopenLiveTranscript
-        ? t("transcriptionPreview.label")
-        : t("app.mic.clickToSpeak");
+    : isPreparing
+      ? t("app.mic.waitingForMicrophone")
+      : isProcessing
+        ? t("app.mic.processing")
+        : canReopenLiveTranscript
+          ? t("transcriptionPreview.label")
+          : t("app.mic.clickToSpeak");
   const getAudioLevel = useCallback(() => audioLevelRef.current, []);
 
   const activatePill = () => {
@@ -236,6 +266,7 @@ export default function AgentDictationPillOverlay() {
             liquidFused={cancelSkinActive}
             showExpandChevron={canReopenLiveTranscript && hovered}
             getAudioLevel={getAudioLevel}
+            activationState={dictationActivationState}
             horizontalDirection={horizontalDirection}
             role={pillInteractive ? "button" : "status"}
             aria-label={label}
@@ -267,6 +298,7 @@ export default function AgentDictationPillOverlay() {
         label={t("transcriptionPreview.label")}
         measurementRevision={liveTranscript.measurementText}
         onPreferredHeightChange={liveTranscript.requestHeight}
+        transcriptionPreviewLayout={transcriptionPreviewLayout}
       >
         {liveTranscript.mounted && (
           <LiveTranscriptPanel
@@ -278,6 +310,7 @@ export default function AgentDictationPillOverlay() {
             contentVisible={liveTranscriptEntrance.contentVisible}
             onCollapse={() => liveTranscript.close({ suppress: true })}
             onHoldChange={liveTranscript.holdFinal}
+            layout={transcriptionPreviewLayout}
           />
         )}
       </VoiceModePanelCore>

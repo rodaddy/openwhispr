@@ -3,8 +3,10 @@ import { getSettings, selectResolvedMeetingTranscription } from "./settingsStore
 import { useStreamingProvidersStore } from "./streamingProvidersStore";
 import { getStreamingTranscriptionProviders } from "../models/ModelRegistry";
 import { resolveMeetingTranscriptionOptions } from "../helpers/meetingTranscriptionRouting";
-import { followsSystemDefaultMic } from "../helpers/micSelectionRecovery";
-import { resolvePreferredMicrophone } from "../helpers/microphoneSelection";
+import {
+  getLarkM2TrackAvailability,
+  resolvePreferredMicrophone,
+} from "../helpers/microphoneSelection";
 import { ActiveMicRecoveryController } from "../helpers/activeMicRecovery";
 import { getBaseLanguageCode } from "../utils/languageSupport";
 import {
@@ -37,7 +39,11 @@ import {
 import { parseTranscriptSegments } from "../utils/parseTranscriptSegments";
 import { resolveDiarizationTarget, selectBaseSegments } from "../utils/diarizationCompletion";
 import { createSerialQueue } from "../utils/serialQueue";
-import { reduceMeetingSegmentEvent, type MeetingSegmentEvent } from "./meetingSegmentReducer";
+import {
+  dropMicCopiesOfHighlights,
+  reduceMeetingSegmentEvent,
+  type MeetingSegmentEvent,
+} from "./meetingSegmentReducer";
 import {
   canStopMeetingRecordingSession,
   createMeetingRecordingStartCoordinator,
@@ -50,8 +56,11 @@ import { persistFinalTranscriptAroundStop } from "../helpers/meetingTranscriptPe
 export interface TranscriptSegment {
   id: string;
   text: string;
-  source: "mic" | "system";
+  /** "highlight": an aside the note owner recorded with the dictation hotkey during the meeting. */
+  source: "mic" | "system" | "highlight";
   timestamp?: number;
+  /** Highlights only: when the dictation take stopped. `timestamp` is when it started. */
+  endTimestamp?: number;
   speaker?: string;
   speakerName?: string;
   speakerIsPlaceholder?: boolean;
@@ -158,6 +167,8 @@ const getMeetingTranscriptionOptions = () => {
     cortiEnvironment: state.cortiEnvironment,
     cortiTenant: state.cortiTenant,
     keyterms: (state.customDictionary ?? []).filter(Boolean),
+    remoteTranscriptionUrl: resolved.remoteTranscriptionUrl,
+    remoteTranscriptionModel: state.remoteTranscriptionModel,
   });
 };
 
@@ -296,12 +307,14 @@ export const primeMeetingWorklet = () => {
 };
 
 const getMeetingMicConstraints = async (
-  refreshSystemDefault = false
+  refreshSystemDefault = false,
+  excludedDeviceIds: Set<string> | null = null
 ): Promise<MediaStreamConstraints> => {
   try {
     const resolution = await resolvePreferredMicrophone({
       settings: getSettings(),
       refreshSystemDefault,
+      excludedDeviceIds,
     });
     if (resolution.device?.deviceId) {
       logger.debug(
@@ -316,7 +329,13 @@ const getMeetingMicConstraints = async (
         },
       };
     }
+    if (resolution.mode === "automatic") {
+      const error = new Error("No available microphone matched the automatic selection policy");
+      error.name = "MicUnavailableError";
+      throw error;
+    }
   } catch (err) {
+    if ((err as Error).name === "MicUnavailableError") throw err;
     logger.debug(
       "Failed to resolve microphone for meeting transcription",
       { error: (err as Error).message },
@@ -325,6 +344,22 @@ const getMeetingMicConstraints = async (
   }
 
   return { audio: MEETING_MIC_PRIMARY_AUDIO_CONSTRAINTS };
+};
+
+const acquireAutomaticMeetingMic = async (
+  failedDeviceIds: Set<string> = new Set()
+): Promise<MediaStream> => {
+  const constraints = await getMeetingMicConstraints(true, failedDeviceIds);
+  try {
+    return await navigator.mediaDevices.getUserMedia(constraints);
+  } catch (error) {
+    const deviceId = (constraints.audio as MediaTrackConstraints | undefined)?.deviceId as
+      { exact?: string } | undefined;
+    if (!deviceId?.exact || failedDeviceIds.has(deviceId.exact)) throw error;
+    const nextFailed = new Set(failedDeviceIds);
+    nextFailed.add(deviceId.exact);
+    return acquireAutomaticMeetingMic(nextFailed);
+  }
 };
 
 const createAudioPipeline = async ({
@@ -879,6 +914,9 @@ export async function startRecording(args: StartRecordingArgs): Promise<boolean>
       });
       const micCapturePromise = getMeetingMicConstraints().then(async (constraints) => {
         if (!isCurrentStart()) return null;
+        if (getSettings().microphoneSelectionMode === "automatic") {
+          return acquireAutomaticMeetingMic();
+        }
         try {
           return await navigator.mediaDevices.getUserMedia(constraints);
         } catch (err) {
@@ -1014,6 +1052,8 @@ export async function startRecording(args: StartRecordingArgs): Promise<boolean>
               // reduction inserts into that snapshot. Reads of segmentsRefValue (assignProvisionalSpeaker)
               // still see the previous segments, exactly as before the reducer extraction.
               decorateFinal: (rawSegment) => {
+                // A highlight is the note owner's own aside; no speaker inference applies.
+                if (rawSegment.source === "highlight") return rawSegment;
                 let decorated = rawSegment;
                 for (let i = speakerIdentifications.length - 1; i >= 0; i -= 1) {
                   decorated = applySpeakerIdentification(decorated, speakerIdentifications[i]);
@@ -1044,6 +1084,11 @@ export async function startRecording(args: StartRecordingArgs): Promise<boolean>
             return;
           }
 
+          if (reduction.kind === "suppressed") {
+            useMeetingRecordingStore.setState({ micPartial: reduction.state.micPartial });
+            return;
+          }
+
           if (reduction.kind === "partial") {
             if (reduction.source === "mic") {
               useMeetingRecordingStore.setState({ micPartial: reduction.state.micPartial });
@@ -1066,7 +1111,12 @@ export async function startRecording(args: StartRecordingArgs): Promise<boolean>
           segmentsRefValue = reduction.state.segments;
           // Only the cleared partial goes in the payload (spreading both partial fields would add a
           // key the pre-reducer code never wrote), so derive it from the inserted segment's source.
-          const partialPatch = seg.source === "mic" ? { micPartial: "" } : { systemPartial: "" };
+          const partialPatch =
+            seg.source === "highlight"
+              ? {}
+              : seg.source === "mic"
+                ? { micPartial: "" }
+                : { systemPartial: "" };
           useMeetingRecordingStore.setState({
             segments: reduction.state.segments,
             transcript: buildTranscriptText(reduction.state.segments),
@@ -1162,7 +1212,7 @@ export async function startRecording(args: StartRecordingArgs): Promise<boolean>
           { error: err },
           "meeting"
         );
-        if (isRecordingFlag) void stopRecording(sessionId);
+        if (isRecordingFlag) void stopRecording(sessionId, "stream-connection-lost");
       });
       if (fatalErrorCleanup) ipcCleanups.push(fatalErrorCleanup);
 
@@ -1312,9 +1362,15 @@ export async function startRecording(args: StartRecordingArgs): Promise<boolean>
             micStream = replacement;
             logger.info("Meeting microphone capture recovered", {}, "meeting");
           },
+          isActiveAvailable: (track) => getLarkM2TrackAvailability(track),
+          onActiveLoss: async () => {
+            if (activeRecordingSessionId === sessionId && isRecordingFlag) {
+              await stopRecording(sessionId, "mic-lost");
+            }
+          },
         });
         await micRecovery.start(micStream, {
-          followDefault: followsSystemDefaultMic(getSettings()),
+          followDefault: false,
         });
         if (!isCurrentStart()) {
           await teardownStart();
@@ -1481,9 +1537,21 @@ export interface StopRecordingResult {
   stopped: boolean;
 }
 
-export async function stopRecording(expectedSessionId?: string): Promise<StopRecordingResult> {
+// Logging only: every stop names its cause so a lost recording can be traced.
+export type MeetingStopReason =
+  "manual" | "calendar-end" | "stream-connection-lost" | "mic-lost" | `auto-end:${string}`;
+
+export async function stopRecording(
+  expectedSessionId?: string,
+  reason: MeetingStopReason = "manual"
+): Promise<StopRecordingResult> {
   const canceledStart = meetingRecordingStartCoordinator.cancelActiveStart(expectedSessionId);
   if (canceledStart) {
+    logger.info(
+      "Meeting recording start canceled by stop",
+      { sessionId: expectedSessionId ?? null, reason },
+      "meeting"
+    );
     isRecordingFlag = false;
     isStartingFlag = false;
     useMeetingRecordingStore.setState({ isRecording: false, isTranscribing: false });
@@ -1525,6 +1593,11 @@ export async function stopRecording(expectedSessionId?: string): Promise<StopRec
     // that view is unmounted, and any view-scoped saver dies with it. (Delayed
     // diarization results are persisted by the module-level listener below.)
     const { recordingNoteId, segments: finalSegments } = useMeetingRecordingStore.getState();
+    logger.info(
+      "Meeting recording stopping",
+      { sessionId, noteId: recordingNoteId, reason, segmentCount: finalSegments.length },
+      "meeting"
+    );
     const persistTranscript = async (transcript: string) => {
       if (recordingNoteId == null) return;
       try {
@@ -1689,10 +1762,13 @@ if (typeof window !== "undefined") {
       });
       const enriched = mergeTranscriptSegments(
         existing,
-        data.segments.map((segment, index) => ({
-          ...segment,
-          id: segment.id || `diarized-${index}`,
-        }))
+        dropMicCopiesOfHighlights(
+          existing,
+          data.segments.map((segment, index) => ({
+            ...segment,
+            id: segment.id || `diarized-${index}`,
+          }))
+        )
       );
 
       try {

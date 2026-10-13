@@ -6,6 +6,7 @@ import { useToast } from "./ui/useToast";
 import { Toggle } from "./ui/toggle";
 import { useSettingsLayout } from "./ui/useSettingsLayout";
 import logger from "../utils/logger";
+import { formatBytes } from "../utils/formatBytes";
 
 export default function DeveloperSection() {
   const { t } = useTranslation();
@@ -16,6 +17,29 @@ export default function DeveloperSection() {
   const [isToggling, setIsToggling] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
   const { toast } = useToast();
+  const [logsUsage, setLogsUsage] = useState({ fileCount: 0, totalBytes: 0 });
+
+  const loadLogsUsage = useCallback(() => {
+    window.electronAPI
+      ?.getLogsUsage?.()
+      .then((usage) => {
+        if (usage) setLogsUsage(usage);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    loadLogsUsage();
+  }, [loadLogsUsage]);
+
+  const handleClearLogs = async () => {
+    try {
+      await window.electronAPI?.clearLogs?.();
+    } catch {
+      // silent fail
+    }
+    loadLogsUsage();
+  };
 
   const loadDebugState = useCallback(async () => {
     try {
@@ -188,6 +212,34 @@ export default function DeveloperSection() {
             </Button>
           </div>
         )}
+
+        {/* Log files usage */}
+        <div className="px-5 py-4">
+          <div className="flex items-center justify-between gap-6">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-foreground">
+                {t("developerSection.logFiles.label")}
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                {logsUsage.fileCount > 0
+                  ? t("developerSection.logFiles.usage", {
+                      count: logsUsage.fileCount,
+                      size: formatBytes(logsUsage.totalBytes),
+                    })
+                  : t("developerSection.logFiles.empty")}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs shrink-0"
+              disabled={logsUsage.fileCount === 0}
+              onClick={handleClearLogs}
+            >
+              {t("developerSection.logFiles.clear")}
+            </Button>
+          </div>
+        </div>
       </div>
 
       {/* What gets logged */}

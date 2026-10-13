@@ -16,7 +16,10 @@ export default class FakeAudioManager {
     globalThis.__clipboardPersistenceAudioManager = this;
   }
   getState() {
-    return {};
+    return globalThis.__clipboardPersistenceManagerState ?? {};
+  }
+  stopRecording() {
+    return true;
   }
   setCallbacks(callbacks) {
     this.callbacks = callbacks;
@@ -26,6 +29,11 @@ export default class FakeAudioManager {
   }
   saveTranscription(...args) {
     return globalThis.__saveClipboardPersistenceTranscription(...args);
+  }
+  async safePaste(text, options) {
+    globalThis.__clipboardPersistencePastes.push({ text, options });
+    this.lastPasteOutcome = globalThis.__clipboardPersistencePasteOutcome ?? null;
+    return globalThis.__clipboardPersistencePasteSucceeds !== false;
   }
   shouldUseStreaming() {
     return false;
@@ -74,6 +82,8 @@ async function mountCompletionHarness(
     writeClipboard = async () => ({ success: true }),
     replaceSelectedText = async () => ({ success: true }),
     saveTranscription = async () => true,
+    pasteSucceeds = true,
+    pasteOutcome = null,
   }
 ) {
   let root = null;
@@ -101,7 +111,10 @@ async function mountCompletionHarness(
   });
 
   const bridgeWrites = [];
+  const remembered = [];
   const saves = [];
+  let savesResolved = 0;
+  const latencyRecords = [];
   const noopDispose = () => () => {};
   installBrowserGlobals(t, {
     window: {
@@ -122,6 +135,14 @@ async function mountCompletionHarness(
           return writeClipboard(text);
         },
         replaceSelectedText,
+        async rememberLastDictation(text) {
+          remembered.push(text);
+          return { success: true };
+        },
+        async recordDictationLatency(input) {
+          latencyRecords.push({ input, savesResolved });
+          return { success: true, updated: true };
+        },
       },
     },
   });
@@ -138,9 +159,15 @@ async function mountCompletionHarness(
     ...settings,
   };
   globalThis.__clipboardPersistenceLogs = [];
+  globalThis.__clipboardPersistencePastes = [];
+  globalThis.__clipboardPersistencePasteSucceeds = pasteSucceeds;
+  globalThis.__clipboardPersistencePasteOutcome = pasteOutcome;
+  globalThis.__clipboardPersistenceManagerState = {};
   globalThis.__saveClipboardPersistenceTranscription = async (...args) => {
     saves.push(args);
-    return saveTranscription(...args);
+    const persisted = await saveTranscription(...args);
+    savesResolved += 1;
+    return persisted;
   };
 
   const vite = await createRendererServer(t, {
@@ -156,8 +183,10 @@ async function mountCompletionHarness(
   });
   const { useAudioRecording } = await vite.ssrLoadModule("/hooks/useAudioRecording.js");
 
+  const toasts = [];
+  let hook = null;
   function Harness() {
-    useAudioRecording(NOOP, { onDemoEvent: NOOP });
+    hook = useAudioRecording((toast) => toasts.push(toast), { onDemoEvent: NOOP });
     return null;
   }
 
@@ -173,8 +202,32 @@ async function mountCompletionHarness(
         await globalThis.__clipboardPersistenceAudioManager.complete(result);
       });
     },
+    // Releases the hotkey on a live take. The second stop ends the release
+    // tail at once, as a second press does.
+    release: async () => {
+      globalThis.__clipboardPersistenceManagerState = { isRecording: true };
+      await React.act(async () => {
+        const stopped = hook.stopRecording();
+        void hook.stopRecording();
+        await stopped;
+      });
+      globalThis.__clipboardPersistenceManagerState = {};
+    },
+    // A stop with no live take: the manager is already transcribing.
+    stopNothing: async () => {
+      let stopped;
+      await React.act(async () => {
+        stopped = await hook.stopRecording();
+      });
+      return stopped;
+    },
+    toasts,
+    readout: () => hook.latencyReadout,
+    latencyRecords,
     logs: globalThis.__clipboardPersistenceLogs,
     navigatorWrites,
+    pastes: globalThis.__clipboardPersistencePastes,
+    remembered,
     saves,
   };
 }
@@ -354,3 +407,162 @@ test("the Insights timestamp rides along on the persistence call", async (t) => 
     ],
   ]);
 });
+
+test("a normal dictation paste carries the auto-submit setting and its word floor", async (t) => {
+  const result = { success: true, text: "run the test suite", source: "openai" };
+  const harness = await mountCompletionHarness(t, {
+    settings: {
+      autoPasteEnabled: true,
+      dictationAutoSubmit: true,
+      dictationAutoSubmitMinWords: 5,
+    },
+  });
+
+  await harness.complete(result);
+  globalThis.__clipboardPersistenceSettings.dictationAutoSubmit = false;
+  await harness.complete(result);
+
+  assert.deepEqual(
+    harness.pastes.map(({ options }) => [options.autoSubmit, options.autoSubmitMinWords]),
+    [
+      [true, 5],
+      [false, 5],
+    ]
+  );
+});
+
+test("a dictation is remembered for paste-last with auto-paste off, as the clipboard keeps it", async (t) => {
+  const harness = await mountCompletionHarness(t, { settings: { autoPasteEnabled: false } });
+
+  await harness.complete({
+    success: true,
+    text: "Final text",
+    rawText: "Raw text",
+    source: "openai",
+  });
+
+  assert.deepEqual(harness.remembered, ["Final text"]);
+  assert.deepEqual(harness.pastes, []);
+});
+
+const LATENCY_TITLE = / ms$/;
+const dictation = { success: true, text: "run the test suite", source: "openai" };
+
+test("a pasted dictation's release-to-pasted time is the hook's readout, with no toast", async (t) => {
+  const harness = await mountCompletionHarness(t, {
+    settings: { autoPasteEnabled: true, dictationShowLatency: true },
+  });
+
+  await harness.release();
+  await harness.complete(dictation);
+
+  const readout = harness.readout();
+  assert.ok(Number.isInteger(readout.lastMs));
+  assert.equal(readout.lastMs, harness.latencyRecords[0].input.latencyMs);
+  assert.equal(readout.sampleCount, 1);
+  assert.deepEqual(
+    harness.toasts.filter(({ title }) => LATENCY_TITLE.test(title)),
+    []
+  );
+});
+
+test("a second stop while a take is transcribed keeps its latency readout", async (t) => {
+  const harness = await mountCompletionHarness(t, {
+    settings: { autoPasteEnabled: true, dictationShowLatency: true },
+  });
+
+  await harness.release();
+  assert.equal(await harness.stopNothing(), false);
+  await harness.complete(dictation);
+
+  assert.ok(Number.isInteger(harness.readout().lastMs));
+});
+
+test("a failed paste leaves the latency readout empty", async (t) => {
+  const harness = await mountCompletionHarness(t, {
+    settings: { autoPasteEnabled: true, dictationShowLatency: true },
+    pasteSucceeds: false,
+  });
+
+  await harness.release();
+  await harness.complete(dictation);
+
+  assert.deepEqual(harness.pastes.length, 1);
+  assert.equal(harness.readout(), null);
+});
+
+test("a pasted dictation's latency is stored on its Insights row once the save has resolved", async (t) => {
+  const harness = await mountCompletionHarness(t, {
+    settings: { autoPasteEnabled: true },
+    // Slower than the paste: a record sent before the save would see 0 saves.
+    saveTranscription: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return true;
+    },
+  });
+
+  await harness.release();
+  await harness.complete({ ...dictation, clientTranscriptionId: "client-latency" });
+
+  assert.equal(harness.latencyRecords.length, 1);
+  const [{ input, savesResolved }] = harness.latencyRecords;
+  assert.equal(input.eventId, "client-latency");
+  assert.ok(Number.isInteger(input.latencyMs));
+  assert.equal(savesResolved, 1);
+});
+
+// Local and BYOK results arrive with no id: the save and the latency must
+// still name the same Insights row.
+test("a dictation with no id of its own is saved and timed under one id", async (t) => {
+  const harness = await mountCompletionHarness(t, {
+    settings: { autoPasteEnabled: true },
+  });
+
+  await harness.release();
+  await harness.complete(dictation);
+
+  assert.equal(harness.latencyRecords.length, 1);
+  const { eventId } = harness.latencyRecords[0].input;
+  assert.ok(typeof eventId === "string" && eventId.length > 0);
+  assert.equal(harness.saves[0][2].clientTranscriptionId, eventId);
+});
+
+test("a failed paste stores no latency", async (t) => {
+  const harness = await mountCompletionHarness(t, {
+    settings: { autoPasteEnabled: true },
+    pasteSucceeds: false,
+  });
+
+  await harness.release();
+  await harness.complete({ ...dictation, clientTranscriptionId: "client-latency" });
+
+  assert.equal(harness.pastes.length, 1);
+  assert.deepEqual(harness.latencyRecords, []);
+});
+
+// #658: a planned Return that was withheld leaves the text on the command
+// line; the next auto-submitted dictation would send both.
+const WITHHELD_TITLE = "hooks.audioRecording.autoSubmit.withheldTitle";
+
+for (const [name, outcome, expected] of [
+  [
+    "a withheld Return shows the text-on-the-line toast",
+    { submitted: false, submitPlanned: true },
+    1,
+  ],
+  ["a sent Return shows no withheld toast", { submitted: true, submitPlanned: true }, 0],
+  ["no planned Return shows no withheld toast", { submitted: false, submitPlanned: false }, 0],
+]) {
+  test(name, async (t) => {
+    const harness = await mountCompletionHarness(t, {
+      settings: { autoPasteEnabled: true, dictationAutoSubmit: true },
+      pasteOutcome: { pasted: true, ...outcome },
+    });
+
+    await harness.complete(dictation);
+
+    const shown = harness.toasts.filter(({ title }) => title === WITHHELD_TITLE);
+    assert.equal(shown.length, expected);
+    if (expected) assert.equal(shown[0].duration, 4000);
+  });
+}

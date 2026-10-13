@@ -34,7 +34,7 @@ interface CompactOnboardingFrameProps {
   showLegalNotice?: boolean;
   /**
    * AuthenticationStep and EmailVerificationStep also render inside the control
-   * panel's SignInDialog, where the compact window chrome makes no sense: the
+   * compact onboarding frame, where the expanded window chrome makes no sense: the
    * min-h-screen surface would blow out the dialog, and the --onboarding-*
    * tokens only exist inside .onboarding-canvas. Embedded drops the chrome and
    * lets the dialog size to its content.
@@ -372,7 +372,7 @@ export function CompactOnboardingFrame({
           deliberately remains square and full-bleed: Electron owns the actual
           window clipping, so a second CSS radius cannot expose dark seams around
           the top or bottom edges. */}
-      <div className="relative z-10 mx-auto flex w-full max-w-[30rem] flex-1 flex-col">
+      <div className="relative z-10 mx-auto flex min-h-0 w-full max-w-[30rem] flex-1 flex-col">
         {children}
       </div>
 
@@ -380,7 +380,7 @@ export function CompactOnboardingFrame({
         <p className="relative z-10 mx-auto mt-auto w-full max-w-xs shrink-0 px-2 pb-4 pt-5 text-center text-sm leading-5 text-[var(--onboarding-text-secondary)]">
           {t("auth.legal.prefix")}{" "}
           <a
-            href="https://openwhispr.com/terms"
+            href="https://rtech-consulting.com/terms.html"
             target="_blank"
             rel="noopener noreferrer"
             className="text-[var(--onboarding-link)] transition-colors hover:opacity-80"
@@ -389,7 +389,7 @@ export function CompactOnboardingFrame({
           </a>{" "}
           {t("auth.legal.and")}{" "}
           <a
-            href="https://openwhispr.com/privacy"
+            href="https://rtech-consulting.com/privacy.html"
             target="_blank"
             rel="noopener noreferrer"
             className="text-[var(--onboarding-link)] transition-colors hover:opacity-80"

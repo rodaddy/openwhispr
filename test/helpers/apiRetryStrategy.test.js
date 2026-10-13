@@ -97,3 +97,36 @@ test("withRetry keeps retrying a 5xx up to maxRetries", async () => {
   );
   assert.equal(attempts, 3, "initial attempt plus two retries");
 });
+
+test("a long call does not retry its timeout, but still retries other network faults", async () => {
+  const { createApiRetryStrategy, llmTimeoutError } = await load();
+  const { shouldRetry } = createApiRetryStrategy({ timeoutSeconds: 600 });
+
+  assert.equal(shouldRetry(llmTimeoutError(600)), false);
+  assert.equal(
+    shouldRetry(Object.assign(new Error("timed out"), { name: "APIConnectionTimeoutError" })),
+    false
+  );
+  assert.equal(shouldRetry(Object.assign(new Error("timeout"), { status: 408 })), false);
+  assert.equal(shouldRetry(new Error("fetch failed")), true);
+  assert.equal(shouldRetry(Object.assign(new Error("unavailable"), { status: 503 })), true);
+});
+
+test("a long call stops retrying once a quarter of its timeout has passed", async (t) => {
+  const { createApiRetryStrategy } = await load();
+  t.mock.timers.enable({ apis: ["Date"], now: 0 });
+  const { shouldRetry } = createApiRetryStrategy({ timeoutSeconds: 600 });
+  const unavailable = Object.assign(new Error("unavailable"), { status: 503 });
+
+  t.mock.timers.tick(149_000);
+  assert.equal(shouldRetry(unavailable), true, "a fast failure still retries");
+  t.mock.timers.tick(1_000);
+  assert.equal(shouldRetry(unavailable), false, "a late failure does not");
+});
+
+test("the default strategy still retries a timeout", async () => {
+  const { createApiRetryStrategy, llmTimeoutError } = await load();
+  const { shouldRetry } = createApiRetryStrategy();
+
+  assert.equal(shouldRetry(llmTimeoutError(30)), true);
+});

@@ -10,7 +10,8 @@ import {
 } from "../../helpers/voicePillPresentation";
 
 export type VoicePillState =
-  "idle" | "hover" | "recording" | "processing" | "thinking" | "unavailable";
+  "idle" | "hover" | "arming" | "recording" | "processing" | "thinking" | "unavailable";
+export type DictationActivationState = "idle" | "held" | "latched";
 
 interface VoicePillProps extends Omit<HTMLAttributes<HTMLDivElement>, "children"> {
   variant: "floating" | "panel";
@@ -27,6 +28,9 @@ interface VoicePillProps extends Omit<HTMLAttributes<HTMLDivElement>, "children"
   showExpandChevron?: boolean;
   isDragging?: boolean;
   horizontalDirection?: "left" | "right";
+  activationState?: DictationActivationState;
+  /** Two short lines in the waveform slot of a resting compact pill (#699). */
+  caption?: { top: string; bottom?: string | null } | null;
 }
 
 // Sized from WAVEFORM_BAR_COUNT so a bar-count change can never silently
@@ -47,6 +51,8 @@ const COMPACT_CONTENT_GAP_PX = 6;
 const STATE_APPEARANCE: Record<VoicePillState, string> = {
   idle: "border-border-hover bg-surface-1 text-muted-foreground dark:border-border/50",
   hover: "border-border-hover bg-surface-3 text-foreground",
+  // #563: a start still opening the mic wears the listening chrome.
+  arming: "border-border-hover bg-surface-1 text-foreground",
   recording: "border-border-hover bg-surface-1 text-foreground",
   processing: "border-border/60 bg-surface-1 text-foreground/70",
   thinking: "border-border/60 bg-surface-1 text-foreground",
@@ -69,6 +75,9 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
     showExpandChevron = false,
     isDragging = false,
     horizontalDirection = "right",
+    activationState = "idle",
+    caption = null,
+    "aria-label": ariaLabel,
     className,
     style,
     ...props
@@ -76,6 +85,7 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
   ref
 ) {
   const isRecording = state === "recording";
+  const isArming = state === "arming";
   const isProcessing = state === "processing";
   const isThinking = state === "thinking";
   const isUnavailable = state === "unavailable";
@@ -87,13 +97,15 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
   const isPanel = variant === "panel";
   const collapseToIdentity = collapseToLogo || isThinking;
   const showCompactPill =
-    !collapseToIdentity && (isRecording || expanded || (isPanel && !waveformOnlyWhileRecording));
-  const showDivider = showCompactPill && waveformVisible && !isRecording;
+    !collapseToIdentity &&
+    (isRecording || isArming || expanded || (isPanel && !waveformOnlyWhileRecording));
+  const showDivider = showCompactPill && waveformVisible && !isRecording && !isArming;
   // The hidden divider's margins are what carry the compact pill's 6px
   // icon↔waveform gap; a visible divider keeps 4px flanking its 1px rule.
   const dividerMargin = showCompactPill ? (showDivider ? 4 : COMPACT_CONTENT_GAP_PX / 2) : 0;
   const identitySize = 22;
   const floatingHover = !isPanel && state === "hover";
+  const showCaption = Boolean(caption) && !isRecording && !isArming;
   const footprint = showCompactPill ? VOICE_PILL_FOOTPRINT.recording : VOICE_PILL_FOOTPRINT.idle;
 
   const pill = (
@@ -126,6 +138,11 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
       data-agent-mode={agentMode || undefined}
       data-agent-beam-active={(agentMode && isThinking) || undefined}
       data-expand-chevron={showExpandChevron || undefined}
+      aria-label={
+        isRecording && activationState !== "idle"
+          ? `${ariaLabel || "Recording"}, ${activationState === "held" ? "Held" : "Latched"}`
+          : ariaLabel
+      }
       {...props}
     >
       <div
@@ -184,8 +201,15 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
         }}
       >
         <div
-          className="absolute inset-0 flex items-center justify-center gap-0.75 transition-opacity duration-200 ease-out"
-          style={{ opacity: showCompactPill && waveformVisible && !isRecording ? 1 : 0 }}
+          className={cn(
+            "absolute inset-0 flex items-center justify-center gap-0.75",
+            // Arming pulses the resting bars: the press landed, no audio yet.
+            isArming && "animate-pulse",
+            "transition-opacity duration-200 ease-out"
+          )}
+          style={{
+            opacity: showCompactPill && waveformVisible && !isRecording && !showCaption ? 1 : 0,
+          }}
           aria-hidden="true"
         >
           {RESTING_WAVE_HEIGHTS.map((height, index) => (
@@ -200,10 +224,28 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
           getLevel={getAudioLevel}
           active={isRecording}
           className={cn(
-            "absolute inset-0 transition-opacity duration-200 ease-out",
+            "absolute inset-x-0 top-0 transition-[height,opacity] duration-200 ease-out",
+            isRecording && activationState !== "idle" ? "h-3.5" : "h-full",
             showCompactPill && waveformVisible && isRecording ? "opacity-100" : "opacity-0"
           )}
         />
+        {isRecording && activationState !== "idle" && (
+          <span
+            className="pointer-events-none absolute inset-x-0 bottom-0 flex h-[9px] items-center justify-center text-[9px] font-medium leading-[9px] text-muted-foreground"
+            data-dictation-activation-state={activationState}
+          >
+            {activationState === "held" ? "Held" : "Latched"}
+          </span>
+        )}
+        {showCaption && caption && (
+          <span
+            className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center whitespace-nowrap text-[9px] font-medium leading-[11px] tabular-nums"
+            data-dictation-latency-caption
+          >
+            <span className="text-foreground">{caption.top}</span>
+            {caption.bottom && <span className="text-muted-foreground">{caption.bottom}</span>}
+          </span>
+        )}
       </div>
 
       {isUnavailable && (

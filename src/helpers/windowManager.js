@@ -23,6 +23,14 @@ const {
   isDictationRecording,
   shouldBlockDictationWhilePanelOpen,
 } = require("./dictationLifecycle");
+const {
+  normalizeActivationMode,
+  usesKeyRelease,
+  toHotkeyRegistrationMode,
+  resolveDictationPress,
+  resolveDictationRelease,
+  resolveHoldStartDelayMs,
+} = require("./activationMode");
 const { DEV_SERVER_PORT } = DevServerManager;
 const AUTO_END_NOTIFICATION_LOAD_TIMEOUT_MS = 10_000;
 const DRAG_MOVE_TOLERANCE_PX = 2;
@@ -103,10 +111,14 @@ class WindowManager {
     this._panelStartPosition = "bottom-right";
     this._activeHorizontalDirection = null;
     this._isDictatingToggle = false;
+    this._dictationActiveSince = null;
     this._dictationLifecycleState = DICTATION_LIFECYCLE.IDLE;
+    this._dictationActivationState = "idle";
+    this._dictationLive = false;
     this._dictationInputKind = DICTATION_INPUT_KIND.DICTATION;
     this._assistantPanelOpen = false;
     this._assistantPanelBusy = false;
+    this._screenCaptureProtectionDepth = 0;
     this._pendingMeetingNoteNavigation = null;
     this._pendingNoteNavigation = null;
 
@@ -129,6 +141,7 @@ class WindowManager {
       ...MAIN_WINDOW_CONFIG,
       ...position,
     });
+    this._updateMainContentProtection();
 
     this.setMainWindowInteractivity(false);
     this.registerMainWindowEvents();
@@ -184,14 +197,32 @@ class WindowManager {
 
   _updateMainContentProtection() {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
-    this.mainWindow.setContentProtection(
-      Boolean(this._screenContextProtection || this._assistantPanelOpen)
-    );
+    this.mainWindow.setContentProtection(this._screenCaptureProtectionDepth > 0);
   }
 
-  setScreenContextProtection(enabled) {
-    this._screenContextProtection = Boolean(enabled);
+  setScreenContextProtection(_enabled) {
+    // Compatibility bridge for renderers that still sync the screen-context
+    // preference. Protection is scoped to the actual capture below so normal
+    // screenshots and screen shares can include the dictation UI.
     this._updateMainContentProtection();
+  }
+
+  _updateScreenCaptureProtection() {
+    this._updateMainContentProtection();
+    const pillWindow = this.agentDictationPillWindow;
+    if (!pillWindow || pillWindow.isDestroyed()) return;
+    pillWindow.setContentProtection(this._screenCaptureProtectionDepth > 0);
+  }
+
+  async withScreenContextProtection(capture) {
+    this._screenCaptureProtectionDepth += 1;
+    if (this._screenCaptureProtectionDepth === 1) this._updateScreenCaptureProtection();
+    try {
+      return await capture();
+    } finally {
+      this._screenCaptureProtectionDepth = Math.max(0, this._screenCaptureProtectionDepth - 1);
+      if (this._screenCaptureProtectionDepth === 0) this._updateScreenCaptureProtection();
+    }
   }
 
   // The pill window is created focusable:false so it never steals focus; the
@@ -584,7 +615,7 @@ class WindowManager {
       const activationMode = this.getActivationMode();
       const currentHotkey = triggeredHotkey || this.hotkeyManager.getCurrentHotkey?.();
 
-      if (process.platform === "linux" && activationMode === "push") {
+      if (process.platform === "linux" && usesKeyRelease(activationMode)) {
         if (phase === "down") {
           this.startWindowsPushToTalk(currentHotkey);
         } else if (phase === "up") {
@@ -596,7 +627,7 @@ class WindowManager {
 
       if (
         process.platform === "darwin" &&
-        activationMode === "push" &&
+        usesKeyRelease(activationMode) &&
         currentHotkey &&
         !isGlobeLikeHotkey(currentHotkey) &&
         currentHotkey.includes("+")
@@ -608,7 +639,7 @@ class WindowManager {
       // Push mode: defer to native listener (globalShortcut can't detect key-up)
       if (
         (process.platform === "win32" || process.platform === "linux") &&
-        activationMode === "push"
+        usesKeyRelease(activationMode)
       ) {
         return;
       }
@@ -623,11 +654,47 @@ class WindowManager {
     };
   }
 
+  // Hybrid mode: a press while a latched recording runs is the "stop" tap.
+  // Returns true when the press was consumed that way.
+  _consumeHybridStopPress() {
+    const activeForMs = this.dictationActiveForMs();
+    const action = resolveDictationPress({
+      mode: this.getActivationMode(),
+      isRecording: this.isDictationTakeActive(),
+      activeForMs,
+    });
+    if (action === "ignore") {
+      debugLogger.debug("Stop tap ignored — too soon after start", { activeForMs }, "ptt");
+      return true;
+    }
+    if (action !== "stop") return false;
+    this.sendStopDictation();
+    return true;
+  }
+
+  // Shared tail of every push/hybrid key release.
+  applyDictationRelease(action, wasRecording) {
+    if (action === "latch") {
+      // A tap released before the deferred start fired: start now, the
+      // recording stays on until the next press.
+      if (!wasRecording) this.sendStartDictation({ activationState: "latched" });
+      else this.setDictationActivationState("latched");
+      return;
+    }
+    if (action === "stop") {
+      this.sendStopDictation();
+      return;
+    }
+    this.sendCancelDictationPreparation();
+    this.hideDictationPanel();
+  }
+
   startMacCompoundPushToTalk(hotkey) {
     if (!this._isOnboardingInputAllowed("dictation")) return;
     if (this.macCompoundPushState?.active || this.isDictationProcessing()) {
       return;
     }
+    if (this._consumeHybridStopPress()) return;
 
     const requiredModifiers = this.getMacRequiredModifiers(hotkey);
     if (requiredModifiers.size === 0) {
@@ -657,16 +724,19 @@ class WindowManager {
       safetyTimeoutId,
     };
 
-    setTimeout(() => {
+    const startRecording = () => {
       if (!this.macCompoundPushState || this.macCompoundPushState.downTime !== downTime) {
         return;
       }
 
       if (!this.macCompoundPushState.isRecording) {
         this.macCompoundPushState.isRecording = true;
-        this.sendStartDictation();
+        this.sendStartDictation({ activationState: "held" });
       }
-    }, MIN_HOLD_DURATION_MS);
+    };
+    const holdDelayMs = resolveHoldStartDelayMs(this.getActivationMode(), MIN_HOLD_DURATION_MS);
+    if (holdDelayMs > 0) setTimeout(startRecording, holdDelayMs);
+    else startRecording();
   }
 
   handleMacPushModifierUp(modifier) {
@@ -683,14 +753,17 @@ class WindowManager {
     }
 
     const wasRecording = this.macCompoundPushState.isRecording;
+    const heldMs = Date.now() - this.macCompoundPushState.downTime;
     this.macCompoundPushState = null;
 
-    if (wasRecording) {
-      this.sendStopDictation();
-    } else {
-      this.sendCancelDictationPreparation();
-      this.hideDictationPanel();
-    }
+    this.applyDictationRelease(
+      resolveDictationRelease({
+        mode: this.getActivationMode(),
+        heldMs,
+        isRecording: wasRecording,
+      }),
+      wasRecording
+    );
   }
 
   forceStopMacCompoundPush(reason = "manual") {
@@ -764,6 +837,7 @@ class WindowManager {
     if (this.winPushState?.active || this.isDictationProcessing()) {
       return;
     }
+    if (this._consumeHybridStopPress()) return;
 
     const MIN_HOLD_DURATION_MS = 150;
     const MAX_PUSH_DURATION_MS = 300000;
@@ -775,7 +849,7 @@ class WindowManager {
     const safetyTimeoutId = setTimeout(() => {
       if (!this.winPushState || this.winPushState.downTime !== downTime) return;
       debugLogger.warn("Native PTT safety timeout", undefined, "ptt");
-      this.handleWindowsPushKeyUp();
+      this.handleWindowsPushKeyUp(undefined, { force: true });
     }, MAX_PUSH_DURATION_MS);
 
     this.winPushState = {
@@ -786,21 +860,24 @@ class WindowManager {
       safetyTimeoutId,
     };
 
-    setTimeout(() => {
+    const startRecording = () => {
       if (!this.winPushState || this.winPushState.downTime !== downTime) {
         return;
       }
 
       if (!this.winPushState.isRecording) {
         this.winPushState.isRecording = true;
-        this.sendStartDictation();
+        this.sendStartDictation({ activationState: "held" });
       }
-    }, MIN_HOLD_DURATION_MS);
+    };
+    const holdDelayMs = resolveHoldStartDelayMs(this.getActivationMode(), MIN_HOLD_DURATION_MS);
+    if (holdDelayMs > 0) setTimeout(startRecording, holdDelayMs);
+    else startRecording();
   }
 
   // With several dictation hotkeys bound, only the key that started the push
   // may stop it; called without a key to force-stop (resetWindowsPushState).
-  handleWindowsPushKeyUp(key) {
+  handleWindowsPushKeyUp(key, { force = false } = {}) {
     if (!this.winPushState?.active) {
       return;
     }
@@ -813,14 +890,18 @@ class WindowManager {
     }
 
     const wasRecording = this.winPushState.isRecording;
+    const heldMs = Date.now() - this.winPushState.downTime;
     this.winPushState = null;
 
-    if (wasRecording) {
-      this.sendStopDictation();
-    } else {
-      this.sendCancelDictationPreparation();
-      this.hideDictationPanel();
-    }
+    this.applyDictationRelease(
+      resolveDictationRelease({
+        mode: this.getActivationMode(),
+        heldMs,
+        isRecording: wasRecording,
+        force,
+      }),
+      wasRecording
+    );
   }
 
   resetWindowsPushState() {
@@ -828,7 +909,7 @@ class WindowManager {
       return;
     }
 
-    this.handleWindowsPushKeyUp();
+    this.handleWindowsPushKeyUp(undefined, { force: true });
   }
 
   _isOnboardingInputAllowed(inputKind) {
@@ -928,15 +1009,27 @@ class WindowManager {
   setDictationLifecycleState(state, inputKind = DICTATION_INPUT_KIND.DICTATION) {
     const nextState = normalizeDictationLifecycle(state);
     const nextInputKind = normalizeDictationInputKind(inputKind);
+    if (nextState === DICTATION_LIFECYCLE.IDLE) this.setDictationActivationState("idle");
     if (nextState === this._dictationLifecycleState && nextInputKind === this._dictationInputKind) {
       return;
     }
 
+    const wasProcessing = shouldIgnoreDictationHotkey(this._dictationLifecycleState);
     this._dictationLifecycleState = nextState;
     this._dictationInputKind = nextInputKind;
     this._isDictatingToggle = isDictationRecording(nextState);
+    // The take's clock starts at the press (preparing), so a stop tap that
+    // lands before "Recording started" is measured from the press (#549).
+    if (!this.isDictationTakeActive()) this._dictationActiveSince = null;
+    else if (this._dictationActiveSince === null) this._dictationActiveSince = performance.now();
     this.meetingDetectionEngine?.setUserRecording(this._isDictatingToggle);
     this._sendAgentDictationPillState();
+    this._updateDictationLive();
+    // Hotkey presses are dropped while a transcript is processing; the press
+    // handlers park the press and replay it from this hook.
+    if (wasProcessing && !shouldIgnoreDictationHotkey(nextState)) {
+      this.onDictationProcessingEnded?.();
+    }
   }
 
   _sendAgentDictationPillState() {
@@ -946,6 +1039,45 @@ class WindowManager {
       "agent-dictation-pill-state-changed",
       this.getAgentDictationPillState()
     );
+  }
+
+  setDictationActivationState(state) {
+    const nextState = state === "held" || state === "latched" ? state : "idle";
+    if (nextState === this._dictationActivationState) return;
+    this._dictationActivationState = nextState;
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send("dictation-activation-state-changed", nextState);
+    }
+    this._updateDictationLive();
+    const pillWindow = this.agentDictationPillWindow;
+    if (pillWindow && !pillWindow.isDestroyed() && this._agentDictationPillReady) {
+      pillWindow.webContents.send("dictation-activation-state-changed", nextState);
+    }
+  }
+
+  getDictationActivationState() {
+    return this._dictationActivationState;
+  }
+
+  // Whether a global dictation is live in any mode: a held/latched hotkey, or
+  // a recording the dictation renderer confirmed (tap/toggle sets no
+  // activation state). The control panel's grill drops a take that
+  // overlapped one (#80).
+  getDictationLive() {
+    return this._dictationLive;
+  }
+
+  _updateDictationLive() {
+    const live =
+      this._dictationActivationState !== "idle" ||
+      this._dictationLifecycleState === DICTATION_LIFECYCLE.PREPARING ||
+      this._dictationLifecycleState === DICTATION_LIFECYCLE.RECORDING;
+    if (live === this._dictationLive) return;
+    this._dictationLive = live;
+    const panel = this.controlPanelWindow;
+    if (panel && !panel.isDestroyed()) {
+      panel.webContents.send("dictation-live-changed", live);
+    }
   }
 
   getAgentDictationPillState() {
@@ -974,6 +1106,24 @@ class WindowManager {
     return shouldIgnoreDictationHotkey(this._dictationLifecycleState);
   }
 
+  isDictationRecording() {
+    return isDictationRecording(this._dictationLifecycleState);
+  }
+
+  // A take is active from the press (preparing) until it stops recording.
+  isDictationTakeActive() {
+    return (
+      this._dictationLifecycleState === DICTATION_LIFECYCLE.PREPARING ||
+      this._dictationLifecycleState === DICTATION_LIFECYCLE.RECORDING
+    );
+  }
+
+  // How long the current take has been active; Infinity when it is not.
+  // Monotonic, so a wall-clock step cannot make every stop tap look early.
+  dictationActiveForMs(now = performance.now()) {
+    return this._dictationActiveSince === null ? Infinity : now - this._dictationActiveSince;
+  }
+
   sendToggleDictation() {
     this._sendDictationToggle("toggle-dictation", "dictation");
   }
@@ -986,7 +1136,7 @@ class WindowManager {
     this._sendDictationToggle("toggle-translation", "translation");
   }
 
-  sendStartDictation() {
+  sendStartDictation({ activationState = "idle" } = {}) {
     if (!this._isOnboardingInputAllowed("dictation")) return;
     if (this._shouldBlockDictationInput("dictation")) {
       return;
@@ -1002,6 +1152,7 @@ class WindowManager {
       void this.selectionManager?.captureTarget?.();
       this.showDictationPanel({ reposition: true, targetPidPromise });
       this.mainWindow.webContents.send("start-dictation");
+      this.setDictationActivationState(activationState);
     }
   }
 
@@ -1009,6 +1160,7 @@ class WindowManager {
     if (this.hotkeyManager.isInListeningMode()) {
       return;
     }
+    this.setDictationActivationState("idle");
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send("stop-dictation");
     }
@@ -1031,6 +1183,7 @@ class WindowManager {
   }
 
   sendCancelDictationPreparation() {
+    this.setDictationActivationState("idle");
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send("cancel-dictation-preparation");
     }
@@ -1040,6 +1193,7 @@ class WindowManager {
     if (this.hotkeyManager.isInListeningMode()) {
       return;
     }
+    this.setDictationActivationState("idle");
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send("cancel-dictation-preparation");
       this.mainWindow.webContents.send("cancel-hotkey-pressed");
@@ -1062,8 +1216,9 @@ class WindowManager {
   }
 
   async setActivationModeCache(mode) {
-    const nextMode = mode === "push" ? "push" : "tap";
-    const success = await this.hotkeyManager.setActivationMode(nextMode);
+    const nextMode = normalizeActivationMode(mode);
+    // The hotkey layer only knows tap vs push; hybrid rides on push plumbing.
+    const success = await this.hotkeyManager.setActivationMode(toHotkeyRegistrationMode(nextMode));
     if (!success) return false;
     this._cachedActivationMode = nextMode;
     return true;
@@ -1077,7 +1232,7 @@ class WindowManager {
   reconcileNativeKeyListeners() {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
     if (this.hotkeyManager.isInListeningMode()) return;
-    const activationMode = this.getActivationMode();
+    const activationMode = toHotkeyRegistrationMode(this.getActivationMode());
     const nativeListenerKeys = this.hotkeyManager.getNativeListenerKeys(activationMode);
     // Native desktop shortcuts replace the low-level listener in tap mode. In
     // push mode, keep the dictation listener as a release-event fallback; the
@@ -1369,8 +1524,12 @@ class WindowManager {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
     this.mainWindow.webContents.send("preview-text", text);
     this._sendAgentDictationPreview("preview-text", text);
-    this.mainWindow.showInactive();
-    this.enforceMainWindowOnTop();
+    // Partials arrive several times a second; re-showing a visible window
+    // restacks it (and re-fires "show") on every chunk (#1262).
+    if (!this.mainWindow.isVisible()) {
+      this.mainWindow.showInactive();
+      this.enforceMainWindowOnTop();
+    }
   }
 
   appendTranscriptionPreview(text) {
@@ -1820,9 +1979,9 @@ class WindowManager {
         screen.on("display-added", this._agentDictationPillScreenListener);
         screen.on("display-removed", this._agentDictationPillScreenListener);
       }
-      // The companion exists only while the content-protected Agent panel is
-      // open; keep it out of screen shares along with the panel it accompanies.
-      pillWindow.setContentProtection(true);
+      // A companion created while the app captures screen context must join the
+      // same temporary exclusion as the main window.
+      pillWindow.setContentProtection(this._screenCaptureProtectionDepth > 0);
       this._applyAgentDictationPillClickThrough(pillWindow, true);
 
       pillWindow.on("closed", () => {
@@ -1835,6 +1994,10 @@ class WindowManager {
         if (this.agentDictationPillWindow !== pillWindow) return;
         this._agentDictationPillReady = true;
         this._sendAgentDictationPillState();
+        pillWindow.webContents.send(
+          "dictation-activation-state-changed",
+          this._dictationActivationState
+        );
         this.showAgentDictationPill();
       });
       pillWindow.webContents.on("render-process-gone", (_event, details) => {
@@ -2161,9 +2324,11 @@ class WindowManager {
     }
   }
 
-  showMeetingAutoEndNotification({ sessionId, expiresAt, reason }) {
+  // `phase: "confirm"` asks before stopping a live recording; without it the
+  // card offers to restart one that already stopped.
+  showMeetingAutoEndNotification({ sessionId, expiresAt, reason, phase }) {
     return this.showMeetingNotification(
-      { kind: "auto-end", sessionId, expiresAt, reason },
+      { kind: "auto-end", sessionId, expiresAt, reason, ...(phase ? { phase } : {}) },
       { autoDismissAt: expiresAt }
     );
   }

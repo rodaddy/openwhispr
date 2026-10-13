@@ -1,0 +1,24 @@
+[project]
+name = "rtech-voice-agent"
+version = "0.1.0"
+requires-python = "==3.12.*"
+dependencies = [
+  "httpx==0.28.1",
+  "livekit-agents==1.8.1",
+  "livekit-plugins-openai==1.8.1",
+  "livekit-plugins-silero==1.8.1",
+]
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voice_agent"]
+
+[dependency-groups]
+dev = ["pytest==8.4.2", "pytest-asyncio==1.2.0"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src"]

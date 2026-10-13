@@ -3,8 +3,8 @@ const EventEmitter = require("events");
 const fs = require("fs");
 const path = require("path");
 const http = require("http");
-const os = require("os");
 const debugLogger = require("./debugLogger");
+const { getCacheBaseRoot } = require("./cacheBaseRoot");
 const {
   findAvailablePort,
   resolveBinaryPath,
@@ -30,9 +30,7 @@ const MAX_RESTARTS_PER_SESSION = 3;
 const RESTART_EXIT_WAIT_MS = 2000;
 
 const STORAGE_DIR = path.join(
-  os.homedir(),
-  ".cache",
-  "openwhispr",
+  getCacheBaseRoot(),
   process.env.NODE_ENV === "development" ? "qdrant-data-dev" : "qdrant-data"
 );
 

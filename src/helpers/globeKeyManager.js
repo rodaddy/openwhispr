@@ -57,6 +57,36 @@ class GlobeKeyManager extends EventEmitter {
     }
   }
 
+  // Asks the resident listener to post ⌘V. Rejects when the listener is not
+  // running, reports a failure, or does not answer in time, so the caller can
+  // fall back to spawning the paste helper.
+  pasteViaListener({ timeoutMs = 400 } = {}) {
+    const child = this.process;
+    if (!child?.stdin?.writable || this._pendingPaste) {
+      return Promise.reject(new Error("listener unavailable"));
+    }
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._settlePendingPaste(new Error("listener paste timed out"));
+      }, timeoutMs);
+      this._pendingPaste = { resolve, reject, timer };
+      try {
+        child.stdin.write("PASTE\n");
+      } catch (error) {
+        this._settlePendingPaste(error);
+      }
+    });
+  }
+
+  _settlePendingPaste(error) {
+    const pending = this._pendingPaste;
+    if (!pending) return;
+    this._pendingPaste = null;
+    clearTimeout(pending.timer);
+    if (error) pending.reject(error);
+    else pending.resolve();
+  }
+
   _sendConfiguration() {
     const child = this.process;
     if (!child?.stdin?.writable) {
@@ -171,14 +201,27 @@ class GlobeKeyManager extends EventEmitter {
           } else if (line === "FN_INTERRUPTED") {
             this.emit("globe-interrupted");
           } else if (line.startsWith("RIGHT_MOD_DOWN:")) {
-            const modifier = line.replace("RIGHT_MOD_DOWN:", "").trim();
+            const [modifier, rawEventTimeMs] = line
+              .replace("RIGHT_MOD_DOWN:", "")
+              .trim()
+              .split(":");
+            const eventTimeMs = rawEventTimeMs ? Number(rawEventTimeMs) : undefined;
             if (modifier) {
-              this.emit("right-modifier-down", modifier);
+              this.emit(
+                "right-modifier-down",
+                modifier,
+                Number.isFinite(eventTimeMs) ? eventTimeMs : undefined
+              );
             }
           } else if (line.startsWith("RIGHT_MOD_UP:")) {
-            const modifier = line.replace("RIGHT_MOD_UP:", "").trim();
+            const [modifier, rawEventTimeMs] = line.replace("RIGHT_MOD_UP:", "").trim().split(":");
+            const eventTimeMs = rawEventTimeMs ? Number(rawEventTimeMs) : undefined;
             if (modifier) {
-              this.emit("right-modifier-up", modifier);
+              this.emit(
+                "right-modifier-up",
+                modifier,
+                Number.isFinite(eventTimeMs) ? eventTimeMs : undefined
+              );
             }
           } else if (line.startsWith("MODIFIER_UP:")) {
             const modifier = line.replace("MODIFIER_UP:", "").trim().toLowerCase();
@@ -195,6 +238,8 @@ class GlobeKeyManager extends EventEmitter {
             if (button) {
               this.emit("mouse-button-up", button);
             }
+          } else if (line === "PASTE_OK" || line.startsWith("PASTE_FAILED")) {
+            this._settlePendingPaste(line === "PASTE_OK" ? null : new Error(line));
           }
         });
     });
@@ -264,7 +309,7 @@ class GlobeKeyManager extends EventEmitter {
         this.reportError(
           new Error(
             `Globe key listener keeps exiting unexpectedly (${MAX_RESTART_ATTEMPTS} restarts failed). ` +
-              "Try restarting OpenWhispr."
+              "Try restarting rTech Whisper."
           )
         );
       }
@@ -281,6 +326,7 @@ class GlobeKeyManager extends EventEmitter {
       this.process.kill();
       this.process = null;
     }
+    this._settlePendingPaste(new Error("listener stopped"));
   }
 
   reportError(error) {

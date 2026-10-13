@@ -231,3 +231,268 @@ test("transducer models start the server without a language", async () => {
 
   assert.equal(startArgs[0][3], null);
 });
+
+// Idle unload (#640): manual timers, so nothing fires until the test says so.
+function fakeIdleTimers() {
+  const pending = new Map();
+  let nextId = 1;
+  return {
+    setTimeoutImpl(fn) {
+      const id = nextId++;
+      pending.set(id, fn);
+      return id;
+    },
+    clearTimeoutImpl(id) {
+      pending.delete(id);
+    },
+    pendingCount: () => pending.size,
+    fireAll() {
+      const fns = [...pending.values()];
+      pending.clear();
+      for (const fn of fns) fn();
+    },
+  };
+}
+
+function idleManagerWith(fake, timers) {
+  const manager = new ParakeetServerManager({
+    idleMs: 1000,
+    setTimeoutImpl: timers.setTimeoutImpl,
+    clearTimeoutImpl: timers.clearTimeoutImpl,
+  });
+  manager.isModelDownloaded = () => true;
+  fake.isAvailable = () => true;
+  fake.stops = 0;
+  fake.stop = async () => {
+    fake.stops += 1;
+  };
+  manager.wsServer = fake;
+  return manager;
+}
+
+test("an idle fire after a start stops the ws server exactly once", async () => {
+  const timers = fakeIdleTimers();
+  const fake = fakeWsServer([]);
+  const manager = idleManagerWith(fake, timers);
+
+  const started = await manager.startServer("parakeet-tdt-0.6b-v3");
+  assert.equal(started.success, true);
+  assert.equal(timers.pendingCount(), 1);
+
+  timers.fireAll();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(fake.stops, 1);
+  assert.equal(timers.pendingCount(), 0);
+});
+
+test("the idle stop does not fire while a transcribe is in flight", async () => {
+  const timers = fakeIdleTimers();
+  let pendingDuringCall = null;
+  const fake = fakeWsServer([{ text: "hello" }], {
+    onCall: () => {
+      pendingDuringCall = timers.pendingCount();
+      timers.fireAll();
+    },
+  });
+  const manager = idleManagerWith(fake, timers);
+
+  await manager.startServer("parakeet-tdt-0.6b-v3");
+  const result = await manager.transcribe(wavFromSeconds([{ seconds: 5 }]));
+
+  assert.equal(result.text, "hello");
+  assert.equal(pendingDuringCall, 0, "the pending idle stop is cancelled while in use");
+  assert.equal(fake.stops, 0);
+  assert.equal(timers.pendingCount(), 1, "finishing the transcribe re-arms the idle stop");
+
+  timers.fireAll();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fake.stops, 1);
+});
+
+test("a failed or aborted transcribe still releases the idle counter", async () => {
+  const timers = fakeIdleTimers();
+  const fake = fakeWsServer([]);
+  fake.transcribe = async () => {
+    throw new Error("decode failed");
+  };
+  const manager = idleManagerWith(fake, timers);
+
+  await assert.rejects(manager.transcribe(wavFromSeconds([{ seconds: 5 }])), /decode failed/);
+
+  assert.equal(manager.idleTimer.activeCount(), 0);
+  assert.equal(timers.pendingCount(), 1);
+});
+
+test("an explicit stopServer cancels the pending idle stop", async () => {
+  const timers = fakeIdleTimers();
+  const fake = fakeWsServer([]);
+  const manager = idleManagerWith(fake, timers);
+
+  await manager.startServer("parakeet-tdt-0.6b-v3");
+  assert.equal(timers.pendingCount(), 1);
+
+  await manager.stopServer();
+  assert.equal(fake.stops, 1);
+  assert.equal(timers.pendingCount(), 0);
+
+  timers.fireAll();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fake.stops, 1, "no second stop from the idle timer");
+});
+
+test("an online stream holds off the idle stop until it finishes, aborts or errors", async () => {
+  for (const endWith of ["finish", "abort", "error", "finish+abort"]) {
+    const timers = fakeIdleTimers();
+    const fake = fakeWsServer([]);
+    let streamOptions = null;
+    fake.createOnlineStream = (options) => {
+      streamOptions = options;
+      return { finish: async () => ({ text: "hi", truncated: false }), abort() {} };
+    };
+    const manager = idleManagerWith(fake, timers);
+    const errors = [];
+
+    await manager.startServer("parakeet-tdt-0.6b-v3");
+    const stream = manager.createOnlineStream({ onError: (error) => errors.push(error.message) });
+    assert.equal(timers.pendingCount(), 0, endWith);
+    assert.equal(manager.idleTimer.activeCount(), 1, endWith);
+
+    if (endWith === "error") {
+      streamOptions.onError(new Error("socket died"));
+      assert.deepEqual(errors, ["socket died"]);
+    } else {
+      if (endWith.includes("finish")) assert.equal((await stream.finish()).text, "hi");
+      if (endWith.includes("abort")) stream.abort();
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(manager.idleTimer.activeCount(), 0, `${endWith}: released exactly once`);
+    assert.equal(timers.pendingCount(), 1, endWith);
+    assert.equal(fake.stops, 0, endWith);
+  }
+});
+
+test("a stream that fails to open does not leak the idle counter", async () => {
+  const timers = fakeIdleTimers();
+  const fake = fakeWsServer([]);
+  fake.createOnlineStream = () => {
+    throw new Error("parakeet-ws server is not running");
+  };
+  const manager = idleManagerWith(fake, timers);
+
+  assert.throws(() => manager.createOnlineStream({}), /not running/);
+
+  assert.equal(manager.idleTimer.activeCount(), 0);
+});
+
+// A stop the test settles by hand. Mirrors wsServer.stop(), which keeps the
+// server looking ready until its process is gone.
+function deferredStopOn(fake) {
+  let release;
+  fake.stop = () => {
+    fake.stops += 1;
+    return new Promise((resolve) => {
+      release = resolve;
+    });
+  };
+  return () => release();
+}
+
+test("a start during an idle stop waits for it instead of reusing the dying server", async () => {
+  const timers = fakeIdleTimers();
+  const fake = fakeWsServer([]);
+  const manager = idleManagerWith(fake, timers);
+  await manager.startServer("parakeet-tdt-0.6b-v3");
+
+  const order = [];
+  const finishStop = deferredStopOn(fake);
+  fake.start = async () => {
+    order.push("start");
+  };
+
+  timers.fireAll();
+  assert.equal(fake.stops, 1);
+
+  const restarted = manager.startServer("parakeet-tdt-0.6b-v3");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(order, [], "no start while the idle stop is still in flight");
+
+  order.push("stopped");
+  finishStop();
+  assert.equal((await restarted).success, true);
+  assert.deepEqual(order, ["stopped", "start"]);
+});
+
+test("a transcribe during an idle stop waits for it, then restarts the server", async () => {
+  const timers = fakeIdleTimers();
+  const order = [];
+  const fake = fakeWsServer([{ text: "hello" }], { onCall: () => order.push("transcribe") });
+  const manager = idleManagerWith(fake, timers);
+  await manager.startServer("parakeet-tdt-0.6b-v3");
+
+  const finishStop = deferredStopOn(fake);
+  fake.start = async () => {
+    order.push("start");
+  };
+
+  timers.fireAll();
+  const pending = manager.transcribe(wavFromSeconds([{ seconds: 5 }]));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(order, [], "nothing reaches the server while the idle stop is in flight");
+
+  order.push("stopped");
+  finishStop();
+  assert.equal((await pending).text, "hello");
+  assert.deepEqual(order, ["stopped", "start", "transcribe"]);
+  assert.equal(fake.stops, 1);
+});
+
+test("a stream cannot open on a server that is being idle-stopped", async () => {
+  const timers = fakeIdleTimers();
+  const fake = fakeWsServer([]);
+  let opened = 0;
+  fake.createOnlineStream = () => {
+    opened += 1;
+    return { finish: async () => ({ text: "", truncated: false }), abort() {} };
+  };
+  const manager = idleManagerWith(fake, timers);
+  await manager.startServer("parakeet-tdt-0.6b-v3");
+
+  const finishStop = deferredStopOn(fake);
+  timers.fireAll();
+
+  assert.throws(() => manager.createOnlineStream({}), /stopping/);
+  assert.equal(opened, 0);
+  assert.equal(manager.idleTimer.activeCount(), 0);
+
+  finishStop();
+  await new Promise((resolve) => setImmediate(resolve));
+  manager.createOnlineStream({});
+  assert.equal(opened, 1, "a stream opens again once the stop has finished");
+});
+
+test("a transcribe cancelled during an idle stop rejects without converting the audio", async () => {
+  const timers = fakeIdleTimers();
+  const fake = fakeWsServer([]);
+  const manager = idleManagerWith(fake, timers);
+  await manager.startServer("parakeet-tdt-0.6b-v3");
+  let conversions = 0;
+  const ensureWav = manager._ensureWav.bind(manager);
+  manager._ensureWav = async (audioBuffer) => {
+    conversions += 1;
+    return ensureWav(audioBuffer);
+  };
+
+  const finishStop = deferredStopOn(fake);
+  timers.fireAll();
+  const controller = new AbortController();
+  const pending = manager.transcribe(wavFromSeconds([{ seconds: 5 }]), {
+    signal: controller.signal,
+  });
+  controller.abort();
+  finishStop();
+
+  await assert.rejects(pending, isAbortError);
+  assert.equal(conversions, 0);
+});

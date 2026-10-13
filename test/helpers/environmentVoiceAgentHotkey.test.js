@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const Module = require("node:module");
 
-const HOTKEY_ENV_KEYS = ["VOICE_AGENT_KEY", "CHAT_AGENT_KEY"];
+const HOTKEY_ENV_KEYS = ["VOICE_AGENT_KEY", "CHAT_AGENT_KEY", "ACTIVATION_MODE"];
 
 function snapshotEnvironment() {
   return new Map(
@@ -109,6 +109,28 @@ test("adopts a legacy chat-agent hotkey as the voice-agent hotkey", async (t) =>
   assert.equal(process.env.CHAT_AGENT_KEY, undefined);
   assert.match(persistedEnv, /^VOICE_AGENT_KEY=CommandOrControl\+;$/m);
   assert.doesNotMatch(persistedEnv, /^CHAT_AGENT_KEY=/m);
+});
+
+test("activation mode defaults to hybrid and preserves explicit stored modes", (t) => {
+  const userDataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-activation-mode-"));
+  const environmentSnapshot = snapshotEnvironment();
+  const originalResourcesPath = process.resourcesPath;
+  process.resourcesPath = userDataDirectory;
+  t.after(() => {
+    restoreEnvironment(environmentSnapshot);
+    process.resourcesPath = originalResourcesPath;
+    fs.rmSync(userDataDirectory, { recursive: true, force: true });
+  });
+
+  installDotenvStub(t);
+  delete process.env.ACTIVATION_MODE;
+  const EnvironmentManager = loadEnvironmentManager(t, userDataDirectory);
+  const environmentManager = new EnvironmentManager();
+  assert.equal(environmentManager.getActivationMode(), "hybrid");
+  for (const mode of ["tap", "push", "hybrid"]) {
+    process.env.ACTIVATION_MODE = mode;
+    assert.equal(environmentManager.getActivationMode(), mode);
+  }
 });
 
 test("device cleanup clears persisted settings and encrypted secret files", async (t) => {

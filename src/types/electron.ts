@@ -7,16 +7,170 @@ import type {
   ManagedEnterpriseRequestContext,
 } from "./enterpriseIdentity";
 import type { CalendarAvailabilityRequest, CalendarAvailabilityResult } from "./calendar";
+import type { GrillCalendarEvent } from "../services/grill/dailyQuestions";
+import type {
+  CrmGetSyncStateResult,
+  CrmListOpportunitiesResult,
+  CrmSaveSettingsInput,
+  CrmSearchContactsResult,
+  CrmSettingsResult,
+  CrmSyncResult,
+  CrmSyncTarget,
+  CrmTestConnectionResult,
+} from "./crm";
+import type {
+  PipelineGetSyncStateResult,
+  PipelineGrillMeta,
+  PipelineQuestionsResult,
+  PipelineSaveSettingsInput,
+  PipelineSendResult,
+  PipelineSettingsResult,
+  PipelineSubmitResult,
+  PipelineTestConnectionResult,
+} from "./pipeline";
 
 export type LocalTranscriptionProvider = "whisper" | "nvidia" | "cohere";
 
+/** One row of the stored grill question bank (`grill_questions`). */
+export interface GrillQuestionRow {
+  id: string;
+  section: "standard" | "chapter" | "day-template";
+  chapter: number | null;
+  source: string | null;
+  text: string;
+  position: number;
+  status: "active" | "retired";
+  created_at: string;
+  updated_at: string;
+}
+
+/** What the renderer hands main to seed the bank once, from the compiled bank. */
+export type GrillQuestionSeed = Pick<GrillQuestionRow, "section" | "text" | "position"> &
+  Partial<Pick<GrillQuestionRow, "chapter" | "source">>;
+
+export interface GrillQuestionBankResult {
+  questions: GrillQuestionRow[];
+  params: Record<string, unknown>;
+}
+
+/** What the editor hands main for a new question; main assigns id and position. */
+export type GrillQuestionDraft = Pick<GrillQuestionRow, "section" | "text"> &
+  Partial<Pick<GrillQuestionRow, "chapter" | "source">>;
+
+/** One audited change to a stored question (`grill_question_history`). */
+export interface GrillQuestionHistoryRow {
+  id: number;
+  question_id: string;
+  changed_at: string;
+  field: "created" | "text" | "status" | "position";
+  old_value: string | null;
+  new_value: string | null;
+  source: string;
+}
+
+/** Rico's verdict on a question. */
+export type GrillQuestionMarkValue = "good" | "weak" | "retire";
+
+/** One mark on a question, per note (`grill_question_marks`). */
+export interface GrillQuestionMarkRow {
+  id: number;
+  question_id: string;
+  note_id: number | null;
+  mark: GrillQuestionMarkValue;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+  sent_at: string | null;
+}
+
+/** Mark tallies keyed by question id; retired questions keep theirs. */
+export interface GrillTopicRow {
+  id: string;
+  text: string;
+  source: string;
+  source_ref: string | null;
+  status: "pending" | "used";
+  created_at: string;
+  used_at: string | null;
+}
+
+export type GrillQuestionMarkCounts = Record<string, Record<GrillQuestionMarkValue, number>>;
+
+/** One dump's outcome from brain-dumps:process; error means it was left alone. */
+export interface BrainDumpResult {
+  noteId: number;
+  actionId?: number;
+  kind?: "note" | "grill" | "todo";
+  /** Folder name, "To grill", or "Reminders". */
+  target?: string;
+  error?: string;
+}
+
+export interface BrainDumpActionRow {
+  id: number;
+  note_id: number;
+  kind: "note" | "grill" | "todo";
+  target_ref: string;
+  from_folder_id: number | null;
+  created_at: string;
+  undone_at: string | null;
+}
+
+/** brain-dumps:roundup-context: what a daily roundup summarizes. */
+export interface BrainDumpRoundupContext {
+  dumps: { title: string; content: string; createdAt: string }[];
+  actions: { kind: "note" | "grill" | "todo"; target: string; title: string; createdAt: string }[];
+  /** Highest local note id seen: the arrival cursor for the next run. */
+  lastNoteId: number;
+}
+
+export type GrillQuestionEditorResult<T> =
+  ({ success: true } & T) | { success: false; error: string };
+
+export type ShareFailure = { ok: false; code: string; status?: number };
+
+export type ShareResult = { ok: true; token: string; url: string } | ShareFailure;
+
+export type ShareStatus = { configured: boolean; baseUrl: string };
+
 export type ChineseScriptPreference = "simplified" | "traditional" | "as-transcribed";
+
+export interface LarkM2Status {
+  status: "connected" | "disconnected" | "unknown";
+  receiverPresent: boolean | null;
+  tx1Connected?: boolean;
+  tx2Connected?: boolean;
+}
+
+export interface TrayMicrophoneState {
+  devices: Array<{ deviceId: string; groupId: string; label: string; isBuiltIn: boolean }>;
+  mode: "automatic" | "system" | "built-in" | "specific";
+  selectedMicDeviceId: string;
+  resolvedActiveLabel: string;
+  captureActive: boolean;
+}
+
+export type TrayMicrophoneSelection = {
+  mode: "automatic" | "system" | "built-in" | "specific";
+  deviceId?: string;
+  label?: string;
+};
 
 export type InferenceMode = "openwhispr" | "providers" | "local" | "self-hosted" | "enterprise";
 
 export type SelfHostedType = "openai-compatible" | "lan";
 
 export type TranscriptionStatus = "completed" | "failed" | "pending" | "discarded";
+
+export interface HubDeviceKeyState {
+  hasKey: boolean;
+  generation: number;
+}
+
+export interface HubDeviceKeyResult extends HubDeviceKeyState {
+  success: boolean;
+  code?: string;
+}
 
 export interface PolicyFailureMetadata {
   error?: string;
@@ -61,6 +215,7 @@ export type NoteRecordingConfigResult =
   { success: true; providers: NoteRecordingProvider[] } | NoteRecordingConfigFailure;
 
 export type TranscriptionErrorCode =
+  | "AWAY_NO_LOCAL_ENGINE"
   | "TIMEOUT"
   | "NETWORK"
   | "SERVER_ERROR"
@@ -85,6 +240,20 @@ export interface MeetingDetectionNotificationData {
   event: { summary?: string | null } | null;
   variant: MeetingPromptVariant;
   joinUrl: string | null;
+  /** Present only on a calendar grill prompt (source "grill"). */
+  grill?: GrillCalendarMatch;
+}
+
+export type GrillKind = "daily" | "lifetime";
+
+export interface GrillCalendarMatch {
+  kind: GrillKind;
+  chapter: number | null;
+}
+
+/** Payload of the main -> renderer "grill:start" event. */
+export interface GrillStartRequest extends GrillCalendarMatch {
+  eventId: string | null;
 }
 
 /** Why auto-end concluded the meeting is over. */
@@ -95,17 +264,31 @@ export interface MeetingAutoEndNotificationData {
   sessionId: string;
   expiresAt: number;
   reason?: MeetingAutoEndReason;
+  /** "confirm": the recording is still live and stops at expiresAt unless kept. */
+  phase?: "confirm";
+}
+
+export interface MeetingCalendarEndNotificationData {
+  kind: "calendar-end";
+  sessionId: string;
+  eventId: string;
+  summary?: string;
 }
 
 export type MeetingNotificationData =
-  MeetingDetectionNotificationData | MeetingAutoEndNotificationData;
+  | MeetingDetectionNotificationData
+  | MeetingAutoEndNotificationData
+  | MeetingCalendarEndNotificationData;
 
 export interface MeetingAutoEndRequest {
   sessionId: string;
   reason?: MeetingAutoEndReason;
+  /** The user pressed Stop now: no "stopped automatically" notice. */
+  userConfirmed?: boolean;
 }
 
-export type MeetingAutoEndAction = "restart" | "dismiss";
+/** keep/stop answer the confirm card; restart/dismiss the post-stop card. */
+export type MeetingAutoEndAction = "keep" | "stop" | "restart" | "dismiss";
 
 export interface MeetingAutoEndRestartRequest {
   sessionId: string;
@@ -914,6 +1097,9 @@ export type LocalLLMDownloadProgressEvent =
       details?: unknown;
     };
 
+/** Which list a conversation belongs to: the chat list or the grill list. */
+export type ConversationKind = "chat" | "grill";
+
 export interface ConversationPreview {
   id: number;
   title: string;
@@ -929,6 +1115,7 @@ export interface ConversationPreview {
   message_count: number;
   last_message?: string | null;
   last_message_role?: "user" | "assistant" | "system" | null;
+  kind?: ConversationKind;
 }
 
 export interface ConversationCreateSnapshot {
@@ -966,6 +1153,336 @@ export interface ReferralItem {
 declare global {
   interface Window {
     electronAPI: {
+      // STT config
+      getSttConfig?: () => Promise<
+        | ({
+            success: boolean;
+            dictation?: { mode: string };
+            notes?: { mode: string };
+            streamingProvider?: string;
+          } & PolicyFailureMetadata)
+        | null
+      >;
+
+      // Org policy (see src/types/policy.ts)
+      getWorkspacePolicy?: (
+        accountId?: string,
+        expectedAuthGeneration?: number
+      ) => Promise<{
+        success: boolean;
+        status?: "network" | "cached" | "current" | "unsupported" | "restricted" | "error";
+        revision?: number;
+        accountId?: string | null;
+        authGeneration?: number | null;
+        managed?: boolean;
+        policy?: OrgPolicy | null;
+        policyUpdatedAt?: string | null;
+        endpointSupported?: boolean;
+        code?: string;
+        error?: string;
+        enforcementRequired?: boolean;
+      }>;
+      onWorkspacePolicyChanged?: (
+        callback: (
+          snapshot:
+            | {
+                success: true;
+                status: "network" | "cached" | "current" | "unsupported";
+                revision: number;
+                accountId: string | null;
+                authGeneration: number;
+                managed: boolean;
+                policy: OrgPolicy | null;
+                policyUpdatedAt: string | null;
+                endpointSupported: boolean;
+              }
+            | {
+                success: false;
+                status: "error";
+                revision: number;
+                accountId: string | null;
+                authGeneration: number;
+                code: "POLICY_UNRESOLVABLE";
+                error: string;
+              }
+        ) => void
+      ) => () => void;
+
+      getNoteRecordingConfig?: () => Promise<NoteRecordingConfigResult | null>;
+      getOAuthProtocolRegistered: () => Promise<boolean>;
+      getOAuthProtocol: () => Promise<string>;
+      getManagedEnterpriseConfig?: (
+        accountId: string,
+        workspaceId: string,
+        expectedAuthGeneration: number,
+        forceRefresh?: boolean
+      ) => Promise<{
+        success: boolean;
+        status?: "network" | "current" | "cached" | "error";
+        accountId?: string | null;
+        workspaceId?: string | null;
+        authGeneration?: number | null;
+        config?: ManagedEnterpriseConfig;
+        code?: string;
+        error?: string;
+        enforcementRequired?: boolean;
+        enforcedScopes?: string[];
+      }>;
+      clearManagedEnterpriseIdentity?: () => Promise<void>;
+
+      // Auth
+      authClearSession?: () => Promise<{
+        success: boolean;
+        tokenState?: AuthTokenState;
+        error?: string;
+      }>;
+      authGetToken?: () => Promise<string | null>;
+      authGetTokenState?: () => Promise<AuthTokenState>;
+      authSetToken?: (
+        token: string,
+        expectedGeneration: number
+      ) => Promise<AuthTokenMutationResult>;
+      onAuthTokenStateChanged?: (
+        callback: (state: { generation: number; hasToken: boolean }) => void
+      ) => () => void;
+
+      // OpenWhispr Cloud API
+      cloudTranscribe?: (
+        audioBuffer: ArrayBuffer,
+        opts: {
+          language?: string;
+          prompt?: string;
+          useCase?: string;
+          diarization?: boolean;
+          localDate?: string;
+          analyticsOccurredAt?: string;
+        }
+      ) => Promise<
+        {
+          success: boolean;
+          text?: string;
+          warning?: string;
+          clientTranscriptionId?: string;
+          wordsUsed?: number;
+          wordsRemaining?: number;
+          limitReached?: boolean;
+        } & PolicyFailureMetadata
+      >;
+      cancelCloudTranscription?: () => void;
+      cloudReason?: (
+        text: string,
+        opts: {
+          model?: string;
+          agentName?: string;
+          customDictionary?: string[];
+          customPrompt?: string;
+          systemPrompt?: string;
+          requestPurpose?: "agent";
+          promptMode?: "cleanup" | "agent";
+          screenContext?: ScreenContextImage;
+          language?: string;
+          locale?: string;
+        }
+      ) => Promise<{
+        success: boolean;
+        text?: string;
+        model?: string;
+        provider?: string;
+        promptMode?: string;
+        matchType?: string;
+        screenContextApplied?: boolean;
+        error?: string;
+        code?: string;
+      }>;
+      cancelCloudReason?: () => void;
+      cloudStreamingUsage?: (
+        text: string,
+        audioDurationSeconds: number,
+        opts?: {
+          sendLogs?: boolean;
+          sttProvider?: string;
+          sttModel?: string;
+          sttProcessingMs?: number;
+          sttLanguage?: string;
+          audioSizeBytes?: number;
+          audioFormat?: string;
+          clientTotalMs?: number;
+          clientTranscriptionId?: string;
+          localDate?: string;
+          analyticsOccurredAt?: string;
+          analyticsWordCount?: number;
+          analyticsCounterVersion?: number;
+        }
+      ) => Promise<{
+        success: boolean;
+        wordsUsed?: number;
+        wordsRemaining?: number;
+        limitReached?: boolean;
+        error?: string;
+        code?: string;
+      }>;
+      cloudHealthCheck?: () => Promise<{
+        ok: boolean;
+        status?: number;
+        code?: string;
+        messageKey?: string;
+      }>;
+      cloudUsage?: () => Promise<
+        UsageResponse & {
+          success: boolean;
+          error?: string;
+          code?: string;
+        }
+      >;
+      cloudCheckout?: (opts?: {
+        plan?: "monthly" | "annual";
+        tier?: "pro" | "business";
+      }) => Promise<{
+        success: boolean;
+        url?: string;
+        error?: string;
+        code?: string;
+      }>;
+      cloudBillingPortal?: () => Promise<{
+        success: boolean;
+        url?: string;
+        error?: string;
+        code?: string;
+      }>;
+      cloudSwitchPlan?: (opts: {
+        plan: "monthly" | "annual";
+        tier: "pro" | "business";
+      }) => Promise<{
+        success: boolean;
+        alreadyOnPlan?: boolean;
+        error?: string;
+      }>;
+      cloudPreviewSwitch?: (opts: {
+        plan: "monthly" | "annual";
+        tier: "pro" | "business";
+      }) => Promise<{
+        success: boolean;
+        immediateAmount?: number;
+        currency?: string;
+        currentPriceAmount?: number;
+        currentInterval?: string;
+        newPriceAmount?: number;
+        newInterval?: string;
+        nextBillingDate?: string;
+        alreadyOnPlan?: boolean;
+        error?: string;
+      }>;
+
+      // Authenticated cloud API proxy (`public: true` skips the auth requirement)
+      cloudApiRequest?: (opts: {
+        method?: string;
+        path: string;
+        body?: unknown;
+        public?: boolean;
+        expectedAuthGeneration?: number;
+      }) => Promise<
+        {
+          success: boolean;
+          data?: unknown;
+        } & PolicyFailureMetadata
+      >;
+
+      // Cloud audio file transcription
+      transcribeAudioFileCloud?: (
+        filePath: string,
+        options?: { requestId?: string }
+      ) => Promise<
+        {
+          success: boolean;
+          text?: string;
+          warning?: string;
+          failedChunks?: number;
+          totalChunks?: number;
+        } & PolicyFailureMetadata
+      >;
+
+      // Referral stats
+      getReferralStats?: () => Promise<{
+        referralCode: string;
+        referralLink: string;
+        totalReferrals: number;
+        completedReferrals: number;
+        pendingReferrals: number;
+        totalMonthsEarned: number;
+        referrals: Array<{
+          id: string;
+          email: string;
+          name: string;
+          status: "pending" | "completed" | "rewarded";
+          created_at: string;
+          first_payment_at: string | null;
+          words_used: number;
+        }>;
+      }>;
+
+      sendReferralInvite?: (email: string) => Promise<{
+        success: boolean;
+        invite: {
+          id: string;
+          recipientEmail: string;
+          status: "sent" | "failed" | "opened" | "converted";
+          sentAt: string;
+        };
+      }>;
+
+      getReferralInvites?: () => Promise<{
+        invites: Array<{
+          id: string;
+          recipientEmail: string;
+          status: "sent" | "failed" | "opened" | "converted";
+          sentAt: string;
+          openedAt?: string;
+          convertedAt?: string;
+        }>;
+      }>;
+
+      // Agent cloud streaming (event-based)
+      startAgentStream?: (
+        requestId: string,
+        messages: Array<{ role: string; content: string | Array<unknown> }>,
+        opts?: {
+          systemPrompt?: string;
+          tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
+          screenContext?: { data: string; mediaType: string };
+        }
+      ) => void;
+      cancelAgentStream?: (requestId: string) => void;
+      onAgentStreamChunk?: (
+        callback: (payload: {
+          requestId: string;
+          chunk: {
+            type: "content" | "tool_call" | "done";
+            text?: string;
+            id?: string;
+            name?: string;
+            arguments?: string;
+            finishReason?: string;
+          };
+        }) => void
+      ) => () => void;
+      onAgentStreamError?: (
+        callback: (payload: PolicyFailureMetadata & { requestId: string; error: string }) => void
+      ) => () => void;
+      onAgentStreamEnd?: (callback: (payload: { requestId: string }) => void) => () => void;
+      agentWebSearch?: (
+        query: string,
+        numResults?: number
+      ) => Promise<
+        {
+          success: boolean;
+          results?: Array<{
+            title: string;
+            url: string;
+            text: string;
+            publishedDate?: string;
+          }>;
+        } & PolicyFailureMetadata
+      >;
       // Basic window operations
       setOnboardingWindowMode?: (mode: "compact" | "expanded" | "restore") => Promise<boolean>;
       setOnboardingActive?: (active: boolean) => Promise<boolean>;
@@ -991,8 +1508,12 @@ declare global {
           fromStreaming?: boolean;
           restoreClipboard?: boolean;
           allowClipboardFallback?: boolean;
+          appFormatting?: boolean;
+          autoSubmit?: boolean;
+          autoSubmitMinWords?: number;
         }
-      ) => Promise<{ success: true; pasted: boolean }>;
+      ) => Promise<{ success: true; pasted: boolean; submitted?: boolean }>;
+      rememberLastDictation?: (text: string) => Promise<{ success: true }>;
       captureSelectedText?: (options?: { probeEditable?: boolean }) => Promise<
         | {
             status: "selected";
@@ -1059,6 +1580,12 @@ declare global {
         state: "idle" | "preparing" | "recording" | "processing",
         inputKind?: "dictation" | "assistant" | "translation"
       ) => void;
+      getDictationActivationState?: () => Promise<"idle" | "held" | "latched">;
+      getDictationLive?: () => Promise<boolean>;
+      onDictationLiveChanged?: (callback: (live: boolean) => void) => () => void;
+      onDictationActivationStateChanged?: (
+        callback: (state: "idle" | "held" | "latched") => void
+      ) => () => void;
       dictationAudioLevelChanged?: (level: number) => void;
       toggleAgentPanelDictation?: () => Promise<{ success: boolean }>;
       cancelAgentPanelDictation?: () => Promise<{ success: boolean }>;
@@ -1085,63 +1612,6 @@ declare global {
       showAgentDictationFinalTranscript?: (text: string) => void;
       onAgentDictationPillFinalTranscript?: (callback: (text: string) => void) => () => void;
 
-      // STT config
-      getSttConfig?: () => Promise<
-        | ({
-            success: boolean;
-            dictation?: { mode: string };
-            notes?: { mode: string };
-            streamingProvider?: string;
-          } & PolicyFailureMetadata)
-        | null
-      >;
-
-      // Org policy (see src/types/policy.ts)
-      getWorkspacePolicy?: (
-        accountId?: string,
-        expectedAuthGeneration?: number
-      ) => Promise<{
-        success: boolean;
-        status?: "network" | "cached" | "current" | "unsupported" | "restricted" | "error";
-        revision?: number;
-        accountId?: string | null;
-        authGeneration?: number | null;
-        managed?: boolean;
-        policy?: OrgPolicy | null;
-        policyUpdatedAt?: string | null;
-        endpointSupported?: boolean;
-        code?: string;
-        error?: string;
-        enforcementRequired?: boolean;
-      }>;
-      onWorkspacePolicyChanged?: (
-        callback: (
-          snapshot:
-            | {
-                success: true;
-                status: "network" | "cached" | "current" | "unsupported";
-                revision: number;
-                accountId: string | null;
-                authGeneration: number;
-                managed: boolean;
-                policy: OrgPolicy | null;
-                policyUpdatedAt: string | null;
-                endpointSupported: boolean;
-              }
-            | {
-                success: false;
-                status: "error";
-                revision: number;
-                accountId: string | null;
-                authGeneration: number;
-                code: "POLICY_UNRESOLVABLE";
-                error: string;
-              }
-        ) => void
-      ) => () => void;
-
-      getNoteRecordingConfig?: () => Promise<NoteRecordingConfigResult | null>;
-
       // Database operations
       saveTranscription: (
         text: string,
@@ -1160,6 +1630,15 @@ declare global {
       recordAnalyticsEvent: (
         input: AnalyticsEventInput
       ) => Promise<{ success: boolean; eventId?: string; ignored?: boolean }>;
+      recordDictationLatency: (input: {
+        eventId: string;
+        latencyMs: number;
+      }) => Promise<{ success: boolean; updated: boolean }>;
+      getLatencySummary: () => Promise<{
+        sampleCount: number;
+        medianMs: number | null;
+        byModel: Array<{ model: string | null; sampleCount: number; medianMs: number | null }>;
+      }>;
       getAnalyticsSummary: () => Promise<AnalyticsSummary>;
       getPendingAnalyticsEvents: (limit?: number) => Promise<PendingAnalyticsEvent[]>;
       markAnalyticsEventsSynced: (
@@ -1235,6 +1714,30 @@ declare global {
         code?: TranscriptionErrorCode;
         messageKey?: string;
       }>;
+      transcribeSelfHostedDictation: (
+        requestId: string,
+        options: {
+          audioBuffer: ArrayBuffer;
+          endpoint: string;
+          model?: string;
+          language?: string;
+          prompt?: string;
+          apiKey?: string;
+          localEngine?: {
+            localTranscriptionProvider?: string;
+            whisperModel?: string;
+            parakeetModel?: string;
+            cohereModel?: string;
+          };
+        }
+      ) => Promise<{
+        success?: boolean;
+        text?: string;
+        error?: string;
+        code?: TranscriptionErrorCode;
+        messageKey?: string;
+      }>;
+      cancelSelfHostedDictation: (requestId: string) => Promise<{ success: boolean }>;
       updateTranscriptionText: (
         id: number,
         text: string,
@@ -1333,6 +1836,23 @@ declare global {
         id: number,
         state: { is_shared: number; share_token?: string | null }
       ) => Promise<NoteItem>;
+      crmGetSettings: () => Promise<CrmSettingsResult>;
+      crmSaveSettings: (input: CrmSaveSettingsInput) => Promise<CrmSettingsResult>;
+      crmTestConnection: () => Promise<CrmTestConnectionResult>;
+      crmSearchContacts: (query: string) => Promise<CrmSearchContactsResult>;
+      crmListOpportunities: (contactId: string) => Promise<CrmListOpportunitiesResult>;
+      crmSyncNote: (noteId: number, target: CrmSyncTarget) => Promise<CrmSyncResult>;
+      crmGetSyncState: (noteId: number) => Promise<CrmGetSyncStateResult>;
+      pipelineGetSettings: () => Promise<PipelineSettingsResult>;
+      pipelineSaveSettings: (input: PipelineSaveSettingsInput) => Promise<PipelineSettingsResult>;
+      pipelineTestConnection: () => Promise<PipelineTestConnectionResult>;
+      pipelineGetQuestions: () => Promise<PipelineQuestionsResult>;
+      pipelineSubmitGrillNote: (
+        noteId: number,
+        meta: PipelineGrillMeta
+      ) => Promise<PipelineSubmitResult>;
+      pipelineSendNote: (noteId: number) => Promise<PipelineSendResult>;
+      pipelineGetSyncState: (noteId: number) => Promise<PipelineGetSyncStateResult>;
 
       // Folder operations
       getFolders: (spaceId?: number | null) => Promise<FolderItem[]>;
@@ -1466,6 +1986,93 @@ declare global {
         filePath?: string;
         filePaths?: string[];
       }>;
+      getAssistantSpeechProfile: () => Promise<{
+        configured: boolean;
+        localAvailable?: boolean;
+        /** The local voice engine binary ships in this build (#630). */
+        engineInstalled?: boolean;
+        /** Both local voice weight files are on disk at their pinned size (#630). */
+        weightsInstalled?: boolean;
+        /** A weights download is running, started from any window (#630). */
+        weightsDownloading?: boolean;
+        /** The last percentage that download reported, 0 when none. */
+        weightsPercentage?: number;
+        provider?: "hub" | "local" | "auto";
+        seed?: number;
+      }>;
+      /** Downloads the local voice weights (945 MB); resumes a partial download (#630). */
+      downloadAssistantSpeechWeights?: () => Promise<{
+        success: boolean;
+        code?: "in-progress" | "disk-full" | "checksum" | "cancelled" | "failed";
+      }>;
+      cancelAssistantSpeechWeightsDownload?: () => Promise<{ success: boolean }>;
+      /**
+       * Subscribes to weights download progress, summed over both files, and to
+       * its end (`done`); every window receives both. Returns an unsubscribe.
+       */
+      onAssistantSpeechWeightsProgress?: (
+        callback: (
+          event:
+            | { downloadedBytes: number; totalBytes: number; percentage: number }
+            | {
+                done: true;
+                success: boolean;
+                code?: "disk-full" | "checksum" | "cancelled" | "failed";
+              }
+        ) => void
+      ) => () => void;
+      setAssistantSpeechProvider?: (
+        value: "hub" | "local" | "auto"
+      ) => Promise<{ provider: "hub" | "local" | "auto" }>;
+      analyzeAssistantSpeechReference: () => Promise<{
+        success: boolean;
+        canceled?: boolean;
+        code?: "not-audio" | "too-short" | "too-long" | "transcription-failed" | "failed";
+        fileName?: string;
+        durationSec?: number;
+        text?: string;
+        transcribed?: boolean;
+        window?: { index: number; count: number; startSec: number; endSec: number };
+      }>;
+      importAssistantSpeechProfile: (
+        promptText: string,
+        seed?: number | string
+      ) => Promise<{ success: boolean; canceled?: boolean; error?: string }>;
+      exportAssistantSpeechBundle: (
+        name: string
+      ) => Promise<{ success: boolean; canceled?: boolean; error?: string; path?: string }>;
+      importAssistantSpeechBundle: () => Promise<{
+        success: boolean;
+        canceled?: boolean;
+        error?: string;
+        path?: string;
+      }>;
+      synthesizeAssistantSpeech: (
+        ownerId: string,
+        requestId: string,
+        text: string
+      ) => Promise<{ success?: boolean; audio?: Uint8Array; mimeType?: string; error?: string }>;
+      cancelAssistantSpeech: (ownerId: string, requestId: string) => Promise<{ success: boolean }>;
+      /** Barge-in: silences assistant speech in every window (#78). */
+      stopAssistantSpeech?: () => void;
+      /** Subscribes to the barge-in broadcast; returns an unsubscribe. */
+      onAssistantSpeechStop?: (callback: () => void) => () => void;
+      /** Reports assistant playback state so main can drop preview audio (#78). */
+      setAssistantSpeechPlaying?: (playing: boolean) => void;
+      /** Copies a picked WAV into the grill-voices folder for a new grill voice. */
+      importGrillVoiceClip?: () => Promise<{
+        success: boolean;
+        canceled?: boolean;
+        referenceAudioPath?: string;
+      }>;
+      /** voice null = the assistant's own profile (Skippy). */
+      synthesizeGrillSpeech?: (
+        ownerId: string,
+        requestId: string,
+        text: string,
+        voice: { referenceAudioPath: string; promptText: string } | null
+      ) => Promise<{ success?: boolean; audio?: Uint8Array; mimeType?: string; error?: string }>;
+      cancelGrillSpeech?: (ownerId: string, requestId: string) => Promise<{ success: boolean }>;
       getFileSize?: (filePath: string) => Promise<number>;
       transcribeAudioFile: (
         filePath: string,
@@ -1832,8 +2439,6 @@ declare global {
       installUpdate: () => Promise<UpdateResult>;
       getAppVersion: () => Promise<AppVersionResult>;
       getPostMigrationState: () => Promise<{ justMigrated: boolean }>;
-      getOAuthProtocolRegistered: () => Promise<boolean>;
-      getOAuthProtocol: () => Promise<string>;
       markBundleMigrated: () => Promise<void>;
       markBundleMigrationDismissed: () => Promise<void>;
       getUpdateStatus: () => Promise<UpdateStatusResult>;
@@ -1988,6 +2593,16 @@ declare global {
       saveBedrockSessionToken?: (key: string) => Promise<void>;
       getAzureEndpoint?: () => Promise<string | null>;
       saveAzureEndpoint?: (value: string) => Promise<void>;
+      // rTech Whisper hub (rtech-whisper#101). The device key is write-only.
+      hubGetUrl?: () => Promise<string>;
+      /** A stored non-loopback http:// hub URL, read as hub off (#144); "" otherwise. */
+      hubGetInsecureUrl?: () => Promise<string>;
+      hubSaveUrl?: (
+        value: string
+      ) => Promise<{ success: boolean; url?: string; code?: string; error?: string }>;
+      hubGetDeviceKeyState?: () => Promise<HubDeviceKeyState>;
+      hubSetDeviceKey?: (key: string) => Promise<HubDeviceKeyResult>;
+      hubClearDeviceKey?: () => Promise<HubDeviceKeyResult>;
       getAzureApiKey?: () => Promise<string | null>;
       saveAzureApiKey?: (key: string) => Promise<void>;
       getAzureDeployment?: () => Promise<string | null>;
@@ -2018,23 +2633,6 @@ declare global {
           underlyingError?: string;
         };
       }>;
-      getManagedEnterpriseConfig?: (
-        accountId: string,
-        workspaceId: string,
-        expectedAuthGeneration: number,
-        forceRefresh?: boolean
-      ) => Promise<{
-        success: boolean;
-        status?: "network" | "current" | "cached" | "error";
-        accountId?: string | null;
-        workspaceId?: string | null;
-        authGeneration?: number | null;
-        config?: ManagedEnterpriseConfig;
-        code?: string;
-        error?: string;
-        enforcementRequired?: boolean;
-        enforcedScopes?: string[];
-      }>;
       onManagedEnterpriseConfigChanged?: (
         callback: (snapshot: {
           accountId: string;
@@ -2046,15 +2644,6 @@ declare global {
           enforcedScopes?: string[];
         }) => void
       ) => () => void;
-      clearManagedEnterpriseIdentity?: () => Promise<void>;
-      managedTranscribe?: (data: {
-        audioBuffer: ArrayBuffer;
-        fileName: string;
-        mimeType: string;
-        language?: string;
-        prompt?: string;
-        managed: { provider: "azure"; context: ManagedEnterpriseRequestContext };
-      }) => Promise<{ text?: string; error?: string; code?: string; messageKey?: string }>;
 
       // Dictation key persistence (file-based for reliable startup)
       getDictationKey?: () => Promise<string | null>;
@@ -2063,8 +2652,8 @@ declare global {
       saveDictationKey?: (key: string) => Promise<void>;
 
       // Activation mode persistence (file-based for reliable startup)
-      getActivationMode?: () => Promise<"tap" | "push">;
-      saveActivationMode?: (mode: "tap" | "push") => Promise<void>;
+      getActivationMode?: () => Promise<"tap" | "push" | "hybrid">;
+      saveActivationMode?: (mode: "tap" | "push" | "hybrid") => Promise<void>;
 
       // Debug logging
       getLogLevel?: () => Promise<string>;
@@ -2087,6 +2676,22 @@ declare global {
         error?: string;
       }>;
       openLogsFolder: () => Promise<{ success: boolean; error?: string }>;
+      getLogsUsage: () => Promise<{ fileCount: number; totalBytes: number }>;
+      clearLogs: () => Promise<{ deleted: number }>;
+      getDataFolderInfo: () => Promise<{
+        current: string;
+        previous: string | null;
+        canMove: boolean;
+      }>;
+      moveDataFolder: () => Promise<void>;
+      revealPreviousDataFolder: () => Promise<void>;
+      getOldDataCopySize: () => Promise<{
+        ok: boolean;
+        bytes?: number;
+        size?: string;
+        reason?: string;
+      }>;
+      removeOldDataCopy: () => Promise<{ ok: boolean; bytes?: number; reason?: string }>;
 
       // FFmpeg availability
       checkFFmpegAvailability: () => Promise<FFmpegAvailabilityResult>;
@@ -2101,6 +2706,11 @@ declare global {
         platform: string;
         source: "system" | "unavailable";
       }>;
+      getLarkM2Status?: (options?: { refresh?: boolean }) => Promise<LarkM2Status>;
+      updateTrayMicrophoneState?: (state: TrayMicrophoneState) => Promise<boolean>;
+      onTrayMicrophoneSelection?: (
+        callback: (selection: TrayMicrophoneSelection) => void
+      ) => () => void;
       checkSystemAudioAccess?: () => Promise<SystemAudioAccessResult>;
       requestSystemAudioAccess?: () => Promise<SystemAudioAccessResult>;
       openMicrophoneSettings?: () => Promise<{ success: boolean; error?: string }>;
@@ -2121,7 +2731,7 @@ declare global {
       openWhisperModelsFolder?: () => Promise<{ success: boolean; error?: string }>;
 
       // Windows Push-to-Talk notifications
-      notifyActivationModeChanged?: (mode: "tap" | "push") => void;
+      notifyActivationModeChanged?: (mode: "tap" | "push" | "hybrid") => void;
       notifyHotkeyChanged?: (hotkey: string) => void;
       registerMeetingHotkey?: (hotkey: string) => Promise<{ success: boolean; message?: string }>;
       notifyFloatingIconAutoHideChanged?: (enabled: boolean) => void;
@@ -2144,177 +2754,6 @@ declare global {
       // Settings, which otherwise looks like a toggle that will not stick.
       getAutoStartEnabled?: () => Promise<{ enabled: boolean; requiresApproval: boolean }>;
       setAutoStartEnabled?: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
-
-      // Auth
-      authClearSession?: () => Promise<{
-        success: boolean;
-        tokenState?: AuthTokenState;
-        error?: string;
-      }>;
-      authGetToken?: () => Promise<string | null>;
-      authGetTokenState?: () => Promise<AuthTokenState>;
-      authSetToken?: (
-        token: string,
-        expectedGeneration: number
-      ) => Promise<AuthTokenMutationResult>;
-      onAuthTokenStateChanged?: (
-        callback: (state: { generation: number; hasToken: boolean }) => void
-      ) => () => void;
-
-      // OpenWhispr Cloud API
-      cloudTranscribe?: (
-        audioBuffer: ArrayBuffer,
-        opts: {
-          language?: string;
-          prompt?: string;
-          useCase?: string;
-          diarization?: boolean;
-          localDate?: string;
-          analyticsOccurredAt?: string;
-        }
-      ) => Promise<
-        {
-          success: boolean;
-          text?: string;
-          warning?: string;
-          clientTranscriptionId?: string;
-          wordsUsed?: number;
-          wordsRemaining?: number;
-          limitReached?: boolean;
-        } & PolicyFailureMetadata
-      >;
-      cancelCloudTranscription?: () => void;
-      cloudReason?: (
-        text: string,
-        opts: {
-          model?: string;
-          agentName?: string;
-          customDictionary?: string[];
-          customPrompt?: string;
-          systemPrompt?: string;
-          requestPurpose?: "agent";
-          promptMode?: "cleanup" | "agent";
-          screenContext?: ScreenContextImage;
-          language?: string;
-          locale?: string;
-        }
-      ) => Promise<{
-        success: boolean;
-        text?: string;
-        model?: string;
-        provider?: string;
-        promptMode?: string;
-        matchType?: string;
-        screenContextApplied?: boolean;
-        error?: string;
-        code?: string;
-      }>;
-      cancelCloudReason?: () => void;
-      cloudStreamingUsage?: (
-        text: string,
-        audioDurationSeconds: number,
-        opts?: {
-          sendLogs?: boolean;
-          sttProvider?: string;
-          sttModel?: string;
-          sttProcessingMs?: number;
-          sttLanguage?: string;
-          audioSizeBytes?: number;
-          audioFormat?: string;
-          clientTotalMs?: number;
-          clientTranscriptionId?: string;
-          localDate?: string;
-          analyticsOccurredAt?: string;
-          analyticsWordCount?: number;
-          analyticsCounterVersion?: number;
-        }
-      ) => Promise<{
-        success: boolean;
-        wordsUsed?: number;
-        wordsRemaining?: number;
-        limitReached?: boolean;
-        error?: string;
-        code?: string;
-      }>;
-      cloudHealthCheck?: () => Promise<{
-        ok: boolean;
-        status?: number;
-        code?: string;
-        messageKey?: string;
-      }>;
-      cloudUsage?: () => Promise<
-        UsageResponse & {
-          success: boolean;
-          error?: string;
-          code?: string;
-        }
-      >;
-      cloudCheckout?: (opts?: {
-        plan?: "monthly" | "annual";
-        tier?: "pro" | "business";
-      }) => Promise<{
-        success: boolean;
-        url?: string;
-        error?: string;
-        code?: string;
-      }>;
-      cloudBillingPortal?: () => Promise<{
-        success: boolean;
-        url?: string;
-        error?: string;
-        code?: string;
-      }>;
-      cloudSwitchPlan?: (opts: {
-        plan: "monthly" | "annual";
-        tier: "pro" | "business";
-      }) => Promise<{
-        success: boolean;
-        alreadyOnPlan?: boolean;
-        error?: string;
-      }>;
-      cloudPreviewSwitch?: (opts: {
-        plan: "monthly" | "annual";
-        tier: "pro" | "business";
-      }) => Promise<{
-        success: boolean;
-        immediateAmount?: number;
-        currency?: string;
-        currentPriceAmount?: number;
-        currentInterval?: string;
-        newPriceAmount?: number;
-        newInterval?: string;
-        nextBillingDate?: string;
-        alreadyOnPlan?: boolean;
-        error?: string;
-      }>;
-
-      // Authenticated cloud API proxy (`public: true` skips the auth requirement)
-      cloudApiRequest?: (opts: {
-        method?: string;
-        path: string;
-        body?: unknown;
-        public?: boolean;
-        expectedAuthGeneration?: number;
-      }) => Promise<
-        {
-          success: boolean;
-          data?: unknown;
-        } & PolicyFailureMetadata
-      >;
-
-      // Cloud audio file transcription
-      transcribeAudioFileCloud?: (
-        filePath: string,
-        options?: { requestId?: string }
-      ) => Promise<
-        {
-          success: boolean;
-          text?: string;
-          warning?: string;
-          failedChunks?: number;
-          totalChunks?: number;
-        } & PolicyFailureMetadata
-      >;
 
       cancelUploadTranscription?: (requestId: string) => Promise<{ success: boolean }>;
 
@@ -2392,62 +2831,26 @@ declare global {
         callback: (data: { audioDuration?: number; text?: string }) => void
       ) => () => void;
 
-      // Referral stats
-      getReferralStats?: () => Promise<{
-        referralCode: string;
-        referralLink: string;
-        totalReferrals: number;
-        completedReferrals: number;
-        pendingReferrals: number;
-        totalMonthsEarned: number;
-        referrals: Array<{
-          id: string;
-          email: string;
-          name: string;
-          status: "pending" | "completed" | "rewarded";
-          created_at: string;
-          first_payment_at: string | null;
-          words_used: number;
-        }>;
-      }>;
-
-      sendReferralInvite?: (email: string) => Promise<{
-        success: boolean;
-        invite: {
-          id: string;
-          recipientEmail: string;
-          status: "sent" | "failed" | "opened" | "converted";
-          sentAt: string;
-        };
-      }>;
-
-      getReferralInvites?: () => Promise<{
-        invites: Array<{
-          id: string;
-          recipientEmail: string;
-          status: "sent" | "failed" | "opened" | "converted";
-          sentAt: string;
-          openedAt?: string;
-          convertedAt?: string;
-        }>;
-      }>;
-
       // Agent Mode
       updateVoiceAgentHotkey?: (hotkey: string) => Promise<{ success: boolean; message: string }>;
       getVoiceAgentKey?: () => Promise<string>;
       updateTranslationHotkey?: (hotkey: string) => Promise<{ success: boolean; message: string }>;
       getTranslationKey?: () => Promise<string>;
+      updatePasteLastHotkey?: (hotkey: string) => Promise<{ success: boolean; message: string }>;
+      getPasteLastKey?: () => Promise<string>;
       createAgentConversation?: (
         title: string,
         noteId?: number | null,
         spaceId?: number | null,
-        folderId?: number | null
+        folderId?: number | null,
+        kind?: ConversationKind
       ) => Promise<{
         id: number;
         title: string;
         note_id?: number | null;
         space_id?: number | null;
         folder_id?: number | null;
+        kind?: ConversationKind;
         created_at: string;
         updated_at: string;
       } | null>;
@@ -2519,6 +2922,10 @@ declare global {
         metadata?: string;
         created_at: string;
       } | null>;
+      /** One stored turn, by row id: the grill's edit-a-turn control. */
+      updateAgentMessage?: (id: number, content: string) => Promise<{ success: boolean }>;
+      /** One stored turn, by row id: the grill's remove-a-turn control. */
+      deleteAgentMessage?: (id: number) => Promise<{ success: boolean }>;
       getAgentMessages?: (conversationId: number) => Promise<
         Array<{
           id: number;
@@ -2532,7 +2939,8 @@ declare global {
       getAgentConversationsWithPreview?: (
         limit?: number,
         offset?: number,
-        includeArchived?: boolean
+        includeArchived?: boolean,
+        kind?: ConversationKind | null
       ) => Promise<ConversationPreview[]>;
       searchAgentConversations?: (query: string, limit?: number) => Promise<ConversationPreview[]>;
       archiveAgentConversation?: (id: number) => Promise<{ success: boolean }>;
@@ -2609,51 +3017,15 @@ declare global {
       onCortiError?: (callback: (error: string) => void) => () => void;
       onCortiSessionEnd?: (callback: (data: { text?: string }) => void) => () => void;
 
-      // Agent cloud streaming (event-based)
-      startAgentStream?: (
-        requestId: string,
-        messages: Array<{ role: string; content: string | Array<unknown> }>,
-        opts?: {
-          systemPrompt?: string;
-          tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
-          screenContext?: { data: string; mediaType: string };
-        }
-      ) => void;
-      cancelAgentStream?: (requestId: string) => void;
-      onAgentStreamChunk?: (
-        callback: (payload: {
-          requestId: string;
-          chunk: {
-            type: "content" | "tool_call" | "done";
-            text?: string;
-            id?: string;
-            name?: string;
-            arguments?: string;
-            finishReason?: string;
-          };
-        }) => void
-      ) => () => void;
-      onAgentStreamError?: (
-        callback: (payload: PolicyFailureMetadata & { requestId: string; error: string }) => void
-      ) => () => void;
-      onAgentStreamEnd?: (callback: (payload: { requestId: string }) => void) => () => void;
-
       // Agent cloud tools
       agentOpenNote?: (noteId: number) => Promise<{ success: boolean; error?: string }>;
-      agentWebSearch?: (
-        query: string,
-        numResults?: number
-      ) => Promise<
-        {
-          success: boolean;
-          results?: Array<{
-            title: string;
-            url: string;
-            text: string;
-            publishedDate?: string;
-          }>;
-        } & PolicyFailureMetadata
-      >;
+
+      // Note sharing (rTech share service)
+      shareStatus?: () => Promise<ShareStatus>;
+      shareCreate?: (noteId: number, title: string, markdown: string) => Promise<ShareResult>;
+      shareUpdate?: (token: string, title: string, markdown: string) => Promise<ShareResult>;
+      shareRotate?: (token: string) => Promise<ShareResult>;
+      shareRevoke?: (token: string) => Promise<{ ok: true } | ShareFailure>;
 
       // Google Calendar
       gcalStartOAuth?: () => Promise<{ success: boolean; email?: string; error?: string }>;
@@ -2670,6 +3042,7 @@ declare global {
       ) => Promise<{ success: boolean; error?: string }>;
       gcalSetPrimaryOnly?: (value: boolean) => Promise<{ success: boolean; error?: string }>;
       gcalSyncEvents?: () => Promise<{ success: boolean; error?: string }>;
+      gcalSyncNow?: () => Promise<{ success: boolean; error?: string }>;
       gcalGetUpcomingEvents?: (
         windowMinutes?: number
       ) => Promise<{ success: boolean; events: any[] }>;
@@ -2679,6 +3052,89 @@ declare global {
         | { success: true; availability: CalendarAvailabilityResult }
         | { success: false; error: string }
       >;
+      grillGetCalendarEvents?: (
+        start: string,
+        end: string
+      ) => Promise<{ success: boolean; events: GrillCalendarEvent[]; error?: string }>;
+      grillGetQuestionBank?: () => Promise<GrillQuestionBankResult>;
+      grillSeedQuestionBank?: (
+        questions: GrillQuestionSeed[],
+        params: Record<string, unknown>
+      ) => Promise<GrillQuestionBankResult>;
+      grillListQuestions?: () => Promise<
+        GrillQuestionEditorResult<{ questions: GrillQuestionRow[] }>
+      >;
+      grillAddQuestion?: (
+        question: GrillQuestionDraft
+      ) => Promise<GrillQuestionEditorResult<{ question: GrillQuestionRow }>>;
+      grillUpdateQuestion?: (
+        id: string,
+        text: string
+      ) => Promise<GrillQuestionEditorResult<{ question: GrillQuestionRow }>>;
+      grillSetQuestionStatus?: (
+        id: string,
+        status: GrillQuestionRow["status"]
+      ) => Promise<GrillQuestionEditorResult<{ question: GrillQuestionRow }>>;
+      grillMoveQuestion?: (
+        id: string,
+        newPosition: number
+      ) => Promise<GrillQuestionEditorResult<{ question: GrillQuestionRow }>>;
+      grillSetFlowParam?: (
+        key: "max_day_questions" | "max_feed_questions" | "chapter_titles",
+        value: number | Record<string, string>
+      ) => Promise<GrillQuestionEditorResult<Record<string, never>>>;
+      grillQuestionHistory?: (
+        id: string
+      ) => Promise<GrillQuestionEditorResult<{ history: GrillQuestionHistoryRow[] }>>;
+      grillSetMark?: (
+        questionId: string,
+        noteId: number | null,
+        mark: GrillQuestionMarkValue,
+        note?: string | null
+      ) => Promise<GrillQuestionEditorResult<{ mark: GrillQuestionMarkRow }>>;
+      grillClearMark?: (
+        questionId: string,
+        noteId: number | null
+      ) => Promise<GrillQuestionEditorResult<{ removed: boolean }>>;
+      grillMarksForNote?: (
+        noteId: number | null
+      ) => Promise<GrillQuestionEditorResult<{ marks: GrillQuestionMarkRow[] }>>;
+      grillMarkCounts?: () => Promise<
+        GrillQuestionEditorResult<{ counts: GrillQuestionMarkCounts }>
+      >;
+      grillTopicsList?: (
+        status?: GrillTopicRow["status"]
+      ) => Promise<GrillQuestionEditorResult<{ topics: GrillTopicRow[] }>>;
+      grillTopicsAdd?: (topic: {
+        text: string;
+        source: string;
+        sourceRef?: string | null;
+      }) => Promise<GrillQuestionEditorResult<{ topic: GrillTopicRow }>>;
+      grillTopicsRemove?: (id: string) => Promise<GrillQuestionEditorResult<{ removed: boolean }>>;
+      grillTopicsMarkUsed?: (
+        ids: string[]
+      ) => Promise<GrillQuestionEditorResult<{ marked: number }>>;
+      brainDumpsList?: () => Promise<
+        GrillQuestionEditorResult<{ dumps: NoteItem[]; systemPrompt: string }>
+      >;
+      /** outputs: the model's raw reply per dump, keyed by note id. */
+      brainDumpsProcess?: (
+        outputs: Record<number, string>
+      ) => Promise<GrillQuestionEditorResult<{ results: BrainDumpResult[] }>>;
+      brainDumpsUndo?: (
+        actionId: number
+      ) => Promise<GrillQuestionEditorResult<{ undone: boolean; error?: string }>>;
+      brainDumpsActions?: (
+        since?: string
+      ) => Promise<GrillQuestionEditorResult<{ actions: BrainDumpActionRow[] }>>;
+      brainDumpsRoundupContext?: (
+        sinceIso: string,
+        afterNoteId?: number
+      ) => Promise<GrillQuestionEditorResult<BrainDumpRoundupContext>>;
+      brainDumpsSaveRoundup?: (
+        title: string,
+        content: string
+      ) => Promise<GrillQuestionEditorResult<{ note: NoteItem }>>;
       gcalGetEvent?: (eventId: string) => Promise<{
         success: boolean;
         event: {
@@ -2741,12 +3197,23 @@ declare global {
         success: boolean;
         reason?: "recording-active";
       }>;
+      getActiveMeetingSessionId?: () => Promise<string | null>;
+      addMeetingHighlight?: (highlight: {
+        text: string;
+        sessionId: string | null;
+        timestamp: number;
+        endTimestamp?: number;
+      }) => Promise<{
+        success: boolean;
+        reason?: "no-active-meeting" | "empty";
+      }>;
       onMeetingTranscriptionSegment?: (
         callback: (data: {
           text: string;
-          source: "mic" | "system";
+          source: "mic" | "system" | "highlight";
           type: "partial" | "final" | "retract";
           timestamp?: number;
+          endTimestamp?: number;
         }) => void
       ) => () => void;
       onMeetingSpeakerIdentified?: (
@@ -2889,6 +3356,10 @@ declare global {
       // Google Calendar event listeners
       onGcalConnectionChanged?: (callback: (data: any) => void) => () => void;
       onGcalEventsSynced?: (callback: (data: any) => void) => () => void;
+      gcalGetSyncHealth?: () => Promise<import("./calendar").CalendarSyncHealthMap>;
+      onGcalSyncHealthChanged?: (
+        callback: (data: import("./calendar").CalendarSyncHealthMap) => void
+      ) => () => void;
 
       // Microsoft Calendar
       mcalStartOAuth?: () => Promise<{ success: boolean; email?: string; error?: string }>;
@@ -2900,10 +3371,16 @@ declare global {
       mcalSetPrimaryOnly?: (value: boolean) => Promise<{ success: boolean; error?: string }>;
       onMcalConnectionChanged?: (callback: (data: any) => void) => () => void;
       onMcalEventsSynced?: (callback: (data: any) => void) => () => void;
+      mcalGetSyncHealth?: () => Promise<import("./calendar").CalendarSyncHealthMap>;
+      mcalSyncNow?: () => Promise<{ success: boolean; error?: string }>;
+      onMcalSyncHealthChanged?: (
+        callback: (data: import("./calendar").CalendarSyncHealthMap) => void
+      ) => () => void;
 
       // Apple Calendar (macOS EventKit)
       acalConnect?: () => Promise<{ success: boolean; reason?: string; error?: string }>;
       acalDisconnect?: () => Promise<{ success: boolean; error?: string }>;
+      acalSyncNow?: () => Promise<{ success: boolean; error?: string }>;
       acalGetConnectionStatus?: () => Promise<{ connected: boolean; sourceNames: string[] }>;
       openCalendarPrivacySettings?: () => Promise<{ success: boolean; error?: string }>;
       onAcalConnectionChanged?: (
@@ -2918,6 +3395,11 @@ declare global {
       syncNotificationPreferences?: (
         prefs: Record<string, boolean>
       ) => Promise<{ success: boolean }>;
+      syncGrillEventPrefixes?: (
+        prefixes: string[]
+      ) => Promise<{ success: boolean; error?: string }>;
+      /** Main sends this when the user clicks "Start grill" on a calendar grill prompt. */
+      onGrillStart?: (callback: (request: GrillStartRequest) => void) => () => void;
       setSpeakerDiarizationEnabled?: (
         enabled: boolean
       ) => Promise<{ success: boolean; error?: string }>;
@@ -2964,6 +3446,9 @@ declare global {
       onMeetingAutoEndRestartRequested?: (
         callback: (request: MeetingAutoEndRestartRequest) => void
       ) => () => void;
+      onMeetingCalendarEndStopRequested?: (
+        callback: (request: { sessionId: string }) => void
+      ) => () => void;
       getMeetingNotificationData?: () => Promise<MeetingNotificationData | null>;
       meetingNotificationReady?: () => Promise<void>;
       meetingNotificationRespond?: (
@@ -3002,6 +3487,7 @@ declare global {
         model: string;
         language?: string;
         display?: boolean;
+        endpoint?: string;
       }) => Promise<{ success: boolean }>;
       stopDictationPreview?: (opts?: {
         showCleanup?: boolean;

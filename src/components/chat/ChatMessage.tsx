@@ -14,6 +14,17 @@ import { MarkdownRenderer } from "../ui/MarkdownRenderer";
 import type { ToolCallInfo } from "./types";
 import { extractNoteCards } from "./noteCards";
 import { toolIcons } from "./toolIcons";
+import type { GrillMarkValue } from "../../services/grill/grillSession";
+
+const GRILL_MARKS: GrillMarkValue[] = ["good", "weak", "retire"];
+
+/** Saved grill only: this interviewer line's question and Rico's mark on it. */
+export interface TurnMarkControl {
+  mark: GrillMarkValue | null;
+  note: string | null;
+  onChoose: (choice: GrillMarkValue) => void;
+  onSaveNote: (note: string) => void;
+}
 
 interface ChatMessageProps {
   role: "user" | "assistant";
@@ -21,7 +32,23 @@ interface ChatMessageProps {
   isStreaming: boolean;
   toolCalls?: ToolCallInfo[];
   onOpenNote?: (noteId: number) => void;
+  /**
+   * Grill only: rewrite this answer in place. Absent everywhere else, and the
+   * Edit action is not rendered.
+   */
+  onEdit?: (text: string) => void;
+  /** Grill only: drop this turn (the caller confirms first). */
+  onRemove?: () => void;
+  /** Saved grill only: good / weak / retire on the question this line asked or chased. */
+  markControl?: TurnMarkControl;
 }
+
+const TURN_ACTION_CLASS = cn(
+  "px-1.5 py-0.5 rounded-sm text-[11px]",
+  "text-muted-foreground/60 hover:text-foreground hover:bg-foreground/8",
+  "transition-colors duration-150",
+  "focus:outline-none focus-visible:ring-1 focus-visible:ring-ring/30"
+);
 
 function ToolCallStep({ toolCall }: { toolCall: ToolCallInfo }) {
   const { t } = useTranslation();
@@ -125,6 +152,77 @@ function ToolCallStep({ toolCall }: { toolCall: ToolCallInfo }) {
   );
 }
 
+function GrillMarkRow({ control }: { control: TurnMarkControl }) {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState<string | null>(null);
+
+  return (
+    <div className="mt-1.5 flex flex-col gap-1" aria-label={t("chat.grillMarks.label")}>
+      <div className="flex flex-wrap items-center gap-1">
+        {GRILL_MARKS.map((choice) => (
+          <button
+            key={choice}
+            type="button"
+            aria-pressed={control.mark === choice}
+            title={t(`chat.grillMarks.${choice}Hint`)}
+            onClick={() => control.onChoose(choice)}
+            className={cn(
+              TURN_ACTION_CLASS,
+              control.mark === choice && "bg-foreground/10 text-foreground"
+            )}
+          >
+            {t(`chat.grillMarks.${choice}`)}
+          </button>
+        ))}
+        {control.mark && draft === null && (
+          <button
+            type="button"
+            className={TURN_ACTION_CLASS}
+            onClick={() => setDraft(control.note ?? "")}
+          >
+            {t(control.note ? "chat.grillMarks.editNote" : "chat.grillMarks.addNote")}
+          </button>
+        )}
+      </div>
+      {control.note && draft === null && (
+        <p className="text-[11px] text-muted-foreground">{control.note}</p>
+      )}
+      {draft !== null && (
+        <div className="flex flex-col gap-1">
+          <textarea
+            autoFocus
+            value={draft}
+            aria-label={t("chat.grillMarks.noteLabel")}
+            placeholder={t("chat.grillMarks.notePlaceholder")}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={2}
+            className={cn(
+              "w-full px-2 py-1 rounded-md resize-y",
+              "bg-surface-1 border border-border/40 text-foreground text-[12px]",
+              "focus:outline-none focus-visible:ring-1 focus-visible:ring-ring/30"
+            )}
+          />
+          <div className="flex gap-1">
+            <button type="button" className={TURN_ACTION_CLASS} onClick={() => setDraft(null)}>
+              {t("chat.grillMarks.cancel")}
+            </button>
+            <button
+              type="button"
+              className={TURN_ACTION_CLASS}
+              onClick={() => {
+                control.onSaveNote(draft);
+                setDraft(null);
+              }}
+            >
+              {t("chat.grillMarks.saveNote")}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NoteCard({
   noteId,
   title,
@@ -171,9 +269,13 @@ export function ChatMessage({
   isStreaming,
   toolCalls,
   onOpenNote,
+  onEdit,
+  onRemove,
+  markControl,
 }: ChatMessageProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  const [draft, setDraft] = useState<string | null>(null);
 
   const handleCopy = async () => {
     try {
@@ -188,19 +290,67 @@ export function ChatMessage({
   if (role === "user") {
     return (
       <div
-        className="flex justify-end"
+        className="group/msg flex flex-col items-end"
         style={{ animation: "agent-message-in 200ms ease-out both" }}
       >
-        <div
-          data-chat-bubble
-          className={cn(
-            "max-w-[80%] px-3 py-2 rounded-lg rounded-br-sm",
-            "bg-primary/90 text-primary-foreground",
-            "text-[13px] leading-relaxed"
-          )}
-        >
-          {content}
-        </div>
+        {draft === null ? (
+          <div
+            data-chat-bubble
+            className={cn(
+              "max-w-[80%] px-3 py-2 rounded-lg rounded-br-sm",
+              "bg-primary/90 text-primary-foreground",
+              "text-[13px] leading-relaxed"
+            )}
+          >
+            {content}
+          </div>
+        ) : (
+          <div className="w-[80%] flex flex-col items-end gap-1">
+            <textarea
+              autoFocus
+              value={draft}
+              aria-label={t("chat.grill.turn.editLabel")}
+              onChange={(e) => setDraft(e.target.value)}
+              rows={Math.min(8, Math.max(2, draft.split("\n").length))}
+              className={cn(
+                "w-full px-3 py-2 rounded-lg rounded-br-sm resize-y",
+                "bg-surface-1 border border-border/40 text-foreground",
+                "text-[13px] leading-relaxed",
+                "focus:outline-none focus-visible:ring-1 focus-visible:ring-ring/30"
+              )}
+            />
+            <div className="flex gap-1">
+              <button type="button" className={TURN_ACTION_CLASS} onClick={() => setDraft(null)}>
+                {t("chat.grill.turn.cancel")}
+              </button>
+              <button
+                type="button"
+                className={TURN_ACTION_CLASS}
+                disabled={!draft.trim()}
+                onClick={() => {
+                  onEdit?.(draft);
+                  setDraft(null);
+                }}
+              >
+                {t("chat.grill.turn.save")}
+              </button>
+            </div>
+          </div>
+        )}
+        {draft === null && (onEdit || onRemove) && (
+          <div className="flex gap-1 mt-1 opacity-0 group-hover/msg:opacity-100 focus-within:opacity-100 transition-opacity duration-150">
+            {onEdit && (
+              <button type="button" className={TURN_ACTION_CLASS} onClick={() => setDraft(content)}>
+                {t("chat.grill.turn.edit")}
+              </button>
+            )}
+            {onRemove && (
+              <button type="button" className={TURN_ACTION_CLASS} onClick={onRemove}>
+                {t("chat.grill.turn.remove")}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -267,6 +417,8 @@ export function ChatMessage({
           </div>
         )}
 
+        {markControl && hasContent && !isStreaming && <GrillMarkRow control={markControl} />}
+
         {hasContent && !isStreaming && (
           <div className="flex justify-start mt-1.5 -mb-0.5">
             <button
@@ -280,6 +432,18 @@ export function ChatMessage({
             >
               {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
             </button>
+            {onRemove && (
+              <button
+                type="button"
+                onClick={onRemove}
+                className={cn(
+                  TURN_ACTION_CLASS,
+                  "opacity-0 group-hover/msg:opacity-100 transition-all duration-150"
+                )}
+              >
+                {t("chat.grill.turn.remove")}
+              </button>
+            )}
           </div>
         )}
       </div>

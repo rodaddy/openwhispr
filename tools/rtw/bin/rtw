@@ -1,0 +1,17 @@
+#!/opt/homebrew/bin/bash
+# Launcher for the `rtw` CLI. Resolves its own real path first so the usual
+# install (a symlink in ~/.local/bin) still finds src/ in the repo, and pins
+# Node 24 by absolute path because bare `node` on PATH is often another major.
+set -euo pipefail
+
+self="${BASH_SOURCE[0]}"
+while [ -L "$self" ]; do
+  target="$(readlink "$self")"
+  case "$target" in
+    /*) self="$target" ;;
+    *) self="$(cd -- "$(dirname -- "$self")" && pwd)/$target" ;;
+  esac
+done
+pkg="$(cd -- "$(dirname -- "$self")/.." && pwd)"
+
+exec /opt/homebrew/opt/node@24/bin/node "$pkg/src/cli.ts" "$@"

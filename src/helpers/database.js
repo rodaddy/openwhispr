@@ -6,12 +6,49 @@ const debugLogger = require("./debugLogger");
 const { buildNoteSearchQuery } = require("./noteSearch");
 const { normalizeStoredSpeakerCount } = require("./speakerCount");
 const { parseEventTime } = require("./calendarAvailability");
-const { ANALYTICS_COUNTER_VERSION, summarizeAnalyticsDays } = require("./analytics");
+const { seedGrillFoldersOnce } = require("./grillFolders");
+const { ensureHubIdTables, swapHubIds } = require("./hubIdSwap");
+const {
+  ensureGrillQuestionTables,
+  ensureGrillMarkNoteCleanup,
+  getGrillQuestionBank,
+  seedGrillQuestions,
+  listGrillQuestions,
+  addGrillQuestion,
+  updateGrillQuestionText,
+  setGrillQuestionStatus,
+  moveGrillQuestion,
+  setGrillFlowParam,
+  getGrillQuestionHistory,
+  setMark: setGrillQuestionMark,
+  clearMark: clearGrillQuestionMark,
+  marksForNote: grillQuestionMarksForNote,
+  markCountsByQuestion: grillQuestionMarkCounts,
+  addTopic: addGrillTopic,
+  removeTopic: removeGrillTopic,
+  listTopics: listGrillTopics,
+  markTopicsUsed: markGrillTopicsUsed,
+} = require("./grillQuestionStore");
+const { lastVisibleMessageSql } = require("./agentMessagePreview");
+const {
+  ANALYTICS_COUNTER_VERSION,
+  localDateKey,
+  summarizeAnalyticsDays,
+  summarizeLatency,
+} = require("./analytics");
+const { backupBeforeMigrate, backupPathForFailure } = require("./databaseBackup");
 const { app } = require("electron");
 
 // Server-enforced trigger cap (openwhispr-api); enforced here so one oversized
 // trigger can't 400 the whole sync batch.
 const MAX_SNIPPET_TRIGGER_LENGTH = 100;
+
+// Milliseconds for a stored stamp: SQLite datetime('now') ("YYYY-MM-DD
+// HH:MM:SS", UTC with no zone) or a hub ISO stamp. NaN compares false.
+function stampMs(value) {
+  const iso = String(value ?? "").replace(" ", "T");
+  return Date.parse(/(Z|[+-]\d\d:\d\d)$/.test(iso) ? iso : `${iso}Z`);
+}
 
 // Every local field a note create (POST) carries; the acknowledgement compares
 // these atomically against the pushed snapshot. Must mirror NotePushSnapshot
@@ -110,6 +147,19 @@ const SELECTED_CALENDAR_EVENT_FILTER = `(
   ))
 )`;
 
+function hasRoleTaggedTurns(transcript) {
+  if (typeof transcript !== "string" || !transcript.trim()) return false;
+  try {
+    const parsed = JSON.parse(transcript);
+    return (
+      Array.isArray(parsed) &&
+      parsed.some((segment) => segment?.role === "assistant" || segment?.role === "user")
+    );
+  } catch {
+    return false;
+  }
+}
+
 class DatabaseManager {
   constructor() {
     this.db = null;
@@ -202,13 +252,22 @@ class DatabaseManager {
   }
 
   initDatabase() {
+    let dbPath = null;
     try {
+      this.lastBackup = null;
       const dbFileName =
         process.env.NODE_ENV === "development" ? "transcriptions-dev.db" : "transcriptions.db";
 
-      const dbPath = path.join(app.getPath("userData"), dbFileName);
+      dbPath = path.join(app.getPath("userData"), dbFileName);
 
       this.db = new Database(dbPath);
+      // Snapshot once per app version, before anything below can change the schema.
+      this.lastBackup = backupBeforeMigrate({
+        db: this.db,
+        dbPath,
+        version: app.getVersion?.(),
+        log: (message) => debugLogger.warn(message),
+      });
       this.db.pragma("journal_mode = WAL");
 
       this.db.exec(`
@@ -325,6 +384,32 @@ class DatabaseManager {
       } catch (err) {
         if (!err.message.includes("duplicate column")) throw err;
       }
+      for (const [column, definition] of [
+        ["crm_activity_id", "TEXT"],
+        ["crm_target_id", "TEXT"],
+        ["crm_target_type", "TEXT"],
+        ["crm_opportunity_id", "TEXT"],
+        ["crm_synced_at", "TEXT"],
+        ["crm_scope", "TEXT"],
+        // Grill notes pushed to the social-media-pipeline (pipelineConnector.js).
+        ["grill_meta", "TEXT"],
+        ["pipeline_synced_at", "TEXT"],
+        ["pipeline_last_error", "TEXT"],
+        ["pipeline_pieces_added", "INTEGER"],
+        ["pipeline_not_sendable", "INTEGER"],
+      ]) {
+        try {
+          this.db.exec(`ALTER TABLE notes ADD COLUMN ${column} ${definition}`);
+        } catch (err) {
+          if (!err.message.includes("duplicate column")) throw err;
+        }
+      }
+      // The old in-house CRM is gone: drop its note links (GoHighLevel scopes start "ghl:").
+      this.db.exec(`
+        UPDATE notes SET crm_activity_id = NULL, crm_target_id = NULL, crm_target_type = NULL,
+          crm_opportunity_id = NULL, crm_synced_at = NULL, crm_scope = NULL
+        WHERE crm_scope IS NOT NULL AND crm_scope NOT LIKE 'ghl:%'
+      `);
 
       this.db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
@@ -507,6 +592,32 @@ class DatabaseManager {
       }
       this.db.exec(
         "CREATE INDEX IF NOT EXISTS idx_agent_conversations_container ON agent_conversations(space_id, folder_id)"
+      );
+
+      // Grill sessions get their own list rather than mixing into the chat
+      // list. Deliberately NOT folder_id: folders/spaces are the container
+      // feature and a grill belongs to no container.
+      let agentConversationKindAdded = false;
+      try {
+        this.db.exec(
+          "ALTER TABLE agent_conversations ADD COLUMN kind TEXT NOT NULL DEFAULT 'chat'"
+        );
+        agentConversationKindAdded = true;
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+      if (agentConversationKindAdded) {
+        // One-time backfill. Grills written before the column existed are
+        // identifiable only by the two titles the session planner produces
+        // (`Grill <YYYY-MM-DD>` and `Life Story ch <n>: <title>`).
+        this.db.exec(
+          `UPDATE agent_conversations SET kind = 'grill'
+             WHERE title LIKE 'Life Story ch %'
+                OR title GLOB 'Grill [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'`
+        );
+      }
+      this.db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_agent_conversations_kind ON agent_conversations(kind)"
       );
 
       const actionCount = this.db.prepare("SELECT COUNT(*) as count FROM actions").get();
@@ -970,6 +1081,7 @@ class DatabaseManager {
           mode TEXT NOT NULL,
           provider TEXT,
           model TEXT,
+          paste_latency_ms INTEGER,
           counter_version INTEGER NOT NULL DEFAULT 1,
           sync_status TEXT NOT NULL DEFAULT 'pending',
           deleted_at TEXT,
@@ -991,6 +1103,11 @@ class DatabaseManager {
       // introduced. SQLite has no ADD COLUMN IF NOT EXISTS syntax.
       try {
         this.db.exec("ALTER TABLE analytics_events ADD COLUMN deleted_at TEXT");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+      try {
+        this.db.exec("ALTER TABLE analytics_events ADD COLUMN paste_latency_ms INTEGER");
       } catch (err) {
         if (!err.message.includes("duplicate column")) throw err;
       }
@@ -1176,6 +1293,12 @@ class DatabaseManager {
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_space_account_name ON folders(space_id, account_id, name) WHERE deleted_at IS NULL AND account_id IS NOT NULL"
       );
 
+      // One-time seed (user_version 3): the grill-mode "Grill" and "Life Story"
+      // folders, in the personal space. Guarded like the Videos seed so a
+      // deleted or renamed one never comes back; saving a session recreates a
+      // missing one on demand. Runs here, once folders carry a space.
+      seedGrillFoldersOnce(this.db);
+
       // A cloud space is workspace-owned, while visibility is account-specific.
       // Keep the many-to-many membership separate so signing out one local
       // account cannot delete or expose another account's workspace cache.
@@ -1247,11 +1370,39 @@ class DatabaseManager {
         )
       `);
 
+      // Grill question bank: seeded once from the compiled bank by the renderer.
+      ensureGrillQuestionTables(this.db);
+      ensureGrillMarkNoteCleanup(this.db);
+
+      // Per-hub cloud ids (rtech-whisper#126): sync_state + hub_ids.
+      ensureHubIdTables(this.db);
+
+      // Deleted means gone. Tombstones written before deleteAgentConversation
+      // hard-deleted local-only rows would otherwise keep every turn of a
+      // "deleted" chat on disk forever.
+      this.purgeDeletedLocalConversations();
+
       return true;
     } catch (error) {
-      debugLogger.error("Database initialization failed", { error: error.message }, "database");
+      const backupPath = backupPathForFailure({
+        lastBackup: this.lastBackup,
+        dbPath,
+        version: app.getVersion?.(),
+      });
+      if (backupPath) error.backupPath = backupPath;
+      debugLogger.error(
+        "Database initialization failed",
+        { error: error.message, backupPath },
+        "database"
+      );
       throw error;
     }
+  }
+
+  // Startup only, before any sync pass (rtech-whisper#126): stash the previous
+  // hub's cloud ids and restore the current hub's. url "" means hub off.
+  swapHubIds(url) {
+    return swapHubIds(this.db, url);
   }
 
   saveTranscription(
@@ -1355,6 +1506,33 @@ class DatabaseManager {
     }
   }
 
+  // Its own update, so the figure never re-queues the row for sync: the
+  // latency is local and is not part of the rows that upload.
+  recordDictationLatency({ eventId, latencyMs } = {}) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      if (
+        typeof eventId !== "string" ||
+        eventId.length === 0 ||
+        !Number.isInteger(latencyMs) ||
+        latencyMs <= 0 ||
+        latencyMs > 600_000
+      ) {
+        return { success: true, updated: false };
+      }
+      const result = this.db
+        .prepare(
+          `UPDATE analytics_events SET paste_latency_ms = ?
+           WHERE event_id = ? AND deleted_at IS NULL`
+        )
+        .run(latencyMs, eventId);
+      return { success: true, updated: result.changes === 1 };
+    } catch (error) {
+      debugLogger.error("Error recording dictation latency", { error: error.message }, "database");
+      throw error;
+    }
+  }
+
   getAnalyticsSummary() {
     try {
       if (!this.db) throw new Error("Database not initialized");
@@ -1379,6 +1557,26 @@ class DatabaseManager {
       return summarizeAnalyticsDays(days);
     } catch (error) {
       debugLogger.error("Error reading analytics summary", { error: error.message }, "database");
+      throw error;
+    }
+  }
+
+  getLatencySummary({ days = 7, now = new Date() } = {}) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      const cutoff = localDateKey(
+        new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1))
+      );
+      const rows = this.db
+        .prepare(
+          `SELECT model, paste_latency_ms AS ms
+           FROM analytics_events
+           WHERE deleted_at IS NULL AND paste_latency_ms > 0 AND local_date >= ?`
+        )
+        .all(cutoff);
+      return summarizeLatency(rows);
+    } catch (error) {
+      debugLogger.error("Error reading latency summary", { error: error.message }, "database");
       throw error;
     }
   }
@@ -1804,6 +2002,127 @@ class DatabaseManager {
     }
   }
 
+  getGrillQuestionBank() {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    return getGrillQuestionBank(this.db);
+  }
+
+  seedGrillQuestionBank(questions, params) {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    return seedGrillQuestions(this.db, questions, params);
+  }
+
+  listGrillQuestions() {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    return listGrillQuestions(this.db);
+  }
+
+  addGrillQuestion(question) {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    return addGrillQuestion(this.db, question);
+  }
+
+  updateGrillQuestionText(id, text) {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    return updateGrillQuestionText(this.db, id, text);
+  }
+
+  setGrillQuestionStatus(id, status) {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    return setGrillQuestionStatus(this.db, id, status);
+  }
+
+  moveGrillQuestion(id, newPosition) {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    return moveGrillQuestion(this.db, id, newPosition);
+  }
+
+  setGrillFlowParam(key, value) {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    return setGrillFlowParam(this.db, key, value);
+  }
+
+  getGrillQuestionHistory(id) {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    return getGrillQuestionHistory(this.db, id);
+  }
+
+  setGrillQuestionMark(questionId, noteId, mark, note) {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    return setGrillQuestionMark(this.db, questionId, noteId, mark, note);
+  }
+
+  clearGrillQuestionMark(questionId, noteId) {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    return clearGrillQuestionMark(this.db, questionId, noteId);
+  }
+
+  grillQuestionMarksForNote(noteId) {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    return grillQuestionMarksForNote(this.db, noteId);
+  }
+
+  grillQuestionMarkCounts() {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    return grillQuestionMarkCounts(this.db);
+  }
+
+  // The "To grill" list (grill_topics).
+  listGrillTopics(status) {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    return listGrillTopics(this.db, { status });
+  }
+
+  addGrillTopic(topic) {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    const id = addGrillTopic(this.db, topic ?? {});
+    return listGrillTopics(this.db).find((row) => row.id === id);
+  }
+
+  removeGrillTopic(id) {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    return removeGrillTopic(this.db, id);
+  }
+
+  markGrillTopicsUsed(ids) {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    return markGrillTopicsUsed(this.db, ids);
+  }
+
   getDictionary() {
     try {
       if (!this.db) {
@@ -2071,6 +2390,25 @@ class DatabaseManager {
         this.db
           .prepare("SELECT * FROM custom_dictionary WHERE lower(word) = lower(?) LIMIT 1")
           .get(word);
+
+      // A word match alone, on a row another cloud row already owns: the hub
+      // has no unique word index, so two devices can each create the word.
+      // Taking the other row's ids flips the local row between them on every
+      // lookback re-pull. Keep it unless this copy is strictly newer and the
+      // local row has nothing unpushed. Stamps compare at ms precision, so a
+      // tie goes to the lower cloud id: every device then keeps the same row
+      // (rtech-whisper#244). null: nothing written.
+      if (existing && !byCloud && existing.cloud_id && existing.cloud_id !== cloudEntry.id) {
+        const held = stampMs(existing.updated_at);
+        const incoming = stampMs(updatedAt);
+        if (
+          existing.sync_status === "pending" ||
+          held > incoming ||
+          (held === incoming && existing.cloud_id < cloudEntry.id)
+        ) {
+          return null;
+        }
+      }
 
       if (existing) {
         // Manual is sticky — a pull never demotes a local manual row to learned.
@@ -2637,6 +2975,165 @@ class DatabaseManager {
       debugLogger.error("Error getting note by cloud_id", { error: error.message }, "notes");
       throw error;
     }
+  }
+
+  getCrmSyncState(noteId, scope, accountId = this.activeAccountId) {
+    if (!this.db) throw new Error("Database not initialized");
+    const accountScope = this._crmAccountScopeCondition("notes", accountId);
+    const row = this.db
+      .prepare(
+        `SELECT crm_activity_id, crm_target_id, crm_opportunity_id, crm_synced_at
+         FROM notes WHERE id = ? AND deleted_at IS NULL AND crm_scope = ? AND ${accountScope.sql}`
+      )
+      .get(noteId, scope, ...accountScope.params);
+    if (!row?.crm_activity_id) return null;
+    return {
+      noteId: row.crm_activity_id,
+      contactId: row.crm_target_id,
+      opportunityId: row.crm_opportunity_id,
+      syncedAt: row.crm_synced_at,
+    };
+  }
+
+  saveCrmSyncState(noteId, state, scope, accountId = this.activeAccountId) {
+    if (!this.db) throw new Error("Database not initialized");
+    const accountScope = this._crmAccountScopeCondition("notes", accountId);
+    const result = this.db
+      .prepare(
+        `UPDATE notes SET crm_activity_id = ?, crm_target_id = ?, crm_target_type = 'contact',
+          crm_opportunity_id = ?, crm_synced_at = ?, crm_scope = ?
+         WHERE id = ? AND deleted_at IS NULL AND ${accountScope.sql}`
+      )
+      .run(
+        state.noteId,
+        state.contactId,
+        state.opportunityId,
+        state.syncedAt,
+        scope,
+        noteId,
+        ...accountScope.params
+      );
+    if (result.changes !== 1) throw new Error("Note not found");
+    return state;
+  }
+
+  _crmAccountScopeCondition(tableName, accountId) {
+    return {
+      sql: `((${tableName}.account_id IS NULL AND EXISTS (
+        SELECT 1 FROM spaces crm_scope_space
+        WHERE crm_scope_space.id = ${tableName}.space_id
+          AND crm_scope_space.kind = 'private'
+      )) OR ${tableName}.account_id = ? OR EXISTS (
+        SELECT 1 FROM spaces crm_scope_space
+        JOIN space_accounts crm_scope_membership
+          ON crm_scope_membership.space_id = crm_scope_space.id
+        WHERE crm_scope_space.id = ${tableName}.space_id
+          AND crm_scope_space.kind = 'team'
+          AND crm_scope_membership.account_id = ?
+      ))`,
+      params: [accountId, accountId],
+    };
+  }
+
+  captureCrmNoteContext(noteId) {
+    if (!this.db) throw new Error("Database not initialized");
+    const accountId = this.activeAccountId;
+    const accountScope = this._crmAccountScopeCondition("notes", accountId);
+    const note = this.db
+      .prepare(`SELECT * FROM notes WHERE id = ? AND deleted_at IS NULL AND ${accountScope.sql}`)
+      .get(noteId, ...accountScope.params);
+    return note ? { note, accountId } : null;
+  }
+
+  isCrmNoteContextCurrent(context) {
+    return Boolean(context && context.accountId === this.activeAccountId);
+  }
+
+  // Grill notes and their social-media-pipeline sync state. Scoped like CRM
+  // state: the active account's notes only, never deleted ones.
+  getPipelineNote(noteId) {
+    if (!this.db) throw new Error("Database not initialized");
+    const accountScope = this._crmAccountScopeCondition("notes", this.activeAccountId);
+    return (
+      this.db
+        .prepare(
+          `SELECT id, title, transcript, created_at, updated_at, deleted_at, grill_meta
+           FROM notes WHERE id = ? AND deleted_at IS NULL AND ${accountScope.sql}`
+        )
+        .get(noteId, ...accountScope.params) || null
+    );
+  }
+
+  saveGrillMeta(noteId, meta) {
+    if (!this.db) throw new Error("Database not initialized");
+    const accountScope = this._crmAccountScopeCondition("notes", this.activeAccountId);
+    const result = this.db
+      .prepare(
+        `UPDATE notes SET grill_meta = ?, pipeline_synced_at = NULL, pipeline_not_sendable = NULL
+         WHERE id = ? AND deleted_at IS NULL AND ${accountScope.sql}`
+      )
+      .run(JSON.stringify(meta), noteId, ...accountScope.params);
+    if (result.changes !== 1) throw new Error("Note not found");
+    return meta;
+  }
+
+  getPipelineSyncState(noteId) {
+    if (!this.db) throw new Error("Database not initialized");
+    const accountScope = this._crmAccountScopeCondition("notes", this.activeAccountId);
+    const row = this.db
+      .prepare(
+        `SELECT transcript, grill_meta, pipeline_synced_at, pipeline_last_error, pipeline_pieces_added,
+                pipeline_not_sendable
+         FROM notes WHERE id = ? AND deleted_at IS NULL AND ${accountScope.sql}`
+      )
+      .get(noteId, ...accountScope.params);
+    if (!row) return null;
+    return {
+      syncedAt: row.pipeline_synced_at ?? null,
+      lastError: row.pipeline_last_error ?? null,
+      piecesAdded: row.pipeline_pieces_added ?? null,
+      notSendable: Boolean(row.pipeline_not_sendable),
+      eligible: Boolean(row.grill_meta) || hasRoleTaggedTurns(row.transcript),
+    };
+  }
+
+  savePipelineSyncState(noteId, state) {
+    if (!this.db) throw new Error("Database not initialized");
+    const accountScope = this._crmAccountScopeCondition("notes", this.activeAccountId);
+    const sets = ["pipeline_last_error = ?"];
+    const params = [state.lastError ?? null];
+    if (Object.hasOwn(state, "syncedAt")) {
+      sets.push("pipeline_synced_at = ?", "pipeline_pieces_added = ?");
+      params.push(state.syncedAt ?? null, state.piecesAdded ?? null);
+    }
+    if (Object.hasOwn(state, "notSendable")) {
+      sets.push("pipeline_not_sendable = ?");
+      params.push(state.notSendable ? 1 : null);
+    }
+    const result = this.db
+      .prepare(
+        `UPDATE notes SET ${sets.join(", ")}
+         WHERE id = ? AND deleted_at IS NULL AND ${accountScope.sql}`
+      )
+      .run(...params, noteId, ...accountScope.params);
+    if (result.changes !== 1) throw new Error("Note not found");
+    return state;
+  }
+
+  /** Grill notes handed to the pipeline, not yet accepted, and not marked unsendable. */
+  listPipelinePendingNoteIds() {
+    if (!this.db) throw new Error("Database not initialized");
+    const accountScope = this._crmAccountScopeCondition("notes", this.activeAccountId);
+    return this.db
+      .prepare(
+        `SELECT id FROM notes
+         WHERE grill_meta IS NOT NULL AND pipeline_synced_at IS NULL
+           AND pipeline_not_sendable IS NULL
+           AND deleted_at IS NULL AND ${accountScope.sql}
+         ORDER BY id`
+      )
+      .all(...accountScope.params)
+      .map((row) => row.id);
   }
 
   getNotes(noteType = null, limit = 100, folderId = null, spaceId = null) {
@@ -3469,6 +3966,69 @@ class DatabaseManager {
     this.db.prepare(`DELETE FROM agent_conversations WHERE ${filter}`).run(...params);
   }
 
+  // Run once per launch. Local-only tombstones have no server row to retire
+  // and no pending delete to push (getPendingConversationDeletes requires a
+  // cloud_id), so they are dead weight holding on to every message.
+  // True once any row on this install carries a cloud id. Until then nothing
+  // can be mid-push to the server, so a deleted chat has no server copy to
+  // retire and can be removed for real. After it, a chat with no cloud id may
+  // still have its CREATE in flight, and the late ack is what queues the
+  // server-side delete, so those installs keep tombstones.
+  _hasEverSynced() {
+    const tables = [
+      "agent_conversations",
+      "notes",
+      "folders",
+      "custom_dictionary",
+      "snippets",
+      "transcriptions",
+    ];
+    return tables.some((table) => {
+      try {
+        return !!this.db
+          .prepare(`SELECT 1 FROM ${table} WHERE cloud_id IS NOT NULL AND cloud_id != '' LIMIT 1`)
+          .get();
+      } catch {
+        return false; // table or column absent on this install
+      }
+    });
+  }
+
+  purgeDeletedLocalConversations() {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      // Runs before the account is known, so only a never-synced install is safe.
+      if (this._hasEverSynced()) return { success: true, purged: 0 };
+      // A conversation journaled by an unresolved optimistic folder delete is
+      // not a finished delete: restoreFolderAfterDeniedDelete needs the row
+      // back if the server refuses, and fails outright when it is gone.
+      const filter = `deleted_at IS NOT NULL AND cloud_id IS NULL
+          AND id NOT IN (
+            SELECT entity_id FROM optimistic_folder_delete_rows WHERE entity_type = 'conversation'
+          )`;
+      const purged = this.db.transaction(() => {
+        const { count } = this.db
+          .prepare(`SELECT COUNT(*) AS count FROM agent_conversations WHERE ${filter}`)
+          .get();
+        if (count > 0) {
+          this._hardDeleteConversationsWhere(filter, []);
+        }
+        return count;
+      })();
+      if (purged > 0) {
+        debugLogger.info("Purged locally deleted conversations", { count: purged }, "database");
+      }
+      return { success: true, purged };
+    } catch (error) {
+      debugLogger.error(
+        "Error purging locally deleted conversations",
+        { error: error.message },
+        "database"
+      );
+      return { success: false, purged: 0, error: error.message };
+    }
+  }
+
   purgeSpace(localSpaceId, options = {}) {
     try {
       if (!this.db) throw new Error("Database not initialized");
@@ -3749,7 +4309,13 @@ class DatabaseManager {
     }
   }
 
-  createAgentConversation(title = "Untitled", noteId = null, spaceId = null, folderId = null) {
+  createAgentConversation(
+    title = "Untitled",
+    noteId = null,
+    spaceId = null,
+    folderId = null,
+    kind = "chat"
+  ) {
     try {
       if (!this.db) throw new Error("Database not initialized");
       return this.db.transaction(() => {
@@ -3782,9 +4348,16 @@ class DatabaseManager {
         const clientConversationId = randomUUID();
         const result = this.db
           .prepare(
-            "INSERT INTO agent_conversations (title, note_id, space_id, folder_id, client_conversation_id) VALUES (?, ?, ?, ?, ?)"
+            "INSERT INTO agent_conversations (title, note_id, space_id, folder_id, client_conversation_id, kind) VALUES (?, ?, ?, ?, ?, ?)"
           )
-          .run(title, noteId, spaceId, folderId, clientConversationId);
+          .run(
+            title,
+            noteId,
+            spaceId,
+            folderId,
+            clientConversationId,
+            kind === "grill" ? "grill" : "chat"
+          );
         return this.db
           .prepare("SELECT * FROM agent_conversations WHERE id = ?")
           .get(result.lastInsertRowid);
@@ -3888,15 +4461,31 @@ class DatabaseManager {
     }
   }
 
+  // Delete means delete: a never-synced conversation and its messages leave
+  // the database outright. Only a row with a cloud copy tombstones, so the
+  // next push can retire the server copy.
   deleteAgentConversation(id) {
     try {
       if (!this.db) throw new Error("Database not initialized");
-      const result = this.db
-        .prepare(
-          "UPDATE agent_conversations SET deleted_at = datetime('now'), sync_status = 'pending', updated_at = datetime('now') WHERE id = ?"
-        )
-        .run(id);
-      return { success: result.changes > 0 };
+      const existed = this.db
+        .prepare("SELECT 1 FROM agent_conversations WHERE id = ? AND deleted_at IS NULL")
+        .get(id);
+      if (!existed) return { success: false };
+      // Rico, 2026-09-29: a deleted chat should be gone. Remove it for real when
+      // nobody is signed in and this install has never synced; otherwise keep
+      // the original tombstone so sync can retire the server copy.
+      if (this.activeAccountId === null && !this._hasEverSynced()) {
+        this.db.transaction(() => {
+          this._hardDeleteConversationsWhere("id = ?", [id]);
+        })();
+      } else {
+        this.db
+          .prepare(
+            "UPDATE agent_conversations SET deleted_at = datetime('now'), sync_status = 'pending', updated_at = datetime('now') WHERE id = ?"
+          )
+          .run(id);
+      }
+      return { success: true };
     } catch (error) {
       debugLogger.error("Error deleting agent conversation", { error: error.message }, "database");
       throw error;
@@ -3998,6 +4587,52 @@ class DatabaseManager {
       })();
     } catch (error) {
       debugLogger.error("Error adding agent message", { error: error.message }, "database");
+      throw error;
+    }
+  }
+
+  // One turn, by id. Fixing a grill in place (edit an answer, remove a bad
+  // turn) is the only caller: whole-conversation deletes stay where they are.
+  updateAgentMessage(id, content) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      return this.db.transaction(() => {
+        const message = this.db
+          .prepare("SELECT conversation_id FROM agent_messages WHERE id = ?")
+          .get(id);
+        if (!message) return { success: false };
+        this.db.prepare("UPDATE agent_messages SET content = ? WHERE id = ?").run(content, id);
+        this.db
+          .prepare(
+            "UPDATE agent_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"
+          )
+          .run(message.conversation_id);
+        return { success: true };
+      })();
+    } catch (error) {
+      debugLogger.error("Error updating agent message", { error: error.message }, "database");
+      throw error;
+    }
+  }
+
+  deleteAgentMessage(id) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      return this.db.transaction(() => {
+        const message = this.db
+          .prepare("SELECT conversation_id FROM agent_messages WHERE id = ?")
+          .get(id);
+        if (!message) return { success: false };
+        this.db.prepare("DELETE FROM agent_messages WHERE id = ?").run(id);
+        this.db
+          .prepare(
+            "UPDATE agent_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"
+          )
+          .run(message.conversation_id);
+        return { success: true };
+      })();
+    } catch (error) {
+      debugLogger.error("Error deleting agent message", { error: error.message }, "database");
       throw error;
     }
   }
@@ -4813,26 +5448,30 @@ class DatabaseManager {
       debugLogger.error("Error deleting database file", { error: error.message }, "database");
     }
   }
-  getAgentConversationsWithPreview(limit = 50, offset = 0, includeArchived = false) {
+  // `kind` narrows the list to one conversation kind ('chat' or 'grill');
+  // null/undefined keeps the pre-kind behaviour of listing every kind.
+  getAgentConversationsWithPreview(limit = 50, offset = 0, includeArchived = false, kind = null) {
     try {
       if (!this.db) throw new Error("Database not initialized");
       const archiveFilter = includeArchived
         ? "WHERE c.archived_at IS NOT NULL AND c.deleted_at IS NULL AND c.space_id IS NULL AND c.folder_id IS NULL"
         : "WHERE c.archived_at IS NULL AND c.deleted_at IS NULL AND c.space_id IS NULL AND c.folder_id IS NULL";
+      const kindFilter = kind == null ? "" : " AND c.kind = ?";
+      const kindParams = kind == null ? [] : [kind];
       return this.db
         .prepare(
-          `SELECT c.id, c.title, c.created_at, c.updated_at, c.archived_at, c.cloud_id,
+          `SELECT c.id, c.title, c.created_at, c.updated_at, c.archived_at, c.cloud_id, c.kind,
             COUNT(m.id) AS message_count,
-            (SELECT content FROM agent_messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message,
-            (SELECT role FROM agent_messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message_role
+            ${lastVisibleMessageSql("content", "c.id")} AS last_message,
+            ${lastVisibleMessageSql("role", "c.id")} AS last_message_role
           FROM agent_conversations c
           LEFT JOIN agent_messages m ON m.conversation_id = c.id
-          ${archiveFilter}
+          ${archiveFilter}${kindFilter}
           GROUP BY c.id
           ORDER BY c.updated_at DESC
           LIMIT ? OFFSET ?`
         )
-        .all(limit, offset);
+        .all(...kindParams, limit, offset);
     } catch (error) {
       debugLogger.error(
         "Error getting agent conversations with preview",
@@ -4851,8 +5490,8 @@ class DatabaseManager {
         .prepare(
           `SELECT DISTINCT c.id, c.title, c.created_at, c.updated_at, c.archived_at, c.cloud_id,
             COUNT(m.id) AS message_count,
-            (SELECT content FROM agent_messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message,
-            (SELECT role FROM agent_messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message_role
+            ${lastVisibleMessageSql("content", "c.id")} AS last_message,
+            ${lastVisibleMessageSql("role", "c.id")} AS last_message_role
           FROM agent_conversations c
           LEFT JOIN agent_messages m ON m.conversation_id = c.id
           LEFT JOIN agent_messages ms ON ms.conversation_id = c.id
@@ -5303,7 +5942,8 @@ class DatabaseManager {
       stmt.run(
         cloudNote.client_note_id,
         cloudNote.id,
-        cloudNote.title,
+        // notes.title is NOT NULL; a hub note may carry no title (#320).
+        cloudNote.title ?? "Untitled Note",
         cloudNote.content,
         cloudNote.enhanced_content || null,
         cloudNote.enhancement_prompt || null,

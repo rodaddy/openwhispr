@@ -1,124 +1,107 @@
-<p align="center">
-  <img src="src/assets/logo.svg" alt="OpenWhispr" width="120" />
-</p>
+# rTech Whisper (desktop)
 
-<h1 align="center">OpenWhispr</h1>
+rTech Whisper is a fork of [OpenWhispr](https://github.com/OpenWhispr/openwhispr),
+the open-source, MIT-licensed desktop dictation app by the OpenWhispr Team.
+Almost everything here is their work: the Electron app, local Whisper and
+Parakeet transcription, meetings, notes, and the agent. The full upstream
+history is kept in this repository so that credit stays attached to every
+commit. The upstream README is preserved at
+[docs/UPSTREAM-README.md](docs/UPSTREAM-README.md).
 
-<p align="center">
-  <a href="https://github.com/OpenWhispr/openwhispr/blob/main/LICENSE"><img src="https://img.shields.io/github/license/OpenWhispr/openwhispr?style=flat" alt="License" /></a>
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey?style=flat" alt="Platform" />
-  <a href="https://github.com/OpenWhispr/openwhispr/releases/latest"><img src="https://img.shields.io/github/v/release/OpenWhispr/openwhispr?style=flat&sort=semver" alt="GitHub release" /></a>
-  <a href="https://github.com/OpenWhispr/openwhispr/releases"><img src="https://img.shields.io/github/downloads/OpenWhispr/openwhispr/total?style=flat&color=blue" alt="Downloads" /></a>
-  <a href="https://github.com/OpenWhispr/openwhispr/stargazers"><img src="https://img.shields.io/github/stars/OpenWhispr/openwhispr?style=flat" alt="GitHub stars" /></a>
-</p>
+## Why this fork exists
 
-<p align="center">
-  The open-source and free alternative to WisprFlow and Granola.<br/>
-  Privacy-first voice-to-text dictation with AI agents, meeting transcription, and notes. Cross-platform for macOS, Windows, and Linux.
-</p>
+The author uses dictation all day on a Mac, mostly into terminals and coding
+agents, with speech-to-text running on his own servers instead of a cloud API.
+The fork carries the changes that workflow needed and that did not fit
+upstream's product. It has its own version number (2.x), starting from
+OpenWhispr 1.10.1.
 
-<p align="center">
-  <a href="https://openwhispr.com">Website</a> &middot;
-  <a href="https://docs.openwhispr.com">Docs</a> &middot;
-  <a href="https://github.com/OpenWhispr/openwhispr/releases/latest">Download</a> &middot;
-  <a href="https://docs.openwhispr.com/api/overview">API</a> &middot;
-  <a href="https://github.com/OpenWhispr/openwhispr/blob/main/CHANGELOG.md">Changelog</a>
-</p>
+## What the fork adds
 
----
+- **Self-hosted speech-to-text everywhere.** Dictation, live preview, and note
+  recording can post to any OpenAI-compatible `/v1/audio/transcriptions`
+  endpoint (for example a llama-swap or whisper.cpp server on your LAN), with
+  an away-from-home chain: sync hub first, then the self-hosted server
+  directly, then a local engine.
+- **Faster press-to-paste.** Recording starts on key press without the
+  AppleScript round trips; tap-to-latch and hold-to-talk in one hybrid
+  activation mode; latency is measured and shown per model on the Insights
+  page.
+- **App-aware formatting on macOS.** Dictation is formatted for the app it
+  lands in, with an optional guarded Return after a paste into a terminal.
+- **Filler-word removal** before cleanup or paste, with an editable list.
+- **Sync hub (optional).** Chats and transcriptions sync through a
+  self-hosted hub with a per-device key. The hub is a separate project; the
+  app only speaks its HTTP protocol. Set the hub URL in Settings or with
+  `RTECH_WHISPER_HUB_URL` (see `.env.example`). With no URL, sync is off.
+- **Spoken assistant and "grill" interviews.** A voice assistant persona and a
+  spoken interviewer mode that asks one question at a time and saves the
+  session as a note. Speech comes from a self-hosted
+  OmniVoice server
+  (`ASSISTANT_SPEECH_ENDPOINT`) or an on-device engine. The interview prompts
+  and question bank are written for the author; edit
+  `src/config/grill/question-bank.md` and `src/config/prompts/` for your own.
+- **GoHighLevel CRM connector.** File a note as a GoHighLevel note on a
+  contact or opportunity.
+- **Note sharing** through a small self-hosted share service
+  (`server/share/`, with `apps/share/Dockerfile`).
+- **`rtw` CLI and MCP server** (`tools/rtw/`) that talks to the running app over
+  a loopback bridge, so coding agents can read and write notes.
+- **Update checks are off** by default (`OPENWHISPR_ENABLE_UPDATES=1` restores
+  them), since builds are distributed by hand.
 
-OpenWhispr turns your voice into text, notes, and actions from your desktop. Press a hotkey, speak, and your words appear at your cursor. Choose between fully private offline transcription with local speech-to-text engines like Whisper and NVIDIA Parakeet — where your audio never leaves your device — or cloud processing for speed. No data collection, no telemetry, fully open source.
+`patches/` holds an early snapshot of the fork delta as `git format-patch`
+files; `CHANGELOG.md` is the full record from 2.0.0 onward.
 
-## Download
+## How to run it
 
-| Platform              | Download                                                                                                                                                                                                                                                                                  |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| macOS (Apple Silicon) | [`.dmg`](https://github.com/OpenWhispr/openwhispr/releases/latest)                                                                                                                                                                                                                        |
-| macOS (Intel) \*      | [`.dmg`](https://github.com/OpenWhispr/openwhispr/releases/latest)                                                                                                                                                                                                                        |
-| Windows               | [`.exe`](https://github.com/OpenWhispr/openwhispr/releases/latest)                                                                                                                                                                                                                        |
-| Linux                 | [`.AppImage`](https://github.com/OpenWhispr/openwhispr/releases/latest) / [`.deb`](https://github.com/OpenWhispr/openwhispr/releases/latest) / [`.rpm`](https://github.com/OpenWhispr/openwhispr/releases/latest) / [`.tar.gz`](https://github.com/OpenWhispr/openwhispr/releases/latest) |
-
-\* On Intel Macs, live speaker identification and voice fingerprinting are unavailable: they depend on ONNX Runtime, which [stopped shipping macOS x86_64 binaries in 1.24](https://github.com/microsoft/onnxruntime/releases/tag/v1.24.1). Meetings still record and transcribe normally, and notes search falls back to keyword matching instead of semantic search.
-
-## Features
-
-- **Voice dictation** — global hotkey to dictate into any app with automatic pasting
-- **Dictation translation** — dedicated hotkey to dictate in one language and paste the text in another
-- **AI agent** — talk to GPT-5, Claude, Gemini, Groq, Tinfoil, OpenRouter, or local models with a named voice assistant
-- **Voice Assistant hotkey** — dedicated hotkey that sends what you say straight to your AI assistant as a command, no wake word needed and no cleanup pass; highlighted text is edited in place. With auto-paste enabled, answers paste at a focused text cursor or stream into a floating panel and copy to the clipboard when no writable cursor is available. You can also opt in to sending a screenshot of your current screen as context
-- **Meeting transcription** — auto-detect Zoom, Teams, and FaceTime calls with live speaker diarization, voice fingerprinting, and Google, Microsoft, or Apple Calendar integration
-- **Local speaker diarization** — on-device speaker labelling with voice fingerprint recognition across meetings, no cloud required
-- **Notes** — create, organize, and search notes with folders, semantic search, cloud sync, and AI actions
-- **Team spaces & sharing** — free for signed-in users; share notes on the web with link, domain, or invite-only visibility, and collaborate in team spaces with roles, invitations, and server-enforced membership
-- **Audio import** — transcribe existing audio and video: drag in files, batch-upload, or paste a YouTube/audio URL, with optional speaker detection
-- **Local or cloud — your choice** — all core features (transcription, AI reasoning, speaker diarization, semantic search) work with local models or cloud providers — including GPU-accelerated local Whisper on Metal, CUDA, and Vulkan (AMD/Intel)
-- **Enterprise controls** — enforce organization policy, company SSO and SCIM, and centrally managed Amazon Bedrock or Azure OpenAI access without distributing cloud keys
-- **Public API & MCP** — manage notes and transcriptions programmatically or connect your AI assistant via the [MCP server](https://docs.openwhispr.com/integrations/mcp)
-
-## Quick start
+Requires Node.js 24 and macOS for the fork-specific features (most upstream
+features also work on Windows and Linux).
 
 ```bash
-git clone https://github.com/OpenWhispr/openwhispr.git
-cd openwhispr
+git clone <this repository>
+cd <checkout>
 npm install
+cp .env.example .env     # fill in what you use; every fork setting is optional
 npm run dev
 ```
 
-Requires Node.js 24+. See the [full documentation](https://docs.openwhispr.com/quickstart) for setup guides, platform-specific instructions, and build details.
+Tests: `npm test` (Node's test runner). Database-backed tests run under
+Electron with `npm run test:db`.
 
-## Documentation
+A packaged build: `node scripts/write-build-env.js` (reads your Google Calendar
+OAuth client and optional service settings from the environment into `.env`),
+then `npm run build:mac`. Signing and notarization need your own Apple
+Developer ID.
 
-Visit **[docs.openwhispr.com](https://docs.openwhispr.com)** for:
+### Private dependency
 
-- [Getting started](https://docs.openwhispr.com/quickstart)
-- [Platform guides](https://docs.openwhispr.com/platform/macos) (macOS, Windows, Linux)
-- [API reference](https://docs.openwhispr.com/api/overview)
-- [MCP server setup](https://docs.openwhispr.com/integrations/mcp)
-- [Troubleshooting](https://docs.openwhispr.com/troubleshooting)
+The GoHighLevel connector imports `@rtech/connectors-highlevel`, which is not on
+the public npm registry. `.npmrc` and `package-lock.json` point at a
+placeholder registry (`npm.example.internal`). Until that package is published
+somewhere public, either point `.npmrc` at a registry that hosts it, or remove
+the dependency and the CRM connector, before `npm install` will succeed.
 
-Repo examples:
+## What it does not do
 
-- [Custom ASR shim](examples/custom-asr-shim/) for Self-Hosted transcription against non-OpenAI-compatible ASR APIs
+- It is not a hosted product and has no installer download here. You build it.
+- It does not ship the sync hub, the speech server, or any of the author's
+  servers. The defaults point at nothing (sync off, speech at `localhost`).
+- It does not track upstream automatically. Upstream fixes are merged by hand.
+- It does not follow upstream's version numbers or release channel.
 
-## Tech stack
+## Status
 
-React 19, TypeScript, Tailwind CSS v4, Electron 41, better-sqlite3, whisper.cpp, sherpa-onnx, shadcn/ui
+Production use: one person, daily, on Apple Silicon Macs, since September
+2026, with self-hosted speech-to-text on a home LAN. Signed and notarized
+builds have been made and installed on those machines.
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=OpenWhispr/openwhispr&type=date&legend=top-left)](https://www.star-history.com/#OpenWhispr/openwhispr&type=date&legend=top-left)
-
-## Sponsors
-
-<p align="center">
-  <a href="https://console.neon.tech/app/?promo=openwhispr">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://neon.com/brand/neon-logo-dark-color.svg">
-      <source media="(prefers-color-scheme: light)" srcset="https://neon.com/brand/neon-logo-light-color.svg">
-      <img width="250" alt="Neon" src="https://neon.com/brand/neon-logo-light-color.svg">
-    </picture>
-  </a>
-</p>
-
-<p align="center"><a href="https://console.neon.tech/app/?promo=openwhispr">Neon</a> is the serverless Postgres platform powering OpenWhispr Cloud.</p>
-
-## Contributing
-
-We welcome contributions. Fork the repo, create a feature branch, and open a pull request. See the [contributing guide](https://docs.openwhispr.com/contributing) for development setup and guidelines.
+Not proven: Windows and Linux builds of the fork's changes, Intel Macs, the
+spoken grill and voice features outside the author's own server setup, and any
+multi-user deployment of the hub or share service. The upstream features
+carry upstream's own maturity.
 
 ## License
 
-[MIT](LICENSE) — free for personal and commercial use.
-
-## Acknowledgments
-
-- **[OpenAI Whisper](https://github.com/openai/whisper)** — speech recognition model powering local and cloud transcription
-- **[whisper.cpp](https://github.com/ggerganov/whisper.cpp)** — high-performance C++ implementation for local processing
-- **[NVIDIA Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)** — fast multilingual ASR model
-- **[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)** — cross-platform ONNX runtime for Parakeet inference
-- **[Hugging Face](https://huggingface.co/)** — model hub hosting Whisper, Parakeet, and embedding model weights
-- **[llama.cpp](https://github.com/ggerganov/llama.cpp)** — local LLM inference for AI text processing
-- **[Electron](https://www.electronjs.org/)** — cross-platform desktop framework
-- **[React](https://react.dev/)** — UI component library
-- **[shadcn/ui](https://ui.shadcn.com/)** — accessible components built on Radix primitives
-- **[Neon](https://console.neon.tech/app/?promo=openwhispr)** — serverless Postgres powering OpenWhispr Cloud
+MIT. See [LICENSE](LICENSE): the original OpenWhispr copyright is kept, and the
+fork's changes are copyright Rico Rojas.

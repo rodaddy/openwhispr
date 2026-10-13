@@ -1,10 +1,23 @@
 import type { InferenceMode } from "../types/electron";
 
+export type TranscriptionPreviewLayout = "grow" | "fixed2lines";
+
+export function normalizeTranscriptionPreviewLayout(
+  value?: string | null
+): TranscriptionPreviewLayout {
+  return value === "fixed2lines" ? "fixed2lines" : "grow";
+}
+
 export function supportsLiveTranscriptionPreview(
   mode: InferenceMode,
   selectedCloudModelStreams = false
 ): boolean {
-  return mode === "local" || (mode === "providers" && selectedCloudModelStreams);
+  // Self-hosted rides the same 1.5s chunked preview path as local models.
+  return (
+    mode === "local" ||
+    mode === "self-hosted" ||
+    (mode === "providers" && selectedCloudModelStreams)
+  );
 }
 
 export function buildLiveTranscriptionPreview(committedText = "", partialText = ""): string {

@@ -3,7 +3,6 @@ const crypto = require("crypto");
 const { openExternalUrl } = require("./externalUrlOpener");
 
 const OAUTH_TIMEOUT_MS = 120000;
-const DEFAULT_DESKTOP_CALLBACK_URL = "https://openwhispr.com/auth/desktop-callback";
 
 const PROTOCOL_BY_CHANNEL = {
   development: "openwhispr-dev",
@@ -11,8 +10,8 @@ const PROTOCOL_BY_CHANNEL = {
   production: "openwhispr",
 };
 
-// Thrown by handleCallback to control the error code shown on the hosted
-// desktop-callback page (defaults to "server_error").
+// Thrown by handleCallback to control the error code shown on the
+// callback page (defaults to "server_error").
 class OAuthFlowError extends Error {
   constructor(redirectCode, message) {
     super(message);
@@ -20,8 +19,41 @@ class OAuthFlowError extends Error {
   }
 }
 
+// Set only when a hosted callback page should handle the redirect instead of
+// the local page this server serves.
 function getDesktopCallbackUrl() {
-  return process.env.VITE_OPENWHISPR_OAUTH_CALLBACK_URL || DEFAULT_DESKTOP_CALLBACK_URL;
+  return process.env.VITE_OPENWHISPR_OAUTH_CALLBACK_URL || null;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderCallbackPage(message) {
+  return [
+    "<!doctype html>",
+    '<html lang="en">',
+    "<head>",
+    '<meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    "<title>rTech Whisper</title>",
+    "<style>",
+    "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;",
+    "background:#faf7f2;color:#2b2724;",
+    'font-family:"Helvetica Neue",Helvetica,Arial,sans-serif}',
+    "main{max-width:26rem;padding:2rem;text-align:center}",
+    "h1{font-size:1.125rem;font-weight:600;margin:0 0 .75rem}",
+    "p{font-size:.9375rem;line-height:1.5;margin:0;color:#5b544e}",
+    "</style>",
+    "</head>",
+    "<body><main><h1>rTech Whisper</h1><p>" + message + "</p></main></body>",
+    "</html>",
+  ].join("");
 }
 
 function getProtocol() {
@@ -38,9 +70,24 @@ function buildCallbackRedirect(params) {
   return url.toString();
 }
 
-function redirect(res, params) {
-  res.writeHead(302, { Location: buildCallbackRedirect(params) });
-  res.end();
+// Answers the browser that finished the flow. With
+// VITE_OPENWHISPR_OAUTH_CALLBACK_URL set, redirect to that hosted page; with it
+// unset, serve a self-contained local page so nothing leaves this machine.
+function respond(res, params, errorParam) {
+  if (getDesktopCallbackUrl()) {
+    res.writeHead(302, { Location: buildCallbackRedirect(params) });
+    res.end();
+    return;
+  }
+
+  const errorCode = params[errorParam];
+  const message =
+    errorCode === undefined
+      ? "Connected. You can close this tab and return to rTech Whisper."
+      : `Sign-in did not finish (${escapeHtml(errorCode)}). Close this tab and try again from ` +
+        "rTech Whisper.";
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(renderCallbackPage(message));
 }
 
 // Runs a PKCE auth-code flow through an ephemeral 127.0.0.1 server:
@@ -48,7 +95,7 @@ function redirect(res, params) {
 // - handleCallback(code, redirectUri, codeVerifier) → resolves the flow result;
 //   called once with a state-validated code, throws (OAuthFlowError for a
 //   specific callback-page code) to reject.
-// - errorParam — query-param name for the hosted desktop-callback page
+// - errorParam — query-param name for the callback page
 //   (e.g. "gcal_error"); the success param is derived from the same prefix.
 function runOAuthLoopbackFlow({ buildAuthUrl, handleCallback, errorParam }) {
   const connectedParam = errorParam.replace(/_error$/, "_connected");
@@ -76,7 +123,7 @@ function runOAuthLoopbackFlow({ buildAuthUrl, handleCallback, errorParam }) {
 
         if (error) {
           callbackClaimed = true;
-          redirect(res, { [errorParam]: error });
+          respond(res, { [errorParam]: error }, errorParam);
           cleanup();
           reject(new Error(`OAuth error: ${error}`));
           return;
@@ -100,12 +147,12 @@ function runOAuthLoopbackFlow({ buildAuthUrl, handleCallback, errorParam }) {
         const redirectUri = `http://127.0.0.1:${server.address().port}`;
         const result = await handleCallback(code, redirectUri, codeVerifier);
 
-        redirect(res, { [connectedParam]: "true" });
+        respond(res, { [connectedParam]: "true" }, errorParam);
         cleanup();
         resolve(result);
       } catch (err) {
         callbackClaimed = true;
-        redirect(res, { [errorParam]: err.redirectCode || "server_error" });
+        respond(res, { [errorParam]: err.redirectCode || "server_error" }, errorParam);
         cleanup();
         reject(err);
       }

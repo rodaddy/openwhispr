@@ -5,6 +5,8 @@ const CalendarSyncInterval = require("./calendarSyncInterval");
 const { MAX_BUFFER_MINUTES } = require("./calendarAvailability");
 const { extractMeetingUrl } = require("./meetingJoinUrl");
 const { broadcastToWindows } = require("./windowBroadcast");
+const { CalendarSyncHealth, showReconnectNotification } = require("./calendarSyncHealth");
+const { runCalendarSyncNow, singleFlight } = require("./calendarSyncNow");
 
 const CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3";
 const BUFFER_COVERAGE_MS = MAX_BUFFER_MINUTES * 60 * 1000;
@@ -24,9 +26,17 @@ class GoogleCalendarManager {
     this.oauth = new GoogleCalendarOAuth(databaseManager);
     this.accounts = new Map();
     this.primaryOnly = true;
+    this.syncHealth = new CalendarSyncHealth();
     this.syncRunner = new CalendarSyncInterval(
       () => this.syncEvents().then(() => this.reminderScheduler.scheduleNextMeeting()),
       { intervalMs: 2 * 60 * 1000, maxIntervalMs: 30 * 60 * 1000, logScope: "gcal" }
+    );
+    // User-initiated (#433): returns { success, error? } instead of only logging.
+    this.syncNow = singleFlight(() =>
+      runCalendarSyncNow({
+        fetchCalendars: (errors) => this.fetchCalendars(null, errors),
+        syncEvents: () => this.syncEvents(),
+      })
     );
   }
 
@@ -58,6 +68,8 @@ class GoogleCalendarManager {
 
   removeAccount(email) {
     this.accounts.delete(email);
+    this.syncHealth.remove(email);
+    this._broadcastSyncHealth();
     this.databaseManager.removeGoogleAccount(email);
     this._broadcastAccountsChanged();
 
@@ -97,6 +109,8 @@ class GoogleCalendarManager {
     } else {
       this.stop();
       this.accounts.clear();
+      this.syncHealth.remove();
+      this._broadcastSyncHealth();
       this.databaseManager.clearGoogleCalendarData();
       this.reminderScheduler.reset("google");
       this.reminderScheduler.scheduleNextMeeting();
@@ -118,7 +132,8 @@ class GoogleCalendarManager {
     return this.databaseManager.getGoogleAccounts();
   }
 
-  async fetchCalendars(accountEmail = null) {
+  // `errors`, when given, collects each account's failure for the caller.
+  async fetchCalendars(accountEmail = null, errors = null) {
     const emails = accountEmail ? [accountEmail] : this._getAccountEmails();
     const allCalendars = [];
 
@@ -136,6 +151,7 @@ class GoogleCalendarManager {
         allCalendars.push(...calendars);
       } catch (err) {
         debugLogger.error("Error fetching calendars", { email, error: err.message }, "gcal");
+        errors?.push(err);
       }
     }
 
@@ -148,10 +164,13 @@ class GoogleCalendarManager {
     const selectedCalendars = this.databaseManager.getSelectedCalendars();
     if (selectedCalendars.length === 0) return;
 
+    const results = [];
     for (const calendar of selectedCalendars) {
       try {
         await this._syncCalendar(calendar);
+        results.push([calendar.account_email, null]);
       } catch (err) {
+        results.push([calendar.account_email, err]);
         debugLogger.error(
           "Error syncing calendar",
           { calendarId: calendar.id, error: err.message },
@@ -160,8 +179,22 @@ class GoogleCalendarManager {
       }
     }
 
+    if (this.syncHealth.recordSyncPass(results).length > 0) {
+      showReconnectNotification("Google Calendar");
+    }
+    this._broadcastSyncHealth();
+
     broadcastToWindows("gcal-events-synced", {});
     this.reminderScheduler.scheduleNextMeeting();
+    return results;
+  }
+
+  getSyncHealth() {
+    return this.syncHealth.snapshot();
+  }
+
+  _broadcastSyncHealth() {
+    broadcastToWindows("gcal-sync-health-changed", this.getSyncHealth());
   }
 
   async _syncCalendar(calendar) {

@@ -20,6 +20,7 @@ const HEALTH_CHECK_TIMEOUT_MS = 2000;
 const STARTUP_POLL_INTERVAL_MS = 500;
 const HEALTH_CHECK_FAILURE_THRESHOLD = 3;
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+const INFERENCE_TIMEOUT_MS = 300000;
 const DEFAULT_CONTEXT_SIZE = 4096;
 
 class LlamaServerManager {
@@ -558,7 +559,8 @@ class LlamaServerManager {
             "Content-Type": "application/json",
             "Content-Length": Buffer.byteLength(body),
           },
-          timeout: 300000,
+          // Local inference is slow, so a caller's timeout only ever extends this.
+          timeout: Math.max(INFERENCE_TIMEOUT_MS, options.timeoutMs ?? 0),
         },
         (res) => {
           let data = "";

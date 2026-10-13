@@ -63,7 +63,7 @@ const clipboardModulePath = require.resolve("../../src/helpers/clipboard");
 
 const originalLoad = Module._load;
 
-function loadClipboardManager({ spawn } = {}) {
+function loadClipboardManager({ spawn, spawnSync, debugLogger } = {}) {
   delete require.cache[clipboardModulePath];
 
   Module._load = function loadWithMocks(request, parent, isMain) {
@@ -76,8 +76,9 @@ function loadClipboardManager({ spawn } = {}) {
       };
     }
     if (request === "child_process" && spawn) {
-      return { ...childProcess, spawn };
+      return { ...childProcess, spawn, ...(spawnSync ? { spawnSync } : {}) };
     }
+    if (request === "./debugLogger" && debugLogger) return debugLogger;
     return originalLoad.call(this, request, parent, isMain);
   };
 
@@ -641,6 +642,58 @@ test("XWayland fallback remains reachable after native Wayland failure", async (
   );
 });
 
+test("the xdotool type fallback types the text and keeps it out of the logs", async (t) => {
+  const TEXT = "dictated secret sentence";
+  const spawnCalls = [];
+  const logCalls = [];
+  const TestClipboardManager = loadClipboardManager({
+    // The key press fails, then the type fallback fails: every log site runs.
+    spawn: createSpawn(spawnCalls, [1, 1]),
+    spawnSync: (_command, args) => {
+      const stdout = args.includes("getwindowclassname")
+        ? "gnome-terminal"
+        : args.includes("getwindowpid")
+          ? ""
+          : "4242";
+      return { status: stdout ? 0 : 1, stdout: Buffer.from(stdout) };
+    },
+    debugLogger: new Proxy(
+      {},
+      {
+        get:
+          (_target, level) =>
+          (...args) =>
+            logCalls.push([level, ...args]),
+      }
+    ),
+  });
+  const manager = new TestClipboardManager();
+  manager.commandExists = (command) => command === "xdotool";
+  manager.resolveLinuxFastPasteBinary = () => null;
+  const previous = {
+    XDG_SESSION_TYPE: process.env.XDG_SESSION_TYPE,
+    WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY,
+  };
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  process.env.XDG_SESSION_TYPE = "x11";
+  delete process.env.WAYLAND_DISPLAY;
+  resetClipboard({ text: TEXT });
+
+  await assert.rejects(manager.pasteLinux(null));
+
+  assert.deepEqual(spawnCalls[1], {
+    command: "xdotool",
+    args: ["windowactivate", "--sync", "4242", "type", "--clearmodifiers", "--", TEXT],
+  });
+  assert.ok(logCalls.length > 0);
+  assert.equal(JSON.stringify(logCalls).includes(TEXT), false);
+});
+
 test("pasteMacOS restores clipboard after the short macOS delay on successful fast paste", async () => {
   const spawnCalls = [];
   const TestClipboardManager = loadClipboardManager({
@@ -669,6 +722,92 @@ test("pasteMacOS restores clipboard after the short macOS delay on successful fa
     delayMs: 450,
     expectedText: "dictated text",
   });
+});
+
+// Records the delay of every setTimeout scheduled while `run` is in flight.
+// The first entry is the pre-keystroke wait (#565).
+async function recordTimeoutDelays(run) {
+  const delays = [];
+  const originalSetTimeout = global.setTimeout;
+  global.setTimeout = (fn, ms, ...args) => {
+    delays.push(ms);
+    return originalSetTimeout(fn, ms, ...args);
+  };
+  try {
+    await run();
+  } finally {
+    global.setTimeout = originalSetTimeout;
+  }
+  return delays;
+}
+
+function macPasteManager({ fastPasteBinary, spawnCalls }) {
+  const TestClipboardManager = loadClipboardManager({
+    spawn: createSuccessfulSpawn(spawnCalls),
+  });
+  const manager = new TestClipboardManager();
+  manager.resolveFastPasteBinary = () => fastPasteBinary;
+  manager._restoreClipboardAfterDelay = () => Promise.resolve();
+  return manager;
+}
+
+test("dictation paste via the CGEvent helper waits 15 ms before the keystroke (#565)", async () => {
+  const spawnCalls = [];
+  const manager = macPasteManager({ fastPasteBinary: "/fake/fast-paste", spawnCalls });
+
+  const delays = await recordTimeoutDelays(() =>
+    manager.pasteMacOS(null, { expectedClipboardText: "dictated text", targetActivated: true })
+  );
+
+  assert.equal(delays[0], 15);
+  assert.equal(spawnCalls[0].command, "/fake/fast-paste");
+});
+
+test("dictation paste via the resident Globe listener waits 15 ms before the keystroke (#565)", async () => {
+  const spawnCalls = [];
+  const manager = macPasteManager({ fastPasteBinary: "/fake/fast-paste", spawnCalls });
+  let residentPastes = 0;
+  manager.setResidentPaste(async () => {
+    residentPastes += 1;
+  });
+
+  const delays = await recordTimeoutDelays(() =>
+    manager.pasteMacOS(null, { expectedClipboardText: "dictated text", targetActivated: true })
+  );
+
+  assert.deepEqual(delays, [15]);
+  assert.equal(residentPastes, 1);
+  assert.equal(spawnCalls.length, 0);
+});
+
+// Pre-push review: the 120 ms sleep was the only grace a late activation got.
+// Without a confirmed frontmost target, keep it.
+test("CGEvent and resident pastes keep 120 ms when the target was not confirmed frontmost (#565)", async () => {
+  const spawnCalls = [];
+  const helper = macPasteManager({ fastPasteBinary: "/fake/fast-paste", spawnCalls });
+  const helperDelays = await recordTimeoutDelays(() =>
+    helper.pasteMacOS(null, { expectedClipboardText: "dictated text", targetActivated: false })
+  );
+  assert.equal(helperDelays[0], 120);
+
+  const resident = macPasteManager({ fastPasteBinary: "/fake/fast-paste", spawnCalls: [] });
+  resident.setResidentPaste(async () => {});
+  const residentDelays = await recordTimeoutDelays(() =>
+    resident.pasteMacOS(null, { expectedClipboardText: "dictated text" })
+  );
+  assert.deepEqual(residentDelays, [120], "no activation info keeps the old wait");
+});
+
+test("dictation paste via osascript keeps the 120 ms wait before the keystroke (#565)", async () => {
+  const spawnCalls = [];
+  const manager = macPasteManager({ fastPasteBinary: null, spawnCalls });
+
+  const delays = await recordTimeoutDelays(() =>
+    manager.pasteMacOS(null, { expectedClipboardText: "dictated text" })
+  );
+
+  assert.equal(delays[0], 120);
+  assert.equal(spawnCalls[0].command, "osascript");
 });
 
 test("pasteMacOSWithOsascript fallback uses the short macOS restore delay", async () => {
@@ -703,24 +842,214 @@ test("pasteMacOSWithOsascript fallback uses the short macOS restore delay", asyn
   });
 });
 
-// Terminal detection now serves two callers: the Linux paste path, which matches
-// window classes, and macOS selection capture, which matches localized app names.
+// #634: auto-submit hands pasteMacOS a `pasteKeystroke` that pastes and
+// presses Return in the target process. It replaces the normal paste keystroke
+// unless it reports that it sent nothing.
+const PREVIOUS_CLIPBOARD = { type: "text", data: "previous clipboard" };
+
+function keystrokeManager({ fastPasteBinary = "/fake/fast-paste", spawn } = {}) {
+  const calls = { spawns: [], resident: 0, restores: [], keystrokes: 0 };
+  const TestClipboardManager = loadClipboardManager({
+    spawn: spawn ? spawn(calls.spawns) : createSuccessfulSpawn(calls.spawns),
+  });
+  const manager = new TestClipboardManager();
+  manager.resolveFastPasteBinary = () => fastPasteBinary;
+  manager.checkAccessibilityPermissions = async () => true;
+  manager._restoreClipboardAfterDelay = (original, options) => {
+    calls.restores.push({ original, options });
+    return Promise.resolve();
+  };
+  const residentPaste = async () => {
+    calls.resident += 1;
+  };
+  const options = (pasteKeystroke) => ({
+    expectedClipboardText: "dictated text",
+    targetActivated: true,
+    pasteKeystroke: () => {
+      calls.keystrokes += 1;
+      return pasteKeystroke();
+    },
+  });
+  return { manager, calls, options, residentPaste };
+}
+
+const crash = () => {
+  throw new Error("helper crashed");
+};
+// [what the pasteKeystroke does, the outcome pasteMacOS reports]
+for (const [name, pasteKeystroke, outcome] of [
+  ['answering "submitted"', async () => "submitted", "submitted"],
+  ['answering "pasted"', async () => "pasted", "pasted"],
+  ['answering "failed"', async () => "failed", "failed"],
+  ["that throws", crash, "failed"],
+  ["that rejects", async () => crash(), "failed"],
+  ["answering an unknown value", async () => true, "failed"],
+]) {
+  test(`a pasteKeystroke ${name} is the only keystroke sent`, async () => {
+    resetClipboard({ text: "dictated text" });
+    const { manager, calls, options, residentPaste } = keystrokeManager();
+    manager.setResidentPaste(residentPaste);
+    const sent = outcome !== "failed";
+
+    const delays = await recordTimeoutDelays(async () => {
+      const result = await manager.pasteMacOS(PREVIOUS_CLIPBOARD, options(pasteKeystroke));
+      await result.restoreComplete;
+      assert.equal(result.keystrokeOutcome, outcome);
+      assert.equal(result.pasted !== false, sent);
+    });
+
+    assert.deepEqual(delays, [15], "one pre-keystroke wait");
+    assert.equal(calls.keystrokes, 1);
+    assert.equal(calls.spawns.length, 0);
+    assert.equal(calls.resident, 0);
+    // A sent paste schedules the clipboard restore; an unknown outcome leaves
+    // the dictated text on the clipboard for a manual paste.
+    const restore = { delayMs: 450, expectedText: "dictated text" };
+    const restores = sent ? [{ original: PREVIOUS_CLIPBOARD, options: restore }] : [];
+    assert.deepEqual(calls.restores, restores);
+    assert.equal(fakeClipboard.text, "dictated text");
+    assert.deepEqual(fakeClipboard.writes, []);
+  });
+}
+
+test('a pasteKeystroke answering "skipped" runs the normal keystroke path once', async () => {
+  const { manager, calls, options, residentPaste } = keystrokeManager();
+  const skipped = options(async () => "skipped");
+
+  const helper = await manager.pasteMacOS(PREVIOUS_CLIPBOARD, skipped);
+  await helper.restoreComplete;
+
+  assert.equal(helper.keystrokeOutcome, "skipped");
+  assert.notEqual(helper.pasted, false);
+  assert.equal(calls.keystrokes, 1);
+  assert.equal(calls.spawns.length, 1);
+  assert.equal(calls.spawns[0].command, "/fake/fast-paste");
+
+  // The resident listener is the normal path when it is available.
+  manager.setResidentPaste(residentPaste);
+  const resident = await manager.pasteMacOS(null, skipped);
+
+  assert.equal(resident.keystrokeOutcome, "skipped");
+  assert.equal(calls.keystrokes, 2);
+  assert.equal(calls.resident, 1);
+  assert.equal(calls.spawns.length, 1);
+});
+
+const macPasteTextSkip = process.platform === "darwin" ? false : "exercises the macOS paste path";
+
+// The paste and its Return are one queued operation, so another paste cannot
+// land on the same command line in between.
+test(
+  "a second pasteText does not start its paste while the first pasteKeystroke is pending",
+  { skip: macPasteTextSkip },
+  async () => {
+    resetClipboard({ text: "previous clipboard" });
+    const events = [];
+    const { manager, calls } = keystrokeManager({
+      spawn: (spawnCalls) => {
+        const successfulSpawn = createSuccessfulSpawn(spawnCalls);
+        return (...args) => {
+          events.push(`spawn:${fakeClipboard.text}`);
+          return successfulSpawn(...args);
+        };
+      },
+    });
+    let releaseKeystroke;
+
+    const first = manager.pasteText("first", {
+      targetActivated: true,
+      pasteKeystroke: () =>
+        new Promise((resolve) => {
+          events.push(`keystroke:start:${fakeClipboard.text}`);
+          releaseKeystroke = () => {
+            events.push("keystroke:end");
+            resolve("submitted");
+          };
+        }),
+    });
+    const second = manager.pasteText("second", { targetActivated: true });
+    // Bounded: if pasteKeystroke is never called this fails instead of hanging.
+    for (let waited = 0; !releaseKeystroke && waited < 2000; waited += 5) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(typeof releaseKeystroke, "function", "pasteKeystroke was called");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.deepEqual(events, ["keystroke:start:first"]);
+    assert.equal(fakeClipboard.text, "first", "the second paste has not touched the clipboard");
+
+    releaseKeystroke();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    assert.deepEqual(events, ["keystroke:start:first", "keystroke:end", "spawn:second"]);
+    assert.equal(firstResult.keystrokeOutcome, "submitted");
+    assert.equal("keystrokeOutcome" in secondResult, false);
+    assert.equal(calls.spawns.length, 1);
+  }
+);
+
+test(
+  "the macOS retry after a failed paste does not call pasteKeystroke a second time",
+  { skip: macPasteTextSkip },
+  async () => {
+    resetClipboard({ text: "previous clipboard" });
+    // No fast-paste binary: osascript fails once, then the retry succeeds.
+    const { manager, calls, options } = keystrokeManager({
+      fastPasteBinary: null,
+      spawn: (spawnCalls) => createSpawn(spawnCalls, [1, 0]),
+    });
+
+    const result = await manager.pasteText(
+      "dictated text",
+      options(async () => "skipped")
+    );
+
+    assert.equal(calls.keystrokes, 1);
+    assert.equal(calls.spawns.length, 2);
+    assert.notEqual(result.pasted, false);
+    assert.equal("keystrokeOutcome" in result, false);
+  }
+);
+
+// Terminal detection serves two callers: the Linux paste path, which matches
+// window classes by substring, and macOS selection capture, which matches whole
+// tokens of the app and executable name (#645: "st" is a Linux window class).
 test("terminal detection matches window classes and macOS app names alike", () => {
   const manager = new ClipboardManager();
 
   for (const signature of ["konsole", "org.kde.konsole", "Ghostty", "kitty", "WezTerm"]) {
-    assert.equal(manager.isTerminalSignature(signature), true, signature);
+    assert.equal(manager.isTerminalSignature(signature, "linux"), true, signature);
   }
-  // iTerm2 has no Linux window class, so it only appears in the macOS-facing list.
-  assert.equal(manager.isTerminalSignature("iTerm2"), true);
-  assert.equal(manager.isTerminalSignature("Terminal"), true);
-
-  for (const signature of ["Dia", "Google Chrome", "Mail", "", null, undefined]) {
-    assert.equal(manager.isTerminalSignature(signature), false, String(signature));
-  }
-
-  // The Linux window-class entry point keeps behaving exactly as before.
   assert.equal(manager.isLinuxTerminalWindowClass("konsole"), true);
   assert.equal(manager.isLinuxTerminalWindowClass("org.mozilla.firefox"), false);
   assert.equal(manager.isLinuxTerminalWindowClass(null), false);
+
+  for (const signature of [
+    "iTerm iTerm2",
+    // The app's own name, with no "iTerm" token beside it.
+    "iTerm2",
+    "Terminal Terminal",
+    "Ghostty ghostty",
+    "Warp stable",
+    "kitty kitty",
+  ]) {
+    assert.equal(manager.isTerminalSignature(signature, "darwin"), true, signature);
+  }
+
+  for (const signature of [
+    "Raycast Raycast",
+    "Fantastical Fantastical",
+    "iStat Menus Menubar",
+    "System Settings System Settings",
+    "Postman Postman",
+    "Microsoft Teams MSTeams",
+    "Dia",
+    "Google Chrome",
+    "Mail",
+    "",
+    null,
+    undefined,
+  ]) {
+    assert.equal(manager.isTerminalSignature(signature, "darwin"), false, String(signature));
+  }
 });

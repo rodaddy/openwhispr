@@ -33,7 +33,6 @@ import {
   MEETINGS_FOLDER_NAME,
 } from "./shared";
 import { useAuth } from "../../hooks/useAuth";
-import { useUsage } from "../../hooks/useUsage";
 import { useSettings } from "../../hooks/useSettings";
 import { useStartOnboarding } from "../../hooks/useStartOnboarding";
 import {
@@ -262,10 +261,9 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   const [providerReady, setProviderReady] = useState<boolean | null>(null);
 
   const { isSignedIn } = useAuth();
-  const usage = useUsage();
   // The server enforces the free-tier size limit regardless, so an unresolved
   // entitlement should not block a payer's upload.
-  const isProUser = usage?.hasPaidAccessOptimistic ?? false;
+  const isProUser = true;
 
   const apiKeys = useSettings();
   const {
@@ -335,8 +333,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   // Mode-aware file size validation
   // Local: no limits at all
   // BYOK: 25 MB hard max regardless of plan (14 MB for Gemini's inline cap)
-  // Cloud free: 25 MB max (upgrade to Pro for more)
-  // Cloud pro: 500 MB max
+  // BYOK providers keep their transport-specific upload limit.
   const byokMaxFileSize = byokFileSizeLimit(cloudTranscriptionProvider);
   const byokMaxFileSizeMb = Math.floor(byokMaxFileSize / (1024 * 1024));
   let fileTooLarge = false;
@@ -1144,7 +1141,7 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
               byokMaxFileSizeMb={byokMaxFileSizeMb}
               requiresAccount={requiresAccount}
               isProUser={!!isProUser}
-              onUpgrade={() => usage?.openCheckout()}
+              onUpgrade={() => {}}
               onCreateAccount={handleCreateAccount}
               onSwitchToCloud={switchToCloud}
               onOpenSettings={onOpenSettings}
@@ -1652,22 +1649,6 @@ function SelectedView({
           <p className="text-xs text-foreground/35 leading-relaxed mt-1.5">
             {t("notes.upload.byokTooLargeDetail", { size: byokMaxFileSizeMb })}
           </p>
-          <p className="text-xs text-foreground/50 leading-relaxed mt-1.5 font-medium">
-            {requiresAccount
-              ? t("notes.upload.byokTooLargeNeedsAccount")
-              : isProUser
-                ? t("notes.upload.switchToCloudForLargeFiles")
-                : t("notes.upload.byokTooLargeNeedsUpgrade")}
-          </p>
-        </div>
-      )}
-
-      {/* Cloud free user, file > 25 MB → needs paid plan */}
-      {requiresUpgrade && !fileTooLarge && (
-        <div className="rounded-lg border border-primary/12 dark:border-primary/15 bg-primary/[0.03] px-3 py-2.5 mb-3">
-          <p className="text-xs text-foreground/50 leading-relaxed">
-            {t("notes.upload.paidPlanRequired")}
-          </p>
         </div>
       )}
 
@@ -1679,44 +1660,6 @@ function SelectedView({
       )}
 
       <div className="flex items-center gap-2 justify-center flex-wrap">
-        {/* BYOK too large — not signed in: Create Account */}
-        {byokTooLarge && requiresAccount && (
-          <Button
-            variant="default"
-            size="sm"
-            onClick={onCreateAccount}
-            className="h-8 text-xs px-5"
-          >
-            {t("notes.upload.createAccount")}
-          </Button>
-        )}
-
-        {/* BYOK too large — signed in, Pro: Switch to Cloud */}
-        {byokTooLarge && !requiresAccount && isProUser && (
-          <Button
-            variant="default"
-            size="sm"
-            onClick={onSwitchToCloud}
-            className="h-8 text-xs px-5"
-          >
-            {t("notes.upload.switchToCloud")}
-          </Button>
-        )}
-
-        {/* BYOK too large — signed in, Free: Upgrade */}
-        {byokTooLarge && !requiresAccount && !isProUser && (
-          <Button variant="default" size="sm" onClick={onUpgrade} className="h-8 text-xs px-5">
-            {t("notes.upload.upgrade")}
-          </Button>
-        )}
-
-        {/* Cloud requires upgrade */}
-        {!byokTooLarge && requiresUpgrade && (
-          <Button variant="default" size="sm" onClick={onUpgrade} className="h-8 text-xs px-5">
-            {t("notes.upload.upgrade")}
-          </Button>
-        )}
-
         {/* Normal: can transcribe */}
         {canTranscribe && (
           <Button

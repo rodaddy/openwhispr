@@ -7,7 +7,45 @@ const {
   countSpokenWords,
   resolveAnalyticsMode,
   summarizeAnalyticsDays,
+  summarizeLatency,
 } = require("../../src/helpers/analytics.js");
+
+test("latency summary gives the median overall and per model, busiest model first", () => {
+  const summary = summarizeLatency([
+    { model: "small", ms: 900 },
+    { model: "small", ms: 300 },
+    { model: "small", ms: 500 },
+    { model: "base", ms: 1000 },
+    { model: "base", ms: 2001 },
+    { model: "", ms: 400 },
+    { model: null, ms: 700 },
+    { model: "turbo", ms: 0 },
+  ]);
+
+  assert.deepEqual(summary, {
+    sampleCount: 7,
+    medianMs: 700,
+    byModel: [
+      { model: "small", sampleCount: 3, medianMs: 500 },
+      { model: "base", sampleCount: 2, medianMs: 1501 },
+      { model: null, sampleCount: 2, medianMs: 550 },
+    ],
+  });
+});
+
+test("latency summary with no usable samples is empty", () => {
+  assert.deepEqual(
+    summarizeLatency([
+      { model: "small", ms: null },
+      { model: "base", ms: -5 },
+    ]),
+    {
+      sampleCount: 0,
+      medianMs: null,
+      byModel: [],
+    }
+  );
+});
 
 test("analytics activity covers this month and the previous five calendar months", () => {
   const days = buildAnalyticsActivityDays(

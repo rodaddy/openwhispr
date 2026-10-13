@@ -288,3 +288,59 @@ test("the opt-in count covers everything turning sync on would upload", (t) => {
     "another account sees only the unattributed row, never account-a's"
   );
 });
+
+test("a dictation's latency is summarized without re-queuing its synced row", (t) => {
+  const db = createDb(t);
+  if (!db) return;
+
+  db.setActiveAccountId("account-a");
+  recordEvent(db, "event-1");
+  db.markAnalyticsEventsSynced(["event-1"]);
+
+  assert.deepEqual(db.recordDictationLatency({ eventId: "event-1", latencyMs: 840 }), {
+    success: true,
+    updated: true,
+  });
+
+  assert.deepEqual(db.getLatencySummary({ now: new Date(2026, 7, 30, 12) }), {
+    sampleCount: 1,
+    medianMs: 840,
+    byModel: [{ model: "small", sampleCount: 1, medianMs: 840 }],
+  });
+  assert.equal(
+    db.db.prepare("SELECT sync_status FROM analytics_events WHERE event_id = 'event-1'").get()
+      .sync_status,
+    "synced"
+  );
+});
+
+test("a latency for an unknown dictation is dropped", (t) => {
+  const db = createDb(t);
+  if (!db) return;
+
+  recordEvent(db, "event-1");
+
+  assert.deepEqual(db.recordDictationLatency({ eventId: "no-such-event", latencyMs: 840 }), {
+    success: true,
+    updated: false,
+  });
+  assert.deepEqual(db.getLatencySummary({ now: new Date(2026, 7, 30, 12) }), {
+    sampleCount: 0,
+    medianMs: null,
+    byModel: [],
+  });
+});
+
+test("the latency summary leaves out dictations older than 7 days", (t) => {
+  const db = createDb(t);
+  if (!db) return;
+
+  recordEvent(db, "old", { localDate: "2026-08-22" });
+  recordEvent(db, "edge", { localDate: "2026-08-24" });
+  db.recordDictationLatency({ eventId: "old", latencyMs: 5_000 });
+  db.recordDictationLatency({ eventId: "edge", latencyMs: 600 });
+
+  const summary = db.getLatencySummary({ now: new Date(2026, 7, 30, 12) });
+  assert.equal(summary.sampleCount, 1);
+  assert.equal(summary.medianMs, 600);
+});

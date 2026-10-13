@@ -1,0 +1,467 @@
+From 041ad1176d8cda2a02b40a929c714d9b620edce6 Mon Sep 17 00:00:00 2001
+From: Rico Rojas <rickrojas@gmail.com>
+Date: Tue, 8 Sep 2026 14:31:13 -0400
+Subject: [PATCH] feat(meeting): allow self-hosted transcription for Note
+ Recording
+
+Self-hosted mode was hard-blocked for meetings: the routing helper threw
+"not supported for Note Recording" and the settings card was disabled
+with a coming-soon badge. Self-hosted is a batch HTTP endpoint, not a
+realtime socket, so it now reuses the chunked local meeting pipeline
+(buffer PCM, downsample, WAV) and POSTs each chunk to
+<url>/audio/transcriptions with the configured model and language.
+
+- meetingTranscriptionRouting resolves {provider:"self-hosted",
+  endpoint, model, language}; throws only when the URL is empty
+- meetingRecordingStore passes the meeting-scoped URL and global model
+- MeetingSettings enables the mode and renders SelfHostedPanel
+- main process accepts self-hosted in prepare/start, transcribes chunks
+  through the new pure selfHostedMeetingTranscription helper
+- closure tests skip self-hosted like local (no socket, no token)
+
+Claude-Session: https://claude.ai/code/session_015uYKeUK2xoKRQMj5gCikCq
+---
+ src/components/settings/MeetingSettings.tsx   | 18 ++++-
+ src/helpers/ipcHandlers.js                    | 27 ++++++-
+ src/helpers/meetingStreamingProviders.js      |  6 +-
+ src/helpers/meetingTranscriptionRouting.js    | 35 +++++++-
+ src/helpers/selfHostedMeetingTranscription.js | 29 +++++++
+ src/stores/meetingRecordingStore.ts           |  2 +
+ test/helpers/dictationStreamingMatrix.test.js |  4 +-
+ .../helpers/meetingStreamingProviders.test.js | 10 ++-
+ .../meetingTranscriptionRouting.test.js       | 24 +++++-
+ .../selfHostedMeetingTranscription.test.js    | 80 +++++++++++++++++++
+ 10 files changed, 220 insertions(+), 15 deletions(-)
+ create mode 100644 src/helpers/selfHostedMeetingTranscription.js
+ create mode 100644 test/helpers/selfHostedMeetingTranscription.test.js
+
+diff --git a/src/components/settings/MeetingSettings.tsx b/src/components/settings/MeetingSettings.tsx
+index c6ae5d6e..7c7683cd 100644
+--- a/src/components/settings/MeetingSettings.tsx
++++ b/src/components/settings/MeetingSettings.tsx
+@@ -8,6 +8,7 @@ import { InferenceModeSelector, SettingsRow } from "../ui/SettingsSection";
+ import type { InferenceModeOption } from "../ui/SettingsSection";
+ import { Toggle } from "../ui/toggle";
+ import TranscriptionModelPicker from "../TranscriptionModelPicker";
++import SelfHostedPanel from "../SelfHostedPanel";
+ import type { InferenceMode } from "../../types/electron";
+ import { useStartOnboarding } from "../../hooks/useStartOnboarding";
+ import { getStreamingTranscriptionProviders } from "../../models/ModelRegistry";
+@@ -58,6 +59,11 @@ export function MeetingTranscriptionPanel() {
+     meetingCloudTranscriptionBaseUrl,
+     setMeetingCloudTranscriptionBaseUrl,
+     setMeetingCloudTranscriptionMode,
++    meetingRemoteTranscriptionUrl,
++    setMeetingRemoteTranscriptionUrl,
++    remoteTranscriptionUrl,
++    remoteTranscriptionModel,
++    setRemoteTranscriptionModel,
+   } = useSettingsStore();
+   const {
+     modes: transcriptionModes,
+@@ -90,8 +96,6 @@ export function MeetingTranscriptionPanel() {
+         label: t("settingsPage.transcription.modes.selfHosted"),
+         description: t("settingsPage.transcription.modes.selfHostedDesc"),
+         icon: <Network className="w-4 h-4" />,
+-        disabled: true,
+-        badge: t("common.comingSoon"),
+       },
+     ],
+     "transcription",
+@@ -100,7 +104,6 @@ export function MeetingTranscriptionPanel() {
+   );
+   const handleTranscriptionModeSelect = (mode: InferenceMode) => {
+     if (!isModeAllowed(mode)) return;
+-    if (mode === "self-hosted") return;
+     if (mode === "openwhispr" && !isSignedIn) {
+       startOnboarding();
+       return;
+@@ -179,6 +182,15 @@ export function MeetingTranscriptionPanel() {
+ 
+       {effectiveTranscriptionMode === "providers" && renderTranscriptionPicker("cloud")}
+       {effectiveTranscriptionMode === "local" && renderTranscriptionPicker("local")}
++      {effectiveTranscriptionMode === "self-hosted" && (
++        <SelfHostedPanel
++          service="transcription"
++          url={meetingRemoteTranscriptionUrl || remoteTranscriptionUrl}
++          onUrlChange={setMeetingRemoteTranscriptionUrl}
++          model={remoteTranscriptionModel}
++          onModelChange={setRemoteTranscriptionModel}
++        />
++      )}
+       <MeetingSpeakerDetectionRow />
+     </div>
+   );
+diff --git a/src/helpers/ipcHandlers.js b/src/helpers/ipcHandlers.js
+index 37964652..03f7fa94 100644
+--- a/src/helpers/ipcHandlers.js
++++ b/src/helpers/ipcHandlers.js
+@@ -6,6 +6,7 @@ const crypto = require("crypto");
+ const debugLogger = require("./debugLogger");
+ const { PARAKEET_UNSUPPORTED_OS_CODE } = require("./parakeetCapability");
+ const { getModelType, isSherpaLocalProvider } = require("./parakeetModelInfo");
++const { transcribeSelfHostedChunk } = require("./selfHostedMeetingTranscription");
+ const { broadcastToWindows } = require("./windowBroadcast");
+ const { openExternalUrl } = require("./externalUrlOpener");
+ const { resolveFailedGpuBackends } = require("./whisper");
+@@ -7056,6 +7057,10 @@ class IPCHandlers {
+     let meetingLocalProvider = null;
+     let meetingLocalModel = null;
+     let meetingLocalLanguage = null;
++    // Only set when meetingLocalProvider === "self-hosted": the buffered-chunk
++    // path POSTs each WAV to this endpoint instead of decoding it locally.
++    let meetingSelfHostedEndpoint = null;
++    let meetingSelfHostedModel = null;
+     let meetingLocalTranscribing = false;
+     let meetingPendingMicChunks = [];
+     let meetingPendingMicFinals = [];
+@@ -7447,7 +7452,15 @@ class IPCHandlers {
+ 
+       try {
+         let result;
+-        if (isSherpaLocalProvider(meetingLocalProvider)) {
++        if (meetingLocalProvider === "self-hosted") {
++          result = await transcribeSelfHostedChunk({
++            endpoint: meetingSelfHostedEndpoint,
++            model: meetingSelfHostedModel,
++            language: meetingLocalLanguage,
++            wav,
++            fetchImpl: proxyFetch,
++          });
++        } else if (isSherpaLocalProvider(meetingLocalProvider)) {
+           result = await this.parakeetManager.transcribeLocalParakeet(wav, {
+             model: meetingLocalModel,
+             language: meetingLocalLanguage,
+@@ -7650,6 +7663,8 @@ class IPCHandlers {
+       meetingLocalProvider = null;
+       meetingLocalModel = null;
+       meetingLocalLanguage = null;
++      meetingSelfHostedEndpoint = null;
++      meetingSelfHostedModel = null;
+       meetingLocalTranscribing = false;
+       meetingPendingMicChunks = [];
+       resetPendingMicFinals();
+@@ -7976,7 +7991,8 @@ class IPCHandlers {
+         return { success: false, error: `Unsupported provider: ${options.provider}` };
+       }
+ 
+-      if (options.provider === "local") {
++      // Buffered-chunk modes open no sockets, so there is nothing to pre-warm.
++      if (options.provider === "local" || options.provider === "self-hosted") {
+         return { success: true };
+       }
+ 
+@@ -8122,11 +8138,14 @@ class IPCHandlers {
+           });
+         }
+ 
+-        if (options.provider === "local") {
++        if (options.provider === "local" || options.provider === "self-hosted") {
+           meetingLocalMode = true;
+-          meetingLocalProvider = options.localProvider || "whisper";
++          meetingLocalProvider =
++            options.provider === "self-hosted" ? "self-hosted" : options.localProvider || "whisper";
+           meetingLocalModel = options.localModel || null;
+           meetingLocalLanguage = options.language || null;
++          meetingSelfHostedEndpoint = options.endpoint || null;
++          meetingSelfHostedModel = options.model || null;
+           meetingLocalWin = BrowserWindow.fromWebContents(event.sender);
+           meetingLocalBuffers = { mic: [], system: [] };
+           meetingLocalTranscript = "";
+diff --git a/src/helpers/meetingStreamingProviders.js b/src/helpers/meetingStreamingProviders.js
+index b88a35e4..6a4dced2 100644
+--- a/src/helpers/meetingStreamingProviders.js
++++ b/src/helpers/meetingStreamingProviders.js
+@@ -14,7 +14,11 @@ const STREAMING_CLIENT_BY_PROVIDER = {
+ 
+ // Derived from the registry so an allowed provider can never lack a client
+ // class and silently fall through to the OpenAI default.
+-const ALLOWED_MEETING_PROVIDERS = new Set(["local", ...Object.keys(STREAMING_CLIENT_BY_PROVIDER)]);
++const ALLOWED_MEETING_PROVIDERS = new Set([
++  "local",
++  "self-hosted",
++  ...Object.keys(STREAMING_CLIENT_BY_PROVIDER),
++]);
+ 
+ const getMeetingStreamingClient = (provider) => {
+   const StreamingClient = STREAMING_CLIENT_BY_PROVIDER[provider];
+diff --git a/src/helpers/meetingTranscriptionRouting.js b/src/helpers/meetingTranscriptionRouting.js
+index f50986dd..ddb9edd7 100644
+--- a/src/helpers/meetingTranscriptionRouting.js
++++ b/src/helpers/meetingTranscriptionRouting.js
+@@ -3,6 +3,25 @@ const DEFAULT_MANAGED_PROVIDER = {
+   models: [{ id: "gpt-4o-mini-transcribe", default: true }],
+ };
+ 
++// Mirrors the suffix stripping in config/constants.ts normalizeBaseUrl for the
++// batch transcription route. Replicated rather than imported: this module is a
++// plain .js seam loaded by the renderer and the main process alike, and
++// constants.ts pulls in the wider renderer config graph.
++const TRANSCRIPTION_BASE_SUFFIXES = [
++  [/\/v1\/audio\/transcriptions$/i, "/v1"],
++  [/\/audio\/transcriptions$/i, ""],
++];
++
++const buildSelfHostedTranscriptionEndpoint = (rawUrl) => {
++  let base = rawUrl.trim();
++  for (const [pattern, replacement] of TRANSCRIPTION_BASE_SUFFIXES) {
++    if (pattern.test(base)) {
++      base = base.replace(pattern, replacement).replace(/\/+$/, "");
++    }
++  }
++  return `${base.replace(/\/+$/, "")}/audio/transcriptions`;
++};
++
+ const resolveModel = (provider, selectedModel) =>
+   provider.models.find((model) => model.id === selectedModel)?.id ??
+   provider.models.find((model) => model.default)?.id ??
+@@ -22,6 +41,8 @@ export function resolveMeetingTranscriptionOptions({
+   cortiEnvironment,
+   cortiTenant,
+   keyterms,
++  remoteTranscriptionUrl,
++  remoteTranscriptionModel,
+ }) {
+   if (transcriptionMode === "local") {
+     return {
+@@ -48,9 +69,17 @@ export function resolveMeetingTranscriptionOptions({
+   }
+ 
+   if (transcriptionMode === "self-hosted") {
+-    throw new Error(
+-      "Self-hosted realtime transcription is not supported for Note Recording. Choose Local or Cloud Providers."
+-    );
++    const rawUrl = (remoteTranscriptionUrl || "").trim();
++    if (!rawUrl) {
++      throw new Error("Self-hosted transcription URL is not configured");
++    }
++    const model = (remoteTranscriptionModel || "").trim();
++    return {
++      provider: "self-hosted",
++      endpoint: buildSelfHostedTranscriptionEndpoint(rawUrl),
++      model: model || null,
++      language,
++    };
+   }
+ 
+   if (transcriptionMode !== "providers") {
+diff --git a/src/helpers/selfHostedMeetingTranscription.js b/src/helpers/selfHostedMeetingTranscription.js
+new file mode 100644
+index 00000000..4b2a0c0b
+--- /dev/null
++++ b/src/helpers/selfHostedMeetingTranscription.js
+@@ -0,0 +1,29 @@
++// Transcribes one buffered meeting WAV chunk by POSTing it to a self-hosted
++// OpenAI-compatible transcription endpoint. Pure: no electron imports, the
++// caller injects the fetch implementation (Electron's proxyFetch in the main
++// process, a fake in tests).
++async function transcribeSelfHostedChunk({ endpoint, model, language, wav, fetchImpl }) {
++  const formData = new FormData();
++  formData.append("file", new Blob([wav], { type: "audio/wav" }), "chunk.wav");
++  if (model) {
++    formData.append("model", model);
++  }
++  if (language) {
++    formData.append("language", language);
++  }
++
++  const response = await fetchImpl(endpoint, {
++    method: "POST",
++    body: formData,
++  });
++
++  if (!response.ok) {
++    const errorText = await response.text();
++    throw new Error(`Self-hosted API Error: ${response.status} ${errorText}`);
++  }
++
++  const data = await response.json();
++  return { success: true, text: data?.text ?? "" };
++}
++
++module.exports = { transcribeSelfHostedChunk };
+diff --git a/src/stores/meetingRecordingStore.ts b/src/stores/meetingRecordingStore.ts
+index f7bb4d9a..7521525f 100644
+--- a/src/stores/meetingRecordingStore.ts
++++ b/src/stores/meetingRecordingStore.ts
+@@ -158,6 +158,8 @@ const getMeetingTranscriptionOptions = () => {
+     cortiEnvironment: state.cortiEnvironment,
+     cortiTenant: state.cortiTenant,
+     keyterms: (state.customDictionary ?? []).filter(Boolean),
++    remoteTranscriptionUrl: resolved.remoteTranscriptionUrl,
++    remoteTranscriptionModel: state.remoteTranscriptionModel,
+   });
+ };
+ 
+diff --git a/test/helpers/dictationStreamingMatrix.test.js b/test/helpers/dictationStreamingMatrix.test.js
+index f7495575..3ef50a94 100644
+--- a/test/helpers/dictationStreamingMatrix.test.js
++++ b/test/helpers/dictationStreamingMatrix.test.js
+@@ -217,7 +217,9 @@ test("closure: every allowed meeting provider has a token entry", async () => {
+   const { REALTIME_TOKEN_PROVIDERS } = await loadTokens();
+   const { ALLOWED_MEETING_PROVIDERS } = await loadMeeting();
+   for (const provider of ALLOWED_MEETING_PROVIDERS) {
+-    if (provider === "local") continue;
++    // local and self-hosted never fetch a realtime token: they transcribe
++    // buffered chunks locally or against the user's own endpoint.
++    if (provider === "local" || provider === "self-hosted") continue;
+     assert.equal(
+       typeof REALTIME_TOKEN_PROVIDERS[provider],
+       "function",
+diff --git a/test/helpers/meetingStreamingProviders.test.js b/test/helpers/meetingStreamingProviders.test.js
+index 1734905c..24572dd5 100644
+--- a/test/helpers/meetingStreamingProviders.test.js
++++ b/test/helpers/meetingStreamingProviders.test.js
+@@ -18,7 +18,9 @@ test("every allowed realtime provider has a streaming client (no silent OpenAI f
+   const { STREAMING_CLIENT_BY_PROVIDER, ALLOWED_MEETING_PROVIDERS } = await load();
+ 
+   for (const provider of ALLOWED_MEETING_PROVIDERS) {
+-    if (provider === "local") continue;
++    // local and self-hosted transcribe buffered chunks, they never open a
++    // realtime streaming socket, so they have no streaming client by design.
++    if (provider === "local" || provider === "self-hosted") continue;
+     assert.equal(
+       typeof STREAMING_CLIENT_BY_PROVIDER[provider],
+       "function",
+@@ -90,3 +92,9 @@ test("connection identity includes every provider-specific option", async () =>
+     getMeetingConnectionKey({ ...options, tenant: "tenant-b" })
+   );
+ });
++
++test("allow-list accepts self-hosted meeting transcription", async () => {
++  const { ALLOWED_MEETING_PROVIDERS } = await load();
++
++  assert.equal(ALLOWED_MEETING_PROVIDERS.has("self-hosted"), true);
++});
+diff --git a/test/helpers/meetingTranscriptionRouting.test.js b/test/helpers/meetingTranscriptionRouting.test.js
+index 35d17a22..2e7cf119 100644
+--- a/test/helpers/meetingTranscriptionRouting.test.js
++++ b/test/helpers/meetingTranscriptionRouting.test.js
+@@ -61,7 +61,26 @@ test("BYOK OpenAI never downgrades to managed cloud when its key is unavailable"
+   );
+ });
+ 
+-test("self-hosted mode never follows a stale Tinfoil provider", async () => {
++test("self-hosted mode routes to the chunked HTTP batch transcriber", async () => {
++  const { resolveMeetingTranscriptionOptions } = await load();
++
++  assert.deepEqual(
++    resolveMeetingTranscriptionOptions({
++      ...baseOptions,
++      transcriptionMode: "self-hosted",
++      remoteTranscriptionUrl: "https://llama-swap.example.internal/v1",
++      remoteTranscriptionModel: "whisper-large-v3-turbo",
++    }),
++    {
++      provider: "self-hosted",
++      endpoint: "https://llama-swap.example.internal/v1/audio/transcriptions",
++      model: "whisper-large-v3-turbo",
++      language: "en",
++    }
++  );
++});
++
++test("self-hosted mode fails closed when its URL is not configured", async () => {
+   const { resolveMeetingTranscriptionOptions } = await load();
+ 
+   assert.throws(
+@@ -69,8 +88,9 @@ test("self-hosted mode never follows a stale Tinfoil provider", async () => {
+       resolveMeetingTranscriptionOptions({
+         ...baseOptions,
+         transcriptionMode: "self-hosted",
++        remoteTranscriptionUrl: "   ",
+       }),
+-    /Self-hosted realtime transcription is not supported/
++    /not configured/
+   );
+ });
+ 
+diff --git a/test/helpers/selfHostedMeetingTranscription.test.js b/test/helpers/selfHostedMeetingTranscription.test.js
+new file mode 100644
+index 00000000..2d6ec9f8
+--- /dev/null
++++ b/test/helpers/selfHostedMeetingTranscription.test.js
+@@ -0,0 +1,80 @@
++const test = require("node:test");
++const assert = require("node:assert/strict");
++
++const load = () => import("../../src/helpers/selfHostedMeetingTranscription.js");
++
++test("posts the wav chunk as multipart form data and returns the transcript", async () => {
++  const { transcribeSelfHostedChunk } = await load();
++
++  const calls = [];
++  const fetchImpl = async (url, init) => {
++    calls.push({ url, init });
++    return { ok: true, json: async () => ({ text: " hello " }) };
++  };
++
++  const result = await transcribeSelfHostedChunk({
++    endpoint: "http://localhost:8000/v1/audio/transcriptions",
++    model: "whisper-1",
++    language: "en",
++    wav: Buffer.from([1, 2, 3, 4]),
++    fetchImpl,
++  });
++
++  assert.equal(calls.length, 1);
++  assert.equal(calls[0].url, "http://localhost:8000/v1/audio/transcriptions");
++  assert.equal(calls[0].init.method, "POST");
++
++  const body = calls[0].init.body;
++  assert.ok(body instanceof FormData);
++  const file = body.get("file");
++  assert.equal(file.name, "chunk.wav");
++  assert.equal(file.type, "audio/wav");
++  assert.equal(body.get("model"), "whisper-1");
++  assert.equal(body.get("language"), "en");
++
++  assert.deepEqual(result, { success: true, text: " hello " });
++});
++
++test("omits model and language when they are not set", async () => {
++  const { transcribeSelfHostedChunk } = await load();
++
++  let body = null;
++  const fetchImpl = async (_url, init) => {
++    body = init.body;
++    return { ok: true, json: async () => ({}) };
++  };
++
++  const result = await transcribeSelfHostedChunk({
++    endpoint: "http://localhost:8000/v1/audio/transcriptions",
++    model: null,
++    language: null,
++    wav: Buffer.from([1, 2, 3, 4]),
++    fetchImpl,
++  });
++
++  assert.equal(body.has("model"), false);
++  assert.equal(body.has("language"), false);
++  assert.deepEqual(result, { success: true, text: "" });
++});
++
++test("throws with the status and response body on a failed request", async () => {
++  const { transcribeSelfHostedChunk } = await load();
++
++  const fetchImpl = async () => ({
++    ok: false,
++    status: 404,
++    text: async () => "no router",
++  });
++
++  await assert.rejects(
++    () =>
++      transcribeSelfHostedChunk({
++        endpoint: "http://localhost:8000/v1/audio/transcriptions",
++        model: "whisper-1",
++        language: "en",
++        wav: Buffer.from([1, 2, 3, 4]),
++        fetchImpl,
++      }),
++    /404 no router/
++  );
++});
+-- 
+2.55.0
+

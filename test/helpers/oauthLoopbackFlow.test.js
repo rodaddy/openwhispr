@@ -5,6 +5,9 @@ const net = require("node:net");
 const Module = require("node:module");
 
 const loopbackModulePath = require.resolve("../../src/helpers/oauthLoopbackFlow.js");
+
+// Unset by default: the loopback server then serves its own local page.
+delete process.env.VITE_OPENWHISPR_OAUTH_CALLBACK_URL;
 const originalLoad = Module._load;
 
 function loadLoopback() {
@@ -184,9 +187,7 @@ async function parkPartialRequest(redirectUri, server) {
 
   return {
     complete: (path) => {
-      socket.end(
-        `${path} HTTP/1.1\r\nHost: ${hostname}:${port}\r\nConnection: close\r\n\r\n`
-      );
+      socket.end(`${path} HTTP/1.1\r\nHost: ${hostname}:${port}\r\nConnection: close\r\n\r\n`);
       return status;
     },
     destroy: () => socket.destroy(),
@@ -227,7 +228,7 @@ test("a request with no code leaves the flow running until a real callback", asy
   const success = await fetch(`${redirectUri}/?code=ok&state=${getState()}`, {
     redirect: "manual",
   });
-  assert.equal(success.status, 302);
+  assert.equal(success.status, 200);
   assert.deepEqual(await flow, { code: "ok" });
 });
 
@@ -239,18 +240,13 @@ test("a provider error query still fails the flow immediately", async () => {
   const response = await fetch(`${redirectUri}/?error=access_denied`, {
     redirect: "manual",
   });
-  assert.equal(response.status, 302);
+  assert.equal(response.status, 200);
   await rejected;
 });
 
 test("a late state mismatch cannot reject a valid callback already in progress", async () => {
-  const {
-    flow,
-    getRedirectUri,
-    getState,
-    callbackStarted,
-    releaseHandleCallback,
-  } = startBlockedFlow();
+  const { flow, getRedirectUri, getState, callbackStarted, releaseHandleCallback } =
+    startBlockedFlow();
   const redirectUri = await waitForListen(getRedirectUri);
   const flowOutcome = flow.then(
     () => "resolved",
@@ -279,18 +275,13 @@ test("a late state mismatch cannot reject a valid callback already in progress",
   const validResponse = await validResponsePromise;
   assert.equal(mismatchResponse.status, 400);
   assert.equal(outcomeBeforeRelease, "pending");
-  assert.equal(validResponse.status, 302);
+  assert.equal(validResponse.status, 200);
   assert.equal(await flowOutcome, "resolved");
 });
 
 test("a late malformed request cannot reject a valid callback already in progress", async () => {
-  const {
-    flow,
-    getRedirectUri,
-    getState,
-    callbackStarted,
-    releaseHandleCallback,
-  } = startBlockedFlow();
+  const { flow, getRedirectUri, getState, callbackStarted, releaseHandleCallback } =
+    startBlockedFlow();
   const redirectUri = await waitForListen(getRedirectUri);
   const flowOutcome = flow.then(
     () => "resolved",
@@ -317,7 +308,7 @@ test("a late malformed request cannot reject a valid callback already in progres
   const validResponse = await validResponsePromise;
   assert.equal(malformedStatus, 400);
   assert.equal(outcomeBeforeRelease, "pending");
-  assert.equal(validResponse.status, 302);
+  assert.equal(validResponse.status, 200);
   assert.equal(await flowOutcome, "resolved");
 });
 
@@ -359,7 +350,7 @@ test("a second valid callback cannot start another token exchange", async () => 
   assert.equal(duplicateResponse.status, 400);
   assert.equal(outcomeBeforeRelease, "pending");
   assert.equal(getCallbackCount(), 1);
-  assert.equal(firstResponse.status, 302);
+  assert.equal(firstResponse.status, 200);
   assert.deepEqual(await flowOutcome, {
     status: "resolved",
     result: { code: "first" },
@@ -377,7 +368,7 @@ test("an accepted callback cannot run after a malformed request rejects the flow
   const rejected = assert.rejects(flow, /Invalid URL/);
 
   try {
-    assert.equal(await requestPath(redirectUri, "//["), 302);
+    assert.equal(await requestPath(redirectUri, "//["), 200);
     await rejected;
 
     const lateStatus = await parkedRequest.complete(`?code=late&state=${getState()}`);
@@ -409,5 +400,58 @@ test("an accepted callback cannot run after the flow times out", async () => {
     assert.equal(callbackCount, 0);
   } finally {
     parkedRequest.destroy();
+  }
+});
+
+test("success serves a local HTML page that says Connected", async () => {
+  const { flow, getRedirectUri, getState } = startFlow(async (code) => ({ code }));
+  const redirectUri = await waitForListen(getRedirectUri);
+
+  const response = await fetch(`${redirectUri}/?code=ok&state=${getState()}`, {
+    redirect: "manual",
+  });
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /text\/html/);
+  assert.match(body, /Connected\. You can close this tab and return to rTech Whisper\./);
+  assert.doesNotMatch(body, /openwhispr\.com/);
+  assert.deepEqual(await flow, { code: "ok" });
+});
+
+test("an error serves a local HTML page with the escaped error code", async () => {
+  const { flow, getRedirectUri } = startFlow();
+  const redirectUri = await waitForListen(getRedirectUri);
+  const rejected = assert.rejects(flow, /OAuth error/);
+
+  const response = await fetch(`${redirectUri}/?error=${encodeURIComponent("bad<script>")}`, {
+    redirect: "manual",
+  });
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(body, /Sign-in did not finish \(bad&lt;script&gt;\)\./);
+  assert.doesNotMatch(body, /bad<script>/);
+  await rejected;
+});
+
+test("VITE_OPENWHISPR_OAUTH_CALLBACK_URL keeps the hosted 302 redirect", async () => {
+  process.env.VITE_OPENWHISPR_OAUTH_CALLBACK_URL = "https://example.test/auth/desktop-callback";
+  try {
+    const { flow, getRedirectUri, getState } = startFlow(async (code) => ({ code }));
+    const redirectUri = await waitForListen(getRedirectUri);
+
+    const response = await fetch(`${redirectUri}/?code=ok&state=${getState()}`, {
+      redirect: "manual",
+    });
+
+    assert.equal(response.status, 302);
+    assert.match(
+      response.headers.get("location"),
+      /^https:\/\/example\.test\/auth\/desktop-callback\?/
+    );
+    assert.deepEqual(await flow, { code: "ok" });
+  } finally {
+    delete process.env.VITE_OPENWHISPR_OAUTH_CALLBACK_URL;
   }
 });

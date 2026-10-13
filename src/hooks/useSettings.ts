@@ -1,7 +1,14 @@
-import React, { createContext, useCallback, useContext, useEffect, useRef } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useSettingsStore, initializeSettings } from "../stores/settingsStore";
 import logger from "../utils/logger";
+import type { ActivationMode } from "../helpers/activationMode";
 import { useLocalStorage } from "./useLocalStorage";
+import {
+  AUTO_LEARN_DEFAULT,
+  AUTO_LEARN_KEY,
+  migrateAutoLearnOff,
+  parseAutoLearn,
+} from "../utils/autoLearnDefault";
 import type {
   ChineseScriptPreference,
   LocalTranscriptionProvider,
@@ -9,6 +16,7 @@ import type {
   SelfHostedType,
 } from "../types/electron";
 import type { Snippet } from "../utils/snippets";
+import type { TranscriptionPreviewLayout } from "../utils/transcriptionPreview";
 import { effectiveAudioRetentionDays } from "../stores/policyRules";
 import { usePolicyStore } from "../stores/policyStore";
 
@@ -37,11 +45,14 @@ export interface TranscriptionSettings {
   snippets: Snippet[];
   assemblyAiStreaming: boolean;
   showTranscriptionPreview: boolean;
+  transcriptionPreviewLayout: TranscriptionPreviewLayout;
 }
 
 export interface CleanupSettings {
   autoGenerateNoteTitle: boolean;
   useCleanupModel: boolean;
+  removeFillerWords: boolean;
+  fillerWords: string[];
   useDictationAgent: boolean;
   cleanupModel: string;
   cleanupProvider: string;
@@ -58,8 +69,9 @@ export interface HotkeySettings {
   activeDictationKey: string | null;
   meetingKey: string;
   voiceAgentKey: string;
+  pasteLastKey: string;
   meetingHotkeyLayoutMode: "side-panel" | "full-width";
-  activationMode: "tap" | "push";
+  activationMode: ActivationMode;
 }
 
 export interface OnboardingSettings {
@@ -69,10 +81,14 @@ export interface OnboardingSettings {
 }
 
 export interface MicrophoneSettings {
-  microphoneSelectionMode: "system" | "built-in" | "specific";
+  microphoneSelectionMode: "automatic" | "system" | "built-in" | "specific";
   preferBuiltInMic: boolean;
   selectedMicDeviceId: string;
   selectedMicDeviceLabel: string;
+  preferredMicDeviceId: string;
+  preferredMicDeviceLabel: string;
+  fallbackMicDeviceId: string;
+  fallbackMicDeviceLabel: string;
   micWarmHoldSeconds: number;
 }
 
@@ -158,13 +174,22 @@ function useSettingsInternal() {
     return unsubscribe;
   }, [applySnippetsFromExternal]);
 
-  // Auto-learn corrections from user edits in external apps
+  // Auto-learn corrections from user edits in external apps. OFF by default;
+  // an existing ON install is switched OFF once (#94). Runs before the
+  // useLocalStorage initializer below reads the key.
+  useState(() => {
+    try {
+      migrateAutoLearnOff(localStorage);
+    } catch {
+      // storage unavailable: the OFF default applies
+    }
+  });
   const [autoLearnCorrections, setAutoLearnCorrectionsRaw] = useLocalStorage(
-    "autoLearnCorrections",
-    true,
+    AUTO_LEARN_KEY,
+    AUTO_LEARN_DEFAULT,
     {
       serialize: String,
-      deserialize: (value: string) => value !== "false",
+      deserialize: parseAutoLearn,
     }
   );
 
@@ -286,6 +311,8 @@ function useSettingsInternal() {
     autoGenerateNoteTitle: store.autoGenerateNoteTitle,
     setAutoGenerateNoteTitle: store.setAutoGenerateNoteTitle,
     useCleanupModel: store.useCleanupModel,
+    removeFillerWords: store.removeFillerWords,
+    fillerWords: store.fillerWords,
     useDictationAgent: store.useDictationAgent,
     cleanupModel: store.cleanupModel,
     cleanupProvider: store.cleanupProvider,
@@ -300,6 +327,7 @@ function useSettingsInternal() {
     dictationKey: store.dictationKey,
     meetingKey: store.meetingKey,
     voiceAgentKey: store.voiceAgentKey,
+    pasteLastKey: store.pasteLastKey,
     meetingHotkeyLayoutMode: store.meetingHotkeyLayoutMode,
     setMeetingHotkeyLayoutMode: store.setMeetingHotkeyLayoutMode,
     theme: store.theme,
@@ -329,6 +357,8 @@ function useSettingsInternal() {
     setCustomDictionary: store.setCustomDictionary,
     updateCustomDictionary: store.updateCustomDictionary,
     setUseCleanupModel: store.setUseCleanupModel,
+    setRemoveFillerWords: store.setRemoveFillerWords,
+    setFillerWords: store.setFillerWords,
     setUseDictationAgent: store.setUseDictationAgent,
     setCleanupModel: store.setCleanupModel,
     setCleanupProvider: store.setCleanupProvider,
@@ -344,6 +374,7 @@ function useSettingsInternal() {
     setDictationKey: store.setDictationKey,
     setMeetingKey: store.setMeetingKey,
     setVoiceAgentKey: store.setVoiceAgentKey,
+    setPasteLastKey: store.setPasteLastKey,
     onboardingUseCases: store.onboardingUseCases,
     setOnboardingUseCases: store.setOnboardingUseCases,
     onboardingUseCaseNote: store.onboardingUseCaseNote,
@@ -359,6 +390,12 @@ function useSettingsInternal() {
     setNotifyMeetingDetection: store.setNotifyMeetingDetection,
     notifyCalendarReminders: store.notifyCalendarReminders,
     setNotifyCalendarReminders: store.setNotifyCalendarReminders,
+    grillEventPrefixes: store.grillEventPrefixes,
+    setGrillEventPrefixes: store.setGrillEventPrefixes,
+    grillVoices: store.grillVoices,
+    setGrillVoices: store.setGrillVoices,
+    grillVoiceId: store.grillVoiceId,
+    setGrillVoiceId: store.setGrillVoiceId,
     notifyUpdates: store.notifyUpdates,
     setNotifyUpdates: store.setNotifyUpdates,
     audioCuesEnabled: store.audioCuesEnabled,
@@ -372,6 +409,10 @@ function useSettingsInternal() {
     panelStartPosition: store.panelStartPosition,
     setPanelStartPosition: store.setPanelStartPosition,
     microphoneSelectionMode: store.microphoneSelectionMode,
+    preferredMicDeviceId: store.preferredMicDeviceId,
+    preferredMicDeviceLabel: store.preferredMicDeviceLabel,
+    fallbackMicDeviceId: store.fallbackMicDeviceId,
+    fallbackMicDeviceLabel: store.fallbackMicDeviceLabel,
     preferBuiltInMic: store.preferBuiltInMic,
     selectedMicDeviceId: store.selectedMicDeviceId,
     selectedMicDeviceLabel: store.selectedMicDeviceLabel,
@@ -379,15 +420,29 @@ function useSettingsInternal() {
     setMicrophoneSelectionMode: store.setMicrophoneSelectionMode,
     setPreferBuiltInMic: store.setPreferBuiltInMic,
     setSelectedMicDevice: store.setSelectedMicDevice,
+    setPreferredMicDevice: store.setPreferredMicDevice,
+    setFallbackMicDevice: store.setFallbackMicDevice,
     setMicWarmHoldSeconds: store.setMicWarmHoldSeconds,
     autoLearnCorrections,
     setAutoLearnCorrections,
     showTranscriptionPreview: store.showTranscriptionPreview,
     setShowTranscriptionPreview: store.setShowTranscriptionPreview,
+    transcriptionPreviewLayout: store.transcriptionPreviewLayout,
+    setTranscriptionPreviewLayout: store.setTranscriptionPreviewLayout,
     autoPasteEnabled: store.autoPasteEnabled,
     setAutoPasteEnabled: store.setAutoPasteEnabled,
     keepTranscriptionInClipboard: store.keepTranscriptionInClipboard,
     setKeepTranscriptionInClipboard: store.setKeepTranscriptionInClipboard,
+    dictationAppFormatting: store.dictationAppFormatting,
+    setDictationAppFormatting: store.setDictationAppFormatting,
+    dictationAppProfiles: store.dictationAppProfiles,
+    setDictationAppProfiles: store.setDictationAppProfiles,
+    dictationAutoSubmit: store.dictationAutoSubmit,
+    setDictationAutoSubmit: store.setDictationAutoSubmit,
+    dictationAutoSubmitMinWords: store.dictationAutoSubmitMinWords,
+    setDictationAutoSubmitMinWords: store.setDictationAutoSubmitMinWords,
+    dictationShowLatency: store.dictationShowLatency,
+    setDictationShowLatency: store.setDictationShowLatency,
     noteFilesEnabled: store.noteFilesEnabled,
     setNoteFilesEnabled: store.setNoteFilesEnabled,
     noteFilesPath: store.noteFilesPath,

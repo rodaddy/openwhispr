@@ -1,4 +1,5 @@
 import { resolvePrompt } from "./prompts/index";
+import { buildGrillSessionSection, type GrillSessionSpec } from "./prompts/grillPrompt";
 
 export {
   resolvePrompt,
@@ -9,6 +10,7 @@ export {
 } from "./prompts/index";
 export { PROMPT_KINDS, PROMPT_KIND_LIST, type PromptKind } from "./prompts/registry";
 export { detectAgentName } from "./agentDetection";
+export { buildGrillSessionSection, type GrillSessionSpec } from "./prompts/grillPrompt";
 
 export function getCleanupSystemPrompt(
   agentName: string | null,
@@ -64,7 +66,19 @@ function getLocalCalendarContext(): string {
   return `Current local date and time: ${formatLocalRfc3339(now)}. IANA time zone: ${timeZone}.`;
 }
 
-export function getAgentSystemPrompt(availableTools?: string[], noteContext?: string): string {
+export function getAgentSystemPrompt(
+  availableTools?: string[],
+  noteContext?: string,
+  grillSession?: GrillSessionSpec | null
+): string {
+  // A grill session is an interview driven by the question bank: no persona,
+  // no tool instructions, and no note context to answer from.
+  if (grillSession) {
+    return (
+      resolvePrompt("grill", { agentName: null }) + "\n\n" + buildGrillSessionSection(grillSession)
+    );
+  }
+
   let prompt = resolvePrompt("chatAgent", { agentName: null });
 
   if (availableTools && availableTools.length > 0) {

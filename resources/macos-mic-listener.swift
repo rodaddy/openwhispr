@@ -5,11 +5,12 @@
  * transitions. Older systems fall back to aggregate device activity for the
  * meeting-start prompt only.
  *
- * Compile: swiftc -O macos-mic-listener.swift -o macos-mic-listener -framework CoreAudio -framework Foundation
+ * Compile: swiftc -O macos-mic-listener.swift -o macos-mic-listener -framework CoreAudio -framework Foundation -framework IOKit
  */
 
 import CoreAudio
 import Foundation
+import IOKit.hid
 
 enum ListenerMode {
     case none
@@ -90,6 +91,128 @@ func emit(_ message: String) {
 func emitError(_ message: String) {
     guard let data = (message + "\n").data(using: .utf8) else { return }
     FileHandle.standardError.write(data)
+}
+
+private let larkVendorID = 0x3547
+private let larkProductID = 0x0007
+private var larkStatusReceived = false
+
+func emitLarkStatus(_ status: String, receiverPresent: Any, tx1: Bool? = nil, tx2: Bool? = nil) {
+    var payload: [String: Any] = [
+        "status": status,
+        "receiverPresent": receiverPresent,
+    ]
+    if let tx1 {
+        payload["tx1Connected"] = tx1
+    }
+    if let tx2 {
+        payload["tx2Connected"] = tx2
+    }
+    guard
+        let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+        let json = String(data: data, encoding: .utf8)
+    else {
+        emit("{\"receiverPresent\":null,\"status\":\"unknown\"}")
+        return
+    }
+    emit(json)
+}
+
+let larkInputReportCallback: IOHIDReportCallback = {
+    (_: UnsafeMutableRawPointer?,
+     result: IOReturn,
+     _: UnsafeMutableRawPointer?,
+     _: IOHIDReportType,
+     reportID: UInt32,
+     report: UnsafeMutablePointer<UInt8>,
+     reportLength: CFIndex) in
+
+    guard result == kIOReturnSuccess, reportID == 0x55, reportLength > 0 else { return }
+    let bytes = Array(UnsafeBufferPointer(start: report, count: reportLength))
+    let offset = bytes.first == 0x55 ? 1 : 0
+    guard bytes.count >= offset + 8 else { return }
+    guard Array(bytes[offset..<(offset + 4)]) == [0xBB, 0xDD, 0x10, 0x80] else { return }
+    let payloadLength = Int(bytes[offset + 4]) << 8 | Int(bytes[offset + 5])
+    guard payloadLength >= 2, bytes.count >= offset + 6 + payloadLength else { return }
+    let tx1 = bytes[offset + 6]
+    let tx2 = bytes[offset + 7]
+    guard tx1 <= 1, tx2 <= 1 else { return }
+
+    larkStatusReceived = true
+    emitLarkStatus(
+        tx1 == 1 || tx2 == 1 ? "connected" : "disconnected",
+        receiverPresent: true,
+        tx1: tx1 == 1,
+        tx2: tx2 == 1
+    )
+    CFRunLoopStop(CFRunLoopGetCurrent())
+}
+
+func printLarkStatus() -> Int32 {
+    let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+    let matching: [String: Int] = [
+        kIOHIDVendorIDKey as String: larkVendorID,
+        kIOHIDProductIDKey as String: larkProductID,
+    ]
+    IOHIDManagerSetDeviceMatching(manager, matching as CFDictionary)
+
+    guard let devices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> else {
+        emitLarkStatus("unknown", receiverPresent: NSNull())
+        return 0
+    }
+    guard !devices.isEmpty else {
+        emitLarkStatus("disconnected", receiverPresent: false)
+        return 0
+    }
+    guard devices.count == 1, let device = devices.first else {
+        emitLarkStatus("unknown", receiverPresent: NSNull())
+        return 0
+    }
+    guard IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone)) == kIOReturnSuccess else {
+        emitLarkStatus("unknown", receiverPresent: true)
+        return 0
+    }
+    defer { IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone)) }
+
+    let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 128)
+    buffer.initialize(repeating: 0, count: 128)
+    defer {
+        buffer.deinitialize(count: 128)
+        buffer.deallocate()
+    }
+
+    guard let runLoop = CFRunLoopGetCurrent() else {
+        emitLarkStatus("unknown", receiverPresent: true)
+        return 0
+    }
+    IOHIDDeviceRegisterInputReportCallback(device, buffer, 128, larkInputReportCallback, nil)
+    IOHIDDeviceScheduleWithRunLoop(device, runLoop, CFRunLoopMode.defaultMode.rawValue)
+    defer {
+        IOHIDDeviceUnscheduleFromRunLoop(device, runLoop, CFRunLoopMode.defaultMode.rawValue)
+    }
+
+    var request = [UInt8](repeating: 0, count: 64)
+    request.replaceSubrange(0..<7, with: [0x55, 0xAA, 0xDD, 0x10, 0x40, 0x00, 0x00])
+    let sent = request.withUnsafeBufferPointer { pointer in
+        IOHIDDeviceSetReport(
+            device,
+            kIOHIDReportTypeOutput,
+            CFIndex(0x55),
+            pointer.baseAddress!,
+            pointer.count
+        )
+    }
+    guard sent == kIOReturnSuccess else {
+        emitLarkStatus("unknown", receiverPresent: true)
+        return 0
+    }
+
+    larkStatusReceived = false
+    CFRunLoopRunInMode(.defaultMode, 3.0, false)
+    if !larkStatusReceived {
+        emitLarkStatus("unknown", receiverPresent: true)
+    }
+    return 0
 }
 
 func processPropertyAddress(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
@@ -540,6 +663,10 @@ func setupSignalHandlers() {
         source.resume()
         signalSources.append(source)
     }
+}
+
+if CommandLine.arguments.contains("--print-lark-status") {
+    exit(printLarkStatus())
 }
 
 if CommandLine.arguments.contains("--print-default-input") {

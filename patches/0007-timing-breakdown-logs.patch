@@ -1,0 +1,80 @@
+From 3680b00832c202bd1a4762591d26720c9aeb1e50 Mon Sep 17 00:00:00 2001
+From: Rico Rojas <rickrojas@gmail.com>
+Date: Tue, 8 Sep 2026 20:52:51 -0400
+Subject: [PATCH 7/9] chore(dictation): log start and paste timing breakdowns
+ at debug level
+
+Recording start timing now splits mic-ready, silence-gate setup, and
+recorder creation; the macOS paste path logs clipboard snapshot, write
+plus permission check, and keystroke durations. Diagnostic only.
+---
+ src/helpers/audioManager.js |  6 ++++++
+ src/helpers/clipboard.js    | 13 +++++++++++++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/src/helpers/audioManager.js b/src/helpers/audioManager.js
+index e666faf8..fdd7d4ed 100644
+--- a/src/helpers/audioManager.js
++++ b/src/helpers/audioManager.js
+@@ -1319,7 +1319,9 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
+       // was adopted; a prepared stream without pre-roll contributes no audio
+       // before this point, and back-dating would inflate durationSeconds.
+       this.recordingStartTime = preRoll ? prepared.startedAt : Date.now();
++      const recorderStartAt = performance.now();
+       this.createBatchRecorder(micStream, preRoll);
++      const recorderReadyAt = performance.now();
+       preparedAdopted = true;
+       this.isRecording = true;
+       this.onStateChange?.({
+@@ -1331,8 +1333,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
+         "Recording start timing",
+         {
+           micReadyMs: Math.round(micReadyAt - startRequestedAt),
++          // Silence-gate AudioContext plus pre-roll bookkeeping, then the recorder.
++          gateSetupMs: Math.round(recorderStartAt - micReadyAt),
++          recorderMs: Math.round(recorderReadyAt - recorderStartAt),
+           totalMs: Math.round(performance.now() - startRequestedAt),
+           usedPreparedCapture: !!prepared,
++          preRollAdopted: !!preRoll,
+           preparedAgeMs: prepared?.startedAt ? Date.now() - prepared.startedAt : 0,
+         },
+         "audio"
+diff --git a/src/helpers/clipboard.js b/src/helpers/clipboard.js
+index b07096f3..c85aeb44 100644
+--- a/src/helpers/clipboard.js
++++ b/src/helpers/clipboard.js
+@@ -889,6 +889,7 @@ class ClipboardManager {
+       if (shouldRestore) {
+         this.safeLog("💾 Saved original clipboard:", originalClipboard.type);
+       }
++      const clipboardSavedAt = Date.now();
+ 
+       if (platform === "linux") {
+         if (this._isWayland()) {
+@@ -921,11 +922,23 @@ class ClipboardManager {
+         }
+ 
+         this.safeLog("✅ Permissions granted, attempting to paste...");
++        const permissionCheckedAt = Date.now();
+         try {
+           pasteResult = await this.pasteMacOS(originalClipboard, {
+             ...options,
+             expectedClipboardText: text,
+           });
++          debugLogger.debug(
++            "Paste breakdown",
++            {
++              method,
++              saveClipboardMs: clipboardSavedAt - startTime,
++              writeAndPermissionMs: permissionCheckedAt - clipboardSavedAt,
++              keystrokeMs: Date.now() - permissionCheckedAt,
++              originalClipboardType: originalClipboard?.type ?? null,
++            },
++            "clipboard"
++          );
+         } catch (firstError) {
+           this.safeLog("⚠️ First paste attempt failed, retrying...", firstError?.message);
+           clipboard.writeText(text);
+-- 
+2.55.0
+

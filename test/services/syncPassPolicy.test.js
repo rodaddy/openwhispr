@@ -488,3 +488,30 @@ test("owner fill: never fires on stubs or tombstones", async () => {
     false
   );
 });
+
+// --- lookbackCursor -----------------------------------------------------------
+// Every stored delta cursor sits L = 60 s behind what the pass saw (protocol
+// section 8), truncated to the millisecond and never rounded up: a cursor
+// rounded past a stamp would skip that row.
+
+test("lookbackCursor: 60 s behind the stamp, as ISO with milliseconds", async () => {
+  const { lookbackCursor, DELTA_CURSOR_LOOKBACK_MS } = await load();
+  assert.equal(DELTA_CURSOR_LOOKBACK_MS, 60_000);
+  assert.equal(lookbackCursor("2026-09-30T12:00:00.000Z"), "2026-09-30T11:59:00.000Z");
+});
+
+test("lookbackCursor: a sub-millisecond hub stamp is truncated, never rounded up", async () => {
+  const { lookbackCursor } = await load();
+  assert.equal(lookbackCursor("2026-09-30T12:00:00.123999Z"), "2026-09-30T11:59:00.123Z");
+  assert.equal(lookbackCursor("2026-09-30T12:00:00.999999Z"), "2026-09-30T11:59:00.999Z");
+});
+
+test("lookbackCursor: a SQLite-format stamp reads as UTC", async () => {
+  const { lookbackCursor } = await load();
+  assert.equal(lookbackCursor("2026-09-30 12:00:00"), "2026-09-30T11:59:00.000Z");
+});
+
+test("lookbackCursor: an empty stamp throws instead of storing a bad cursor", async () => {
+  const { lookbackCursor } = await load();
+  assert.throws(() => lookbackCursor(""), RangeError);
+});

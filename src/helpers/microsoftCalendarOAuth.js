@@ -115,7 +115,12 @@ class MicrosoftCalendarOAuth {
   async _refreshAndSaveTokens(tokens) {
     const refreshed = await this.refreshAccessToken(tokens.refresh_token);
     if (refreshed.error) {
-      throw new Error(`Token refresh failed: ${refreshed.error_description || refreshed.error}`);
+      const err = new Error(
+        `Token refresh failed: ${refreshed.error_description || refreshed.error}`
+      );
+      // Keep the OAuth error code: the description alone hides invalid_grant (#355).
+      err.code = refreshed.error;
+      throw err;
     }
 
     // Persist the rotated refresh token or the old one stops working within 24h.

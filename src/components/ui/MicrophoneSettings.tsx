@@ -12,17 +12,22 @@ import { MIC_WARM_HOLD_CHOICES } from "../../stores/settingsStore";
 interface AudioDevice {
   kind: "audioinput";
   deviceId: string;
+  groupId: string;
   label: string;
   isBuiltIn: boolean;
 }
 
 interface MicrophoneSettingsProps {
-  microphoneSelectionMode: "system" | "built-in" | "specific";
+  microphoneSelectionMode: "automatic" | "system" | "built-in" | "specific";
   selectedMicDeviceId: string;
   selectedMicDeviceLabel: string;
+  preferredMicDeviceId: string;
+  fallbackMicDeviceId: string;
   micWarmHoldSeconds: number;
-  onSelectionModeChange: (mode: "system" | "built-in" | "specific") => void;
+  onSelectionModeChange: (mode: "automatic" | "system" | "built-in" | "specific") => void;
   onDeviceSelect: (deviceId: string, label: string) => void;
+  onPreferredDeviceSelect: (deviceId: string, label: string) => void;
+  onFallbackDeviceSelect: (deviceId: string, label: string) => void;
   onMicWarmHoldSecondsChange: (seconds: number) => void;
 }
 
@@ -30,9 +35,13 @@ export const MicrophoneSettings: React.FC<MicrophoneSettingsProps> = ({
   microphoneSelectionMode,
   selectedMicDeviceId,
   selectedMicDeviceLabel,
+  preferredMicDeviceId,
+  fallbackMicDeviceId,
   micWarmHoldSeconds,
   onSelectionModeChange,
   onDeviceSelect,
+  onPreferredDeviceSelect,
+  onFallbackDeviceSelect,
   onMicWarmHoldSecondsChange,
 }) => {
   const { t } = useTranslation();
@@ -61,6 +70,7 @@ export const MicrophoneSettings: React.FC<MicrophoneSettingsProps> = ({
         .map((d) => ({
           kind: "audioinput" as const,
           deviceId: d.deviceId,
+          groupId: d.groupId,
           label: d.label || `Microphone ${d.deviceId.slice(0, 8)}`,
           isBuiltIn: isBuiltInMicrophone(d.label),
         }));
@@ -101,11 +111,13 @@ export const MicrophoneSettings: React.FC<MicrophoneSettingsProps> = ({
   const builtInDevice = devices.find((d) => d.isBuiltIn);
   const selectedDevice = devices.find((d) => d.deviceId === selectedMicDeviceId);
   const selectorValue =
-    microphoneSelectionMode === "system"
-      ? "__system__"
-      : microphoneSelectionMode === "built-in"
-        ? "__built-in__"
-        : selectedMicDeviceId || "__specific__";
+    microphoneSelectionMode === "automatic"
+      ? "__automatic__"
+      : microphoneSelectionMode === "system"
+        ? "__system__"
+        : microphoneSelectionMode === "built-in"
+          ? "__built-in__"
+          : selectedMicDeviceId || "__specific__";
 
   return (
     <div className="space-y-4">
@@ -131,6 +143,10 @@ export const MicrophoneSettings: React.FC<MicrophoneSettingsProps> = ({
           <Select
             value={selectorValue}
             onValueChange={(value) => {
+              if (value === "__automatic__") {
+                onSelectionModeChange("automatic");
+                return;
+              }
               if (value === "__system__") {
                 onSelectionModeChange("system");
                 return;
@@ -147,14 +163,17 @@ export const MicrophoneSettings: React.FC<MicrophoneSettingsProps> = ({
           >
             <SelectTrigger className="w-full">
               <SelectValue placeholder={t("microphoneSettings.selectPlaceholder")}>
-                {microphoneSelectionMode === "system"
-                  ? `${t("microphoneSettings.systemDefault")}${systemDefaultLabel ? ` — ${systemDefaultLabel}` : ""}`
-                  : microphoneSelectionMode === "built-in"
-                    ? t("microphoneSettings.preferBuiltIn.label")
-                    : selectedDevice?.label || t("microphoneSettings.unknownDevice")}
+                {microphoneSelectionMode === "automatic"
+                  ? t("microphoneSettings.automatic")
+                  : microphoneSelectionMode === "system"
+                    ? `${t("microphoneSettings.systemDefault")}${systemDefaultLabel ? ` — ${systemDefaultLabel}` : ""}`
+                    : microphoneSelectionMode === "built-in"
+                      ? t("microphoneSettings.preferBuiltIn.label")
+                      : selectedDevice?.label || t("microphoneSettings.unknownDevice")}
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="__automatic__">{t("microphoneSettings.automatic")}</SelectItem>
               <SelectItem value="__system__">{t("microphoneSettings.systemDefault")}</SelectItem>
               <SelectItem value="__built-in__">
                 {t("microphoneSettings.preferBuiltIn.label")}
@@ -177,6 +196,60 @@ export const MicrophoneSettings: React.FC<MicrophoneSettingsProps> = ({
 
         <p className="text-xs text-muted-foreground">{t("microphoneSettings.helpText")}</p>
       </div>
+
+      <SettingsRow
+        label={t("microphoneSettings.preferred.label")}
+        description={t("microphoneSettings.preferred.description")}
+      >
+        <Select
+          value={preferredMicDeviceId || "__none__"}
+          onValueChange={(value) => {
+            const device = devices.find((candidate) => candidate.deviceId === value);
+            onPreferredDeviceSelect(value === "__none__" ? "" : value, device?.label || "");
+          }}
+        >
+          <SelectTrigger className="h-auto min-h-10 w-80 max-w-full text-left [&>span]:whitespace-normal [&>span]:break-words">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">{t("microphoneSettings.none")}</SelectItem>
+            {devices
+              .filter((device) => device.deviceId !== "default")
+              .map((device) => (
+                <SelectItem key={device.deviceId} value={device.deviceId}>
+                  {device.label}
+                </SelectItem>
+              ))}
+          </SelectContent>
+        </Select>
+      </SettingsRow>
+
+      <SettingsRow
+        label={t("microphoneSettings.fallback.label")}
+        description={t("microphoneSettings.fallback.description")}
+      >
+        <Select
+          value={fallbackMicDeviceId || "__none__"}
+          onValueChange={(value) => {
+            const device = devices.find((candidate) => candidate.deviceId === value);
+            onFallbackDeviceSelect(value === "__none__" ? "" : value, device?.label || "");
+          }}
+        >
+          <SelectTrigger className="h-auto min-h-10 w-80 max-w-full text-left [&>span]:whitespace-normal [&>span]:break-words">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">{t("microphoneSettings.none")}</SelectItem>
+            {devices
+              .filter((device) => device.deviceId !== "default")
+              .map((device) => (
+                <SelectItem key={device.deviceId} value={device.deviceId}>
+                  {device.label}
+                </SelectItem>
+              ))}
+          </SelectContent>
+        </Select>
+      </SettingsRow>
 
       {microphoneSelectionMode === "built-in" && builtInDevice && (
         <div className="p-3 bg-success/10 dark:bg-success/20 border border-success/30 rounded-lg">

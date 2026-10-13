@@ -49,6 +49,14 @@ test("disabled diarization writes no columns at all", async () => {
 test("speaker counts reuse the stored-count clamp", async () => {
   const { buildUploadNoteMetadata } = await load();
 
+  for (const count of [16, 32]) {
+    const supported = buildUploadNoteMetadata(
+      { enabled: true, localModelsReady: true, numSpeakers: count },
+      null
+    );
+    assert.equal(supported.noteUpdates.expected_speaker_count, count);
+  }
+
   const above = buildUploadNoteMetadata(
     { enabled: true, localModelsReady: true, numSpeakers: MAX_SPEAKER_COUNT + 5 },
     null

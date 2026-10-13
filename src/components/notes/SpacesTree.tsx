@@ -34,15 +34,10 @@ import { ConfirmDialog } from "../ui/dialog";
 import { useDialogs } from "../../hooks/useDialogs";
 import { useToast } from "../ui/useToast";
 import { useNoteDragAndDrop, type NoteMoveTarget } from "../../hooks/useNoteDragAndDrop";
-import { useTeamSpacesCapability } from "../../hooks/useTeamSpacesCapability";
-import { useAuth } from "../../hooks/useAuth";
-import { useWorkspace } from "../../hooks/useWorkspace";
 import { EmojiPickerInput } from "./EmojiPickerInput";
 import {
   canChangeSpaceNoteScope,
   canDeleteSpaceNote,
-  canManageSpace,
-  canManageWorkspace,
   canMoveBetweenSpaces,
   canMoveOrDeleteSpaceFolder,
 } from "../../lib/spacePermissions";
@@ -51,16 +46,13 @@ import {
   resolveNotePermission,
   sharedNoteBlocksDelete,
 } from "../../lib/notePermissions";
-import { groupTeamSpacesByWorkspace } from "../../lib/workspaceSelection";
 import { localMutationErrorKey } from "../../lib/localMutationError";
 import { deleteSpace, renameSpace } from "../../services/spaceActions";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { cn } from "../lib/utils";
 import { getCachedPlatform } from "../../utils/platform";
-import CreateSpaceDialog from "./CreateSpaceDialog";
 import DeleteSpaceDialog from "./DeleteSpaceDialog";
-import SpaceMembersDialog from "./SpaceMembersDialog";
-import type { FolderItem, NoteItem, SpaceItem, WorkspaceRole } from "../../types/electron";
+import type { FolderItem, NoteItem, SpaceItem } from "../../types/electron";
 import {
   folderContainerKey,
   spaceContainerKey,
@@ -404,7 +396,6 @@ function SpaceRow({
   onActivate,
   onToggle,
   onNewFolder,
-  onMembers,
   onRename,
   onDelete,
   a11y,
@@ -422,7 +413,6 @@ function SpaceRow({
   onActivate: () => void;
   onToggle: () => void;
   onNewFolder: () => void;
-  onMembers: () => void;
   onRename: (focus: "name" | "emoji") => void;
   onDelete: () => void;
   a11y: RowA11yProps;
@@ -506,77 +496,6 @@ function SpaceRow({
         >
           <Plus size={12} />
         </Button>
-        {!isPrivate && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={t("common.actions")}
-                onClick={(e) => e.stopPropagation()}
-                className={KEBAB_BUTTON_CLASS}
-              >
-                <MoreHorizontal size={12} />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" sideOffset={4} className="min-w-36">
-              {space.cloud_space_id && (
-                <DropdownMenuItem
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onMembers();
-                  }}
-                  className={MENU_ITEM_CLASS}
-                >
-                  <Users size={11} className="text-muted-foreground/60" />
-                  {t("notes.spaces.teamsMembers.menu")}
-                </DropdownMenuItem>
-              )}
-              {canManage && (
-                <>
-                  <DropdownMenuItem
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRename("name");
-                    }}
-                    className={MENU_ITEM_CLASS}
-                  >
-                    <Pencil size={11} className="text-muted-foreground/60" />
-                    {t("notes.spaces.rename")}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRename("emoji");
-                    }}
-                    className={MENU_ITEM_CLASS}
-                  >
-                    <Smile size={11} className="text-muted-foreground/60" />
-                    {t("notes.spaces.changeEmoji")}
-                  </DropdownMenuItem>
-                </>
-              )}
-              {canManage && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete();
-                    }}
-                    className={cn(
-                      MENU_ITEM_CLASS,
-                      "text-destructive focus:text-destructive focus:bg-destructive/10"
-                    )}
-                  >
-                    <Trash2 size={11} />
-                    {t("notes.spaces.deleteSpace")}
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
       </span>
     </div>
   );
@@ -1153,9 +1072,6 @@ export default function SpacesTree({
   const activeContext = useActiveContext();
   const activeNoteId = useActiveNoteId();
   const isTreeLoading = useIsTreeLoading();
-  const { isSignedIn, user } = useAuth();
-  const teamCapability = useTeamSpacesCapability(isSignedIn);
-  const { workspaces, loaded: workspacesLoaded } = useWorkspace();
   const noteFilesEnabled = useSettingsStore((s) => s.noteFilesEnabled);
   const shareByCloudId = useShareCache();
 
@@ -1168,10 +1084,6 @@ export default function SpacesTree({
   const [renameSpaceEmoji, setRenameSpaceEmoji] = useState("");
   const [spaceRenameFocus, setSpaceRenameFocus] = useState<"name" | "emoji">("name");
   const emojiPickerOpenRef = useRef(false);
-  const [showCreateSpace, setShowCreateSpace] = useState(false);
-  const [createSpaceWorkspaceId, setCreateSpaceWorkspaceId] = useState<string | null>(null);
-  const [membersSpaceId, setMembersSpaceId] = useState<number | null>(null);
-  const [membersOpen, setMembersOpen] = useState(false);
   const [deleteSpaceTarget, setDeleteSpaceTarget] = useState<SpaceItem | null>(null);
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -1186,17 +1098,11 @@ export default function SpacesTree({
     ? expanded.has(spaceContainerKey(privateSpace.id))
     : false;
   const teamSpaces = useMemo(() => spaces.filter((s) => s.kind === "team"), [spaces]);
-  const showWorkspaceGroups = workspaces.length > 1;
-  const {
-    groups: teamSpaceGroups,
-    ungrouped: ungroupedTeamSpaces,
-    ordered: groupedTeamSpaces,
-  } = useMemo(() => groupTeamSpacesByWorkspace(workspaces, teamSpaces), [teamSpaces, workspaces]);
-  const orderedTeamSpaces = showWorkspaceGroups ? groupedTeamSpaces : teamSpaces;
-  const visibleSpaces = teamCapability ? spaces : privateSpaces;
+  const visibleSpaces = spaces;
   const spacesById = useMemo(() => new Map(spaces.map((space) => [space.id, space])), [spaces]);
-  // Valid move destinations per source space (the source itself stays listed —
-  // menus render it as the disabled "current" row).
+  const currentUserId = null;
+  const workspaceRoleFor = (_space?: SpaceItem) => null;
+  const canManageTeamSpace = (_space: SpaceItem) => false;
   const moveTargetsBySpace = useMemo(() => {
     const targets = new Map<number, SpaceItem[]>();
     for (const source of spaces) {
@@ -1209,27 +1115,6 @@ export default function SpacesTree({
     }
     return targets;
   }, [spaces, visibleSpaces]);
-
-  // Until the workspace fetch settles, grouping is unknown — showing spaces
-  // flat and regrouping on arrival reads as a glitch, so skeleton instead.
-  // Signed-out users never load workspaces (mirrored team spaces render flat);
-  // errors still flip `loaded`, so this can't skeleton forever.
-  const workspacesPending = isSignedIn && !workspacesLoaded;
-
-  // The server 403s team creation for plain members; no-workspace users get the create funnel.
-  const canCreateTeamSpace =
-    isSignedIn &&
-    workspacesLoaded &&
-    (workspaces.length === 0 || workspaces.some((w) => canManageWorkspace(w.role)));
-
-  const currentUserId = user?.id ?? null;
-  const workspaceRoleFor = (space: SpaceItem | undefined): WorkspaceRole | null =>
-    workspaces.find((w) => w.id === space?.workspace_id)?.role ?? null;
-
-  // Local-only spaces (no cloud id) stay fully manageable; cloud spaces
-  // follow space/workspace roles. Cosmetic — the server enforces.
-  const canManageTeamSpace = (space: SpaceItem): boolean =>
-    !space.cloud_space_id || canManageSpace(space, workspaceRoleFor(space));
 
   // Note-level ACL for cloud-backed personal notes shared with this user.
   // Without a cache entry (note never opened this session, offline) the
@@ -1281,11 +1166,6 @@ export default function SpacesTree({
   const requestDeleteNote = (note: NoteItem): void => {
     if (!canDeleteNote(note)) return;
     onDeleteNote(note.id);
-  };
-
-  const openCreateSpace = (workspaceId: string | null = null): void => {
-    setCreateSpaceWorkspaceId(workspaceId);
-    setShowCreateSpace(true);
   };
 
   const targetLabel = (target: NoteMoveTarget): string => {
@@ -1534,9 +1414,9 @@ export default function SpacesTree({
       });
     };
     privateSpaces.forEach(pushPrivateSpace);
-    if (teamCapability) orderedTeamSpaces.forEach(pushSpace);
+    teamSpaces.forEach(pushSpace);
     return rows;
-  }, [privateSpaces, orderedTeamSpaces, folders, notesByContainer, expanded, teamCapability]);
+  }, [privateSpaces, teamSpaces, folders, notesByContainer, expanded]);
 
   const effectiveFocusKey =
     focusedKey && visibleRows.some((r) => r.key === focusedKey)
@@ -2019,10 +1899,6 @@ export default function SpacesTree({
             onActivate={() => activateRow({ type: "space", key: spaceKey, space })}
             onToggle={() => toggleContainerExpanded(spaceKey)}
             onNewFolder={() => startCreateFolder(space)}
-            onMembers={() => {
-              setMembersSpaceId(space.id);
-              setMembersOpen(true);
-            }}
             onRename={(focus) => startRenameSpace(space, focus)}
             onDelete={() => requestDeleteSpace(space)}
             a11y={a11yFor(spaceKey)}
@@ -2033,9 +1909,6 @@ export default function SpacesTree({
       </div>
     );
   };
-
-  const membersSpace =
-    membersSpaceId != null ? spaces.find((s) => s.id === membersSpaceId) : undefined;
 
   if (isTreeLoading && spaces.length === 0) {
     return (
@@ -2093,127 +1966,29 @@ export default function SpacesTree({
             </TreeChildren>
           )}
         </div>
-        {teamCapability && (
+        {teamSpaces.length > 0 && (
           <div role="none" className="group/section">
             <SectionHeader
-              label={
-                showWorkspaceGroups
-                  ? t("workspaces.switcher.workspaces")
-                  : t("notes.spaces.teamSpaces")
-              }
+              label={t("notes.spaces.teamSpaces")}
               className="mt-3"
               action={
-                <div className="flex items-center gap-px">
-                  {onShowStructureIntro && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={t("notes.structureIntro.reopen")}
-                      onClick={onShowStructureIntro}
-                      className={cn(HOVER_REVEAL_BUTTON_CLASS, "group-hover/section:opacity-100")}
-                    >
-                      <Info size={11} />
-                    </Button>
-                  )}
-                  {/* With one workspace the header + is unambiguous; with several,
-                      each workspace row carries its own + instead. */}
-                  {canCreateTeamSpace && !showWorkspaceGroups && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={t("notes.spaces.newSpace")}
-                      onClick={() => openCreateSpace()}
-                      className={cn(HOVER_REVEAL_BUTTON_CLASS, "group-hover/section:opacity-100")}
-                    >
-                      <Plus size={12} />
-                    </Button>
-                  )}
-                </div>
+                onShowStructureIntro ? (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={t("notes.structureIntro.reopen")}
+                    onClick={onShowStructureIntro}
+                    className={cn(HOVER_REVEAL_BUTTON_CLASS, "group-hover/section:opacity-100")}
+                  >
+                    <Info size={11} />
+                  </Button>
+                ) : undefined
               }
             />
-            {workspacesPending ? (
-              <SkeletonRows />
-            ) : (
-              <>
-                {showWorkspaceGroups
-                  ? teamSpaceGroups.map(({ workspace, spaces: workspaceSpaces }) => (
-                      <div
-                        key={workspace.id}
-                        role="group"
-                        aria-label={workspace.name}
-                        className="mt-1 group/workspace"
-                      >
-                        <div
-                          role="none"
-                          className="flex items-center justify-between h-5 pl-4 pr-2"
-                        >
-                          <span
-                            title={workspace.name}
-                            className="min-w-0 text-[10px] font-medium text-foreground/40 truncate"
-                          >
-                            {workspace.name}
-                          </span>
-                          {canManageWorkspace(workspace.role) && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label={t("notes.spaces.newSpaceInWorkspace", {
-                                workspace: workspace.name,
-                              })}
-                              onClick={() => openCreateSpace(workspace.id)}
-                              className={cn(
-                                HOVER_REVEAL_BUTTON_CLASS,
-                                "group-hover/workspace:opacity-100"
-                              )}
-                            >
-                              <Plus size={12} />
-                            </Button>
-                          )}
-                        </div>
-                        {workspaceSpaces.map(renderSpace)}
-                      </div>
-                    ))
-                  : teamSpaces.map(renderSpace)}
-                {showWorkspaceGroups && ungroupedTeamSpaces.map(renderSpace)}
-                {teamSpaces.length === 0 &&
-                  (canCreateTeamSpace ? (
-                    // Grouped view already offers a + on each manageable workspace row.
-                    !showWorkspaceGroups && (
-                      <div className="pl-[18px] pr-2 py-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openCreateSpace()}
-                          className="h-6 px-2 text-xs gap-1 text-primary/70 hover:text-primary hover:bg-primary/8"
-                        >
-                          <Plus size={11} />
-                          {t("notes.spaces.newSpace")}
-                        </Button>
-                      </div>
-                    )
-                  ) : (
-                    <p className="pl-[18px] pr-2 py-1 text-xs text-foreground/40 leading-relaxed">
-                      {t("notes.spaces.emptyTeamHint")}
-                    </p>
-                  ))}
-              </>
-            )}
+            {teamSpaces.map(renderSpace)}
           </div>
         )}
       </div>
-
-      <CreateSpaceDialog
-        open={showCreateSpace}
-        onOpenChange={(open) => {
-          setShowCreateSpace(open);
-          if (!open) setCreateSpaceWorkspaceId(null);
-        }}
-        initialWorkspaceId={createSpaceWorkspaceId}
-      />
-
-      {membersSpace && (
-        <SpaceMembersDialog space={membersSpace} open={membersOpen} onOpenChange={setMembersOpen} />
-      )}
 
       <DeleteSpaceDialog
         space={deleteSpaceTarget}

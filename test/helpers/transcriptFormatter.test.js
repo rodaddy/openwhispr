@@ -303,3 +303,19 @@ test("SQLite UTC note timestamps are parsed as UTC before local formatting", () 
 
   assert.equal(parsed.toISOString(), "2026-08-04T13:02:00.000Z");
 });
+
+test("a highlight exports as its own marked entry, never merged into the owner's speech", () => {
+  const output = formatTxt(
+    { title: "Sync", created_at: "2026-01-01T00:00:00Z" },
+    [
+      { source: "mic", speaker: "you", timestamp: 0, text: "Before." },
+      { source: "highlight", speaker: "you", timestamp: 0.5, text: "Ship it Friday." },
+      { source: "mic", speaker: "you", timestamp: 1, text: "After." },
+    ],
+    {}
+  );
+
+  assert.match(output, /\nBefore\.\n/);
+  assert.match(output, /\n\[Highlight\] Ship it Friday\.\n/);
+  assert.match(output, /\nAfter\.\n/);
+});

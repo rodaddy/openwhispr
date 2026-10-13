@@ -1,5 +1,10 @@
 const debugLogger = require("./debugLogger");
 const { getMeetingJoinUrl } = require("./meetingJoinUrl");
+const {
+  DEFAULT_GRILL_EVENT_PREFIXES,
+  normalizeGrillEventPrefixes,
+  parseGrillEvent,
+} = require("./grillCalendarEvent");
 
 const MEETING_REMINDER_LEAD_MS = 60 * 1000;
 
@@ -9,8 +14,13 @@ function notificationKey(event) {
 
 // A solo event with no invitees and no meeting link is a time block (focus
 // time, a personal reminder), not a meeting — every provider syncs those.
-function isReminderEligible(event) {
-  return event.attendees_count > 0 || getMeetingJoinUrl(event);
+// A block titled with a grill prefix is the exception: it prompts a grill.
+function isReminderEligible(event, grillPrefixes) {
+  return (
+    event.attendees_count > 0 ||
+    getMeetingJoinUrl(event) ||
+    parseGrillEvent(event, grillPrefixes) !== null
+  );
 }
 
 // Provider-agnostic meeting reminder scheduling. Reads only the shared
@@ -23,9 +33,16 @@ class CalendarReminderScheduler {
     this.meetingEndTimer = null;
     this.activeMeeting = null;
     this.notifiedMeetings = new Set();
+    this.grillEventPrefixes = [...DEFAULT_GRILL_EVENT_PREFIXES];
+  }
+
+  setGrillEventPrefixes(prefixes) {
+    this.grillEventPrefixes = normalizeGrillEventPrefixes(prefixes);
+    this.scheduleNextMeeting();
   }
 
   scheduleNextMeeting() {
+    this._reconcileRecordingMeeting();
     if (this.nextMeetingTimer) {
       clearTimeout(this.nextMeetingTimer);
       this.nextMeetingTimer = null;
@@ -33,7 +50,9 @@ class CalendarReminderScheduler {
 
     const upcoming = this.databaseManager.getUpcomingEvents(1440);
     const next = upcoming.find(
-      (event) => isReminderEligible(event) && !this.notifiedMeetings.has(notificationKey(event))
+      (event) =>
+        isReminderEligible(event, this.grillEventPrefixes) &&
+        !this.notifiedMeetings.has(notificationKey(event))
     );
     if (!next) return;
 
@@ -49,7 +68,7 @@ class CalendarReminderScheduler {
   }
 
   onMeetingStart(event) {
-    if (!isReminderEligible(event)) {
+    if (!isReminderEligible(event, this.grillEventPrefixes)) {
       this.scheduleNextMeeting();
       return;
     }
@@ -62,6 +81,24 @@ class CalendarReminderScheduler {
         .some((e) => notificationKey(e) === notificationKey(event));
 
     if (!stillExists) {
+      this.scheduleNextMeeting();
+      return;
+    }
+
+    // A grill block is not a meeting: it never becomes the active meeting, so
+    // it brings no calendar-end offer or meeting context. With no active
+    // meeting to gate it, a wake inside the block checks notifiedMeetings.
+    const grill = parseGrillEvent(event, this.grillEventPrefixes);
+    if (grill) {
+      if (!this.notifiedMeetings.has(notificationKey(event))) {
+        this.notifiedMeetings.add(notificationKey(event));
+        debugLogger.info(
+          "Calendar grill reminder due",
+          { summary: event.summary, ...grill },
+          "calendar"
+        );
+        this.meetingDetectionEngine?.handleGrillReminder?.(event, grill);
+      }
       this.scheduleNextMeeting();
       return;
     }
@@ -83,6 +120,9 @@ class CalendarReminderScheduler {
       { summary: this.activeMeeting?.summary },
       "calendar"
     );
+    if (this.activeMeeting) {
+      this.meetingDetectionEngine?.handleCalendarMeetingEnd?.(this.activeMeeting);
+    }
     this.activeMeeting = null;
     this._clearMeetingEndTimer();
     this.scheduleNextMeeting();
@@ -108,6 +148,7 @@ class CalendarReminderScheduler {
   // rows. Keep notifiedMeetings intact so periodic snapshots cannot re-fire a
   // reminder that was already delivered.
   reconcileProvider(provider) {
+    this._reconcileRecordingMeeting(provider);
     if (!this.activeMeeting || this.activeMeeting.provider !== provider) return;
 
     const key = notificationKey(this.activeMeeting);
@@ -117,12 +158,14 @@ class CalendarReminderScheduler {
     ].find((event) => notificationKey(event) === key);
 
     if (!currentEvent) {
+      this.meetingDetectionEngine?.removeCalendarMeeting?.(this.activeMeeting);
       this.activeMeeting = null;
       this._clearMeetingEndTimer();
       return;
     }
 
     this.activeMeeting = currentEvent;
+    this.meetingDetectionEngine?.updateCalendarMeeting?.(currentEvent);
     this._scheduleMeetingEnd(currentEvent);
   }
 
@@ -134,6 +177,12 @@ class CalendarReminderScheduler {
         this.onMeetingEnd();
       }, endDelay);
     }
+  }
+
+  _reconcileRecordingMeeting(provider = null) {
+    this.meetingDetectionEngine?.reconcileCalendarMeeting?.(provider, (eventId) =>
+      this.databaseManager.getCalendarEventById?.(eventId)
+    );
   }
 
   _clearMeetingEndTimer() {
@@ -160,6 +209,8 @@ class CalendarReminderScheduler {
       this.notifiedMeetings.clear();
       return;
     }
+
+    this._reconcileRecordingMeeting(provider);
 
     if (this.nextMeetingTimer) {
       clearTimeout(this.nextMeetingTimer);

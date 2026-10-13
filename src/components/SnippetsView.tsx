@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CornerDownLeft, Mic, Pencil, Plus, X } from "lucide-react";
+import { CornerDownLeft, GraduationCap, Mic, Pencil, Plus, X } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -13,6 +13,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
+import TrainWordDialog from "./TrainWordDialog";
 import { useSettings } from "../hooks/useSettings";
 import { getCachedPlatform } from "../utils/platform";
 import type { Snippet } from "../utils/snippets";
@@ -110,6 +111,7 @@ export default function SnippetsView() {
   const [expansion, setExpansion] = useState("");
   const [panelOpen, setPanelOpen] = useState(false);
   const [editing, setEditing] = useState<Snippet | null>(null);
+  const [training, setTraining] = useState(false);
   const triggerInputRef = useRef<HTMLInputElement>(null);
 
   const triggerExists = (value: string, except?: string) => {
@@ -172,6 +174,14 @@ export default function SnippetsView() {
         triggerExists={triggerExists}
         onSave={handleSaveEdit}
       />
+      <TrainWordDialog open={training} onOpenChange={setTraining} />
+
+      <div className="flex justify-end">
+        <Button size="sm" variant="ghost" onClick={() => setTraining(true)}>
+          <GraduationCap size={12} />
+          {t("dictionary.trainer.open")}
+        </Button>
+      </div>
 
       {/* ─── Add snippet ─── */}
       <div>

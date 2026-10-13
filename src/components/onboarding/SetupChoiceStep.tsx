@@ -6,12 +6,8 @@ import {
   GalleryVerticalEnd,
   KeyRound,
   Laptop,
-  MonitorSmartphone,
   Server,
-  ShieldCheck,
-  WandSparkles,
   WifiOff,
-  Zap,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../ui/dialog";
@@ -23,7 +19,6 @@ import {
 } from "../../models/ModelRegistry";
 import type { OnboardingSetupMode } from "./flow";
 import { getOnboardingSetupAvailability, hasAvailableOnboardingSetup } from "./setupEligibility";
-import { BrandMark } from "./OnboardingShell";
 import openAIIcon from "../../assets/icons/providers/openai.svg";
 import nvidiaIcon from "../../assets/icons/providers/nvidia.webp";
 // Only the Local card opens the warning dialog now — BYOK goes
@@ -32,18 +27,13 @@ import warningBackdrop from "../../assets/onboarding-setup-warning-hero.webp";
 import apiSetupHero from "../../assets/onboarding-api-setup-hero.webp";
 
 type SetupMode = Exclude<OnboardingSetupMode, null>;
-type AdvancedSetupMode = Exclude<SetupMode, "cloud">;
-// Local opens the warning dialog; BYOK is selected directly from the
-// more-options modal, so a "byok" pending state is unreachable.
-type WarningSetupMode = Exclude<AdvancedSetupMode, "byok">;
+type WarningSetupMode = Exclude<SetupMode, "byok">;
 
 const REFERENCE_LOCAL_MODEL_ID = "nemotron-3.5-asr-streaming-0.6b";
 
 interface SetupChoiceStepProps {
-  isSignedIn: boolean;
   agentAllowed: boolean;
   onSelect: (mode: SetupMode, options?: { selfHosted?: boolean }) => void;
-  onRequestAuthentication: () => void;
 }
 
 interface MoreSetupOption {
@@ -62,20 +52,10 @@ interface MoreSetupOption {
 // so its 1.16667 is already in 14px space, while lucide draws in a 24 viewBox
 // scaled down to 14 — 2 x (14/24) = 1.1667 device px, exactly the spec. Passing
 // 1.167 here applies the scale twice and renders a 0.68px hairline.
-function Feature({
-  icon: Icon,
-  accent = false,
-  children,
-}: {
-  icon: typeof Zap;
-  accent?: boolean;
-  children: string;
-}) {
+function Feature({ icon: Icon, children }: { icon: typeof Laptop; children: string }) {
   return (
     <li className="flex items-center gap-1.5 text-xs leading-[1.4] text-[var(--onboarding-text-primary)]">
-      <Icon
-        className={`size-3 shrink-0 ${accent ? "text-[var(--onboarding-accent)]" : "text-[var(--onboarding-text-tertiary)]"}`}
-      />
+      <Icon className="size-3 shrink-0 text-[var(--onboarding-text-tertiary)]" />
       {children}
     </li>
   );
@@ -116,12 +96,7 @@ const CardAction = forwardRef<
   );
 });
 
-export default function SetupChoiceStep({
-  isSignedIn,
-  agentAllowed,
-  onSelect,
-  onRequestAuthentication,
-}: SetupChoiceStepProps) {
+export default function SetupChoiceStep({ agentAllowed, onSelect }: SetupChoiceStepProps) {
   const { t } = useTranslation();
   const policy = usePolicySnapshot();
   const [pending, setPending] = useState<WarningSetupMode | null>(null);
@@ -143,18 +118,8 @@ export default function SetupChoiceStep({
     transcriptionProviders: getTranscriptionProviders(),
     llmProviders: modelRegistry.getCloudProviders(),
   });
-  const {
-    cloud: cloudAllowed,
-    local: localAllowed,
-    byok: byokAllowed,
-    selfHosted: selfHostedAllowed,
-  } = availability;
+  const { local: localAllowed, byok: byokAllowed, selfHosted: selfHostedAllowed } = availability;
   const moreOptionsAllowed = byokAllowed || selfHostedAllowed;
-
-  const chooseCloud = () => {
-    if (isSignedIn) onSelect("cloud");
-    else onRequestAuthentication();
-  };
 
   const confirmPending = () => {
     if (!pending) return;
@@ -295,62 +260,6 @@ export default function SetupChoiceStep({
             </div>
             <CardAction onClick={() => setPending("local")}>
               {t("onboarding.rehaul.setupChoice.local.download")}
-            </CardAction>
-          </SetupCard>
-        )}
-
-        {cloudAllowed && (
-          <SetupCard>
-            {/* "Vector 1": a 343x183 wash pinned to the bottom of the cloud card.
-                Approximated with a gradient — the Figma vector was not exported. */}
-            <div
-              className="pointer-events-none absolute inset-x-0 bottom-0 h-[183px] bg-gradient-to-t from-[color-mix(in_srgb,var(--onboarding-accent)_12%,transparent)] to-transparent"
-              aria-hidden="true"
-            />
-            <div className="relative z-10 flex flex-col gap-4">
-              <div className="flex items-center justify-between">
-                {/* Frame 48: 40px mark on the brand gradient. */}
-                <span className="flex size-9 items-center justify-center rounded-full bg-gradient-to-b from-[#4079ed] to-[#244587] text-white">
-                  <BrandMark className="size-5" />
-                </span>
-                {/* Frame 49: the "Recommended" chip. Figma has white text on a
-                    glass fill over the card's background artwork ("Vector 1",
-                    which was not exported) — on plain white that would be
-                    invisible, so it takes the brand fill until the art lands. */}
-                <span className="rounded-[47px] bg-[var(--onboarding-accent)] px-[9px] py-1 text-[10px] leading-[1.4] text-[var(--onboarding-accent-foreground)]">
-                  {t("common.recommended")}
-                </span>
-              </div>
-
-              <div className="flex flex-col gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <h2 className="onboarding-card-title text-[var(--onboarding-text-primary)]">
-                    {t("onboarding.rehaul.setupChoice.cloud.title")}
-                  </h2>
-                  <p className="text-sm leading-[1.4] text-[var(--onboarding-text-secondary)]">
-                    {t("onboarding.rehaul.setupChoice.cloud.description")}
-                  </p>
-                </div>
-                <ul className="flex flex-col gap-2">
-                  <Feature icon={Zap} accent>
-                    {t("onboarding.rehaul.setupChoice.cloud.features.fast")}
-                  </Feature>
-                  <Feature icon={ShieldCheck} accent>
-                    {t("onboarding.rehaul.setupChoice.cloud.features.privacy")}
-                  </Feature>
-                  <Feature icon={MonitorSmartphone} accent>
-                    {t("onboarding.rehaul.setupChoice.cloud.features.sync")}
-                  </Feature>
-                  <Feature icon={WandSparkles} accent>
-                    {t("onboarding.rehaul.setupChoice.cloud.features.features")}
-                  </Feature>
-                </ul>
-              </div>
-            </div>
-            <CardAction brand onClick={chooseCloud}>
-              {isSignedIn
-                ? t("onboarding.rehaul.setupChoice.cloud.continue")
-                : t("onboarding.rehaul.setupChoice.cloud.signIn")}
             </CardAction>
           </SetupCard>
         )}
@@ -523,17 +432,6 @@ export default function SetupChoiceStep({
           {/* The escape hatch is secondary on the left; proceeding with the mode
               the user selected is primary on the right. */}
           <div className="flex gap-2.5">
-            {cloudAllowed && (
-              <CardAction
-                className="flex-1"
-                onClick={() => {
-                  setPending(null);
-                  chooseCloud();
-                }}
-              >
-                {t("onboarding.rehaul.setupChoice.useCloud")}
-              </CardAction>
-            )}
             <CardAction ref={confirmRef} brand className="flex-1" onClick={confirmPending}>
               {pending
                 ? t(`onboarding.rehaul.setupChoice.warnings.${pending}.continue`)

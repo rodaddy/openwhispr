@@ -52,10 +52,11 @@ export default function MeetingNotificationOverlay(): ReactElement {
 
   const respond = useCallback(
     async (action: string): Promise<void> => {
-      if (data?.kind !== "detection") return;
+      if (data?.kind !== "detection" && data?.kind !== "calendar-end") return;
       setIsVisible(false);
       await new Promise<void>((resolve) => setTimeout(resolve, 200));
-      window.electronAPI?.meetingNotificationRespond?.(data.detectionId, action);
+      const id = data.kind === "calendar-end" ? data.sessionId : data.detectionId;
+      window.electronAPI?.meetingNotificationRespond?.(id, action);
     },
     [data]
   );
@@ -154,10 +155,16 @@ export default function MeetingNotificationOverlay(): ReactElement {
     "bodyValues" in presentation
       ? t(presentation.bodyKey, presentation.bodyValues)
       : t(presentation.bodyKey);
-  const handleAction =
-    presentation.action === "restart"
-      ? () => void respondToAutoEnd("restart")
-      : () => respond(presentation.action);
+  const isAutoEnd = data?.kind === "auto-end";
+  const handleAction = isAutoEnd
+    ? () => void respondToAutoEnd(presentation.action as MeetingAutoEndAction)
+    : () => respond(presentation.action);
+  const secondaryAction =
+    "secondaryAction" in presentation
+      ? isAutoEnd
+        ? () => void respondToAutoEnd(presentation.secondaryAction as MeetingAutoEndAction)
+        : () => respond(presentation.secondaryAction)
+      : undefined;
 
   return (
     <div
@@ -172,6 +179,10 @@ export default function MeetingNotificationOverlay(): ReactElement {
         body={body}
         startLabel={t(presentation.actionKey)}
         onStart={handleAction}
+        secondaryLabel={
+          "secondaryActionKey" in presentation ? t(presentation.secondaryActionKey) : undefined
+        }
+        onSecondary={secondaryAction}
         onDismiss={presentation.dismissible ? dismiss : undefined}
         closeVisible={isHovered}
         allowTitleWrap={presentation.allowTitleWrap}

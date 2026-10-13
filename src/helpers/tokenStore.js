@@ -4,7 +4,19 @@ const path = require("path");
 const debugLogger = require("./debugLogger");
 const secretCrypto = require("./secretCrypto");
 
-const tokenFile = () => path.join(app.getPath("userData"), "auth-token.bin");
+// The hub device key (rtech-whisper#101) has its own file. auth-token.bin is
+// the upstream sign-in bearer: no longer written, and never a hub credential,
+// so a copy left by an older build is removed rather than sent to the hub.
+const tokenFile = () => path.join(app.getPath("userData"), "hub-device-key.bin");
+const legacyTokenFile = () => path.join(app.getPath("userData"), "auth-token.bin");
+
+function removeLegacyToken() {
+  try {
+    fs.rmSync(legacyTokenFile(), { force: true });
+  } catch (err) {
+    debugLogger.error("tokenStore legacy token cleanup failed", { error: err?.message });
+  }
+}
 
 let cached = null;
 let generation = 0;
@@ -36,6 +48,7 @@ function persist(token) {
 
 function get() {
   if (cached !== null) return cached || null;
+  removeLegacyToken();
   try {
     const file = tokenFile();
     if (!fs.existsSync(file)) return (cached = "");
@@ -90,7 +103,9 @@ function setIfGeneration(token, expectedGeneration) {
 }
 
 function clear() {
-  cached = "";
+  // Load the key before touching disk so a failed clear can restore it.
+  const previous = get() || "";
+  removeLegacyToken();
   let success = true;
   try {
     fs.rmSync(tokenFile(), { force: true });
@@ -107,6 +122,9 @@ function clear() {
       });
     }
   }
+  // A failed clear leaves the key on disk, so every reader keeps seeing it
+  // and the user can retry (#143 #225); a restart would read it back anyway.
+  cached = success ? "" : previous;
   // Clearing is an explicit credential boundary even when no bearer was
   // cached (a window may still have an in-flight cookie-era request).
   generation += 1;

@@ -187,3 +187,53 @@ test("a replacement start waits for a deferred accepted stop to finish", async (
   assert.deepEqual(stops, ["meeting-1"]);
   assert.equal(activeCaptureSessionId, "meeting-2");
 });
+
+test("getActiveSession names the recording session only while it is live", async () => {
+  const startDeferred = createDeferred();
+  const lifecycle = createMeetingTranscriptionLifecycle({
+    start: async ({ sessionId }) => {
+      await startDeferred.promise;
+      return { success: true, sessionId };
+    },
+    stop: async () => ({ success: true }),
+  });
+  const owner = createOwnerWebContents();
+
+  assert.equal(lifecycle.getActiveSession(), null);
+  const startPromise = lifecycle.startSession({
+    sessionId: "meeting-1",
+    ownerWebContents: owner,
+    options: {},
+  });
+  await Promise.resolve();
+  assert.equal(lifecycle.getActiveSession(), null, "a starting session is not live yet");
+
+  startDeferred.resolve();
+  await startPromise;
+  assert.deepEqual(lifecycle.getActiveSession(), {
+    sessionId: "meeting-1",
+    ownerWebContents: owner,
+  });
+
+  const stopPromise = lifecycle.stopSession("meeting-1");
+  assert.equal(lifecycle.getActiveSession(), null, "a stopping session takes no highlights");
+  await stopPromise;
+  assert.equal(lifecycle.getActiveSession(), null);
+});
+
+test("getActiveSession with an expected id never answers for a later meeting", async () => {
+  const lifecycle = createMeetingTranscriptionLifecycle({
+    start: async ({ sessionId }) => ({ success: true, sessionId }),
+    stop: async () => ({ success: true }),
+  });
+  const owner = createOwnerWebContents();
+
+  await lifecycle.startSession({ sessionId: "meeting-a", ownerWebContents: owner, options: {} });
+  assert.equal(lifecycle.getActiveSession("meeting-a")?.sessionId, "meeting-a");
+  await lifecycle.stopSession("meeting-a");
+
+  await lifecycle.startSession({ sessionId: "meeting-b", ownerWebContents: owner, options: {} });
+  assert.equal(lifecycle.getActiveSession("meeting-a"), null, "meeting a's highlight is dropped");
+  assert.equal(lifecycle.getActiveSession("meeting-b")?.sessionId, "meeting-b");
+  assert.equal(lifecycle.getActiveSession()?.sessionId, "meeting-b");
+});

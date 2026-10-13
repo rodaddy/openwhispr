@@ -8,6 +8,18 @@ const { createRendererServer, installBrowserGlobals } = require("../lib/renderer
 
 const noop = () => {};
 
+function createNoteDestinationFixture() {
+  return {
+    pending: null,
+    requestNoteDestination: async () => ({ kind: "cancelled", reason: "test" }),
+    settle: noop,
+    cancel: noop,
+    getCancellationGeneration: () => 0,
+    resolveVoiceCommand: () => false,
+    confirmFolderCreation: async () => false,
+  };
+}
+
 function installInteractiveDom(t) {
   const originalDocument = globalThis.document;
   const originalNode = globalThis.Node;
@@ -339,6 +351,7 @@ async function renderAssistantPanel(
       onResponseContent: noop,
       onConversationReset: noop,
       onSelectionContextChange: noop,
+      noteDestination: createNoteDestinationFixture(),
     })
   );
 }
@@ -487,6 +500,7 @@ test("starting a new conversation clears the displayed response and parent conte
   let assistant;
   const requestMainWindowSize = async () => ({ success: true });
   const recordingControlsRef = { current: null };
+  const noteDestination = createNoteDestinationFixture();
 
   function Harness() {
     assistant = useAssistantPanel({
@@ -518,6 +532,7 @@ test("starting a new conversation clears the displayed response and parent conte
         assistant.handleConversationReset();
       },
       onSelectionContextChange: (context) => lifecycleEvents.push(`selection:${context}`),
+      noteDestination,
     });
   }
 
@@ -891,13 +906,23 @@ test("a follow-up into an open panel strips caret delivery and stays panel-first
 
   assistant.openRef.current = true;
   await React.act(async () => {
-    assistant.handleCommand({ text: "draft a reply", attachment: null, selectedContext: null, delivery });
+    assistant.handleCommand({
+      text: "draft a reply",
+      attachment: null,
+      selectedContext: null,
+      delivery,
+    });
   });
   assert.equal(assistant.pendingCommand.delivery, null);
 
   assistant.openRef.current = false;
   await React.act(async () => {
-    assistant.handleCommand({ text: "draft a reply", attachment: null, selectedContext: null, delivery });
+    assistant.handleCommand({
+      text: "draft a reply",
+      attachment: null,
+      selectedContext: null,
+      delivery,
+    });
   });
   assert.deepEqual(assistant.pendingCommand.delivery, delivery);
 });

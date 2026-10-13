@@ -111,7 +111,12 @@ class GoogleCalendarOAuth {
     if (tokens.expires_at - fiveMinutes < Date.now()) {
       const refreshed = await this.refreshAccessToken(tokens.refresh_token);
       if (refreshed.error) {
-        throw new Error(`Token refresh failed: ${refreshed.error_description || refreshed.error}`);
+        const err = new Error(
+          `Token refresh failed: ${refreshed.error_description || refreshed.error}`
+        );
+        // Keep the OAuth error code: the description alone hides invalid_grant (#355).
+        err.code = refreshed.error;
+        throw err;
       }
 
       const newExpiresAt = Date.now() + refreshed.expires_in * 1000;

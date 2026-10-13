@@ -1,11 +1,9 @@
 import { en as enPrompts, type PromptBundle } from "../../locales/prompts";
+import { SKIPPY_PERSONA_PROMPT } from "./skippyPersona";
+import { GRILL_INTERVIEWER_PROMPT } from "./grillPrompt";
 
 // When changing this text, move its old hash to the retired set in
 // src/config/retiredPrompts.js and update the current-hash snapshot there.
-const DEFAULT_CHAT_AGENT_PROMPT =
-  "You are a helpful voice assistant. Respond concisely and conversationally. " +
-  "Keep answers brief unless the user asks for detail. " +
-  "You may be given a transcription of spoken input, so handle informal phrasing gracefully.";
 
 export const PROMPT_KINDS = {
   cleanup: {
@@ -22,7 +20,11 @@ export const PROMPT_KINDS = {
   },
   chatAgent: {
     i18nKey: null,
-    fallback: DEFAULT_CHAT_AGENT_PROMPT,
+    fallback: SKIPPY_PERSONA_PROMPT,
+  },
+  grill: {
+    i18nKey: null,
+    fallback: GRILL_INTERVIEWER_PROMPT,
   },
 } as const satisfies Record<string, { i18nKey: keyof PromptBundle | null; fallback: string }>;
 

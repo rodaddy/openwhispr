@@ -1,0 +1,94 @@
+From 92a622d0b5188cb6b0f91eb83819393f38277d23 Mon Sep 17 00:00:00 2001
+From: Rico Rojas <rickrojas@gmail.com>
+Date: Tue, 8 Sep 2026 21:22:53 -0400
+Subject: [PATCH 9/9] chore(updater): disable update checks and the update UI
+ in the fork
+
+Fork builds are produced and installed from this repo, but the updater
+feed still points at OpenWhispr's GitHub releases. A check there either
+nags for a version the fork already carries or replaces the fork build
+with an upstream one. Skip feed setup, the startup and periodic checks,
+and the manual check, and report the disabled state through
+getUpdateStatus so the Settings and Control Panel surfaces stay hidden.
+OPENWHISPR_ENABLE_UPDATES=1 restores upstream behavior; the updater
+tests set it so they keep covering the upstream logic.
+---
+ src/updater.js               | 19 +++++++++++++++++--
+ test/helpers/updater.test.js |  3 +++
+ 2 files changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/src/updater.js b/src/updater.js
+index 0924a528..1081cd96 100644
+--- a/src/updater.js
++++ b/src/updater.js
+@@ -1,6 +1,13 @@
+ const { autoUpdater } = require("electron-updater");
+ const { appUpdatesEnabled } = require("./helpers/updateCheckPolicy");
+ 
++// Fork: builds are produced and installed locally from this repo. The feed
++// above points at OpenWhispr's GitHub releases, so a check there would either
++// nag for a version this fork already carries or replace the fork build with
++// an upstream one. Update checks are off and the update UI reports as such.
++// OPENWHISPR_ENABLE_UPDATES=1 restores upstream behavior (used by the tests).
++const FORK_UPDATES_DISABLED = process.env.OPENWHISPR_ENABLE_UPDATES !== "1";
++
+ class UpdateManager {
+   constructor() {
+     this.updateAvailable = false;
+@@ -23,7 +30,7 @@ class UpdateManager {
+   }
+ 
+   setupAutoUpdater() {
+-    if (process.env.NODE_ENV === "development") {
++    if (FORK_UPDATES_DISABLED || process.env.NODE_ENV === "development") {
+       return;
+     }
+ 
+@@ -162,6 +169,12 @@ class UpdateManager {
+ 
+   async checkForUpdates() {
+     try {
++      if (FORK_UPDATES_DISABLED) {
++        return {
++          updateAvailable: false,
++          message: "Update checks are disabled in this fork build",
++        };
++      }
+       if (process.env.NODE_ENV === "development") {
+         return {
+           updateAvailable: false,
+@@ -283,7 +296,8 @@ class UpdateManager {
+       return {
+         updateAvailable: this.updateAvailable,
+         updateDownloaded: this.updateDownloaded,
+-        isDevelopment: process.env.NODE_ENV === "development",
++        // The renderer hides every update surface behind this flag.
++        isDevelopment: FORK_UPDATES_DISABLED || process.env.NODE_ENV === "development",
+       };
+     } catch (error) {
+       console.error("❌ Error getting update status:", error);
+@@ -314,6 +328,7 @@ class UpdateManager {
+   }
+ 
+   checkForUpdatesOnStartup() {
++    if (FORK_UPDATES_DISABLED) return;
+     if (process.env.NODE_ENV !== "development") {
+       setTimeout(() => {
+         this._autoCheckForUpdates("Startup");
+diff --git a/test/helpers/updater.test.js b/test/helpers/updater.test.js
+index 150a180a..a31265d5 100644
+--- a/test/helpers/updater.test.js
++++ b/test/helpers/updater.test.js
+@@ -4,6 +4,9 @@ const assert = require("node:assert/strict");
+ const Module = require("node:module");
+ 
+ process.env.NODE_ENV = "test";
++// The fork ships with update checks off; these tests cover the upstream
++// updater logic, so opt back in here.
++process.env.OPENWHISPR_ENABLE_UPDATES = "1";
+ 
+ const updaterModulePath = require.resolve("../../src/updater.js");
+ const originalLoad = Module._load;
+-- 
+2.55.0
+

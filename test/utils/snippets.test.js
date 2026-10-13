@@ -129,3 +129,14 @@ test("getDictionaryHintWords combines dictionary words and snippet triggers safe
     "zoom link",
   ]);
 });
+
+test("getDictionaryHintWords skips a correction trigger whose replacement is a dictionary word (#495)", () => {
+  const result = getDictionaryHintWords({
+    customDictionary: ["Kubernetes"],
+    snippets: [
+      { trigger: "cooper netties", replacement: "kubernetes" },
+      { trigger: "my cal", replacement: "cal.com/me" },
+    ],
+  });
+  assert.deepEqual(result, ["Kubernetes", "my cal"]);
+});

@@ -5,10 +5,11 @@ import { createNoteTool } from "./createNoteTool";
 import { updateNoteTool } from "./updateNoteTool";
 import { listFoldersTool } from "./listFoldersTool";
 import { clipboardTool } from "./clipboardTool";
-import { webSearchTool } from "./webSearchTool";
 import { calendarTool } from "./calendarTool";
 import { calendarAvailabilityTool } from "./calendarAvailabilityTool";
+import { attachNoteToCrmContactTool, findCrmContactTool } from "./crmTools";
 import type { ContainerScope } from "../../types/chat";
+import type { RequestNoteDestination } from "./noteDestination";
 
 export { ToolRegistry } from "./ToolRegistry";
 export type { ToolDefinition, ToolResult } from "./ToolRegistry";
@@ -20,6 +21,8 @@ interface ToolRegistrySettings {
   /** Pins search_notes to a container (overview chat); the LLM cannot widen it. */
   searchScope?: ContainerScope;
   webSearchEnabled: boolean;
+  requestNoteDestination?: RequestNoteDestination;
+  getNoteDestinationCancellationGeneration?: () => number;
 }
 
 export function createToolRegistry(settings: ToolRegistrySettings): ToolRegistry {
@@ -28,14 +31,22 @@ export function createToolRegistry(settings: ToolRegistrySettings): ToolRegistry
   const useCloudSearch = settings.isSignedIn && settings.cloudBackupEnabled;
   registry.register(createSearchNotesTool({ useCloudSearch, fixedScope: settings.searchScope }));
   registry.register(getNoteTool);
-  registry.register(createNoteTool);
-  registry.register(updateNoteTool);
+  registry.register(
+    createNoteTool({
+      requestNoteDestination: settings.requestNoteDestination,
+      getNoteDestinationCancellationGeneration: settings.getNoteDestinationCancellationGeneration,
+    })
+  );
+  registry.register(
+    updateNoteTool({
+      requestNoteDestination: settings.requestNoteDestination,
+      getNoteDestinationCancellationGeneration: settings.getNoteDestinationCancellationGeneration,
+    })
+  );
   registry.register(listFoldersTool);
   registry.register(clipboardTool);
-
-  if (settings.isSignedIn && settings.webSearchEnabled) {
-    registry.register(webSearchTool);
-  }
+  registry.register(findCrmContactTool);
+  registry.register(attachNoteToCrmContactTool);
 
   if (settings.calendarConnected) {
     registry.register(calendarTool);

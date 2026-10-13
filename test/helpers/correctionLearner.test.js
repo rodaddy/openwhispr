@@ -53,3 +53,28 @@ test("the same correction appearing twice is only learned once", () => {
   const sinead = result.filter((w) => w.toLowerCase() === "sinead");
   assert.ok(sinead.length <= 1);
 });
+
+test("ordinary English words are never learned — the dictionary is for what Whisper gets wrong", () => {
+  assert.ok(!extractCorrections("run the tset now", "run the test now", []).includes("test"));
+  assert.ok(!extractCorrections("run the tset now", "run the Test now", []).includes("Test"));
+  assert.ok(!extractCorrections("run teh program", "run the program", []).includes("the"));
+  assert.ok(!extractCorrections("this fuking thing", "this fucking thing", []).includes("fucking"));
+  assert.ok(!extractCorrections("it doesnt work", "it doesn't work", []).includes("doesn't"));
+});
+
+test("proper nouns and jargon still pass the common-word guard", () => {
+  assert.ok(
+    extractCorrections("Hey Shunade how are you", "Hey Sinead how are you", []).includes("Sinead")
+  );
+  assert.ok(
+    extractCorrections("ask Skippie about it", "ask Skippy about it", []).includes("Skippy")
+  );
+});
+
+test("a word carrying a braille character is rejected as garbage", () => {
+  const result = extractCorrections("say helloo there", "say hell⠃oo there", []);
+  assert.deepEqual(
+    result.filter((w) => /[⠀-⣿]/.test(w)),
+    []
+  );
+});

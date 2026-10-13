@@ -16,8 +16,10 @@ function isNativeBindingUnavailable(error) {
   );
 }
 
-// Locally the binding is built for Electron's ABI, so a plain `node` run must skip. In CI the
-// rebuild step makes it loadable, so a skip there means that step vanished and must fail.
+// Locally the binding is built for Electron's ABI (postinstall runs install-app-deps), so a plain
+// `node` run must skip. Run `npm run test:db` locally instead: it runs the suite under the repo's
+// Electron as Node, whose ABI matches, with REQUIRE_DB_TESTS set. In CI the rebuild step makes
+// the binding loadable under Node, so a skip there means that step vanished and must fail.
 function skipOrFail(t, error) {
   if (!isNativeBindingUnavailable(error)) {
     throw error;
@@ -25,7 +27,9 @@ function skipOrFail(t, error) {
   if (process.env.REQUIRE_DB_TESTS) {
     throw new Error(REQUIRED_DB_FAILURE + String(error?.message || error), { cause: error });
   }
-  t.skip("better-sqlite3 native binding is not available for this Node runtime");
+  t.skip(
+    "better-sqlite3 native binding is not available for this Node runtime (run `npm run test:db`)"
+  );
 }
 
 const fs = require("node:fs");

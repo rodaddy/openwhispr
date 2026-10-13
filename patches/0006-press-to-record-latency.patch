@@ -1,0 +1,660 @@
+From ff8bd774f963611c45c087dcd45a1011c5c8b5d2 Mon Sep 17 00:00:00 2001
+From: Rico Rojas <rickrojas@gmail.com>
+Date: Tue, 8 Sep 2026 20:42:12 -0400
+Subject: [PATCH 6/9] perf(dictation): cut hotkey press-to-record latency and
+ replay presses dropped during processing
+
+Press to recording start was ~380 ms on macOS, and paste took ~900 ms,
+with every press during that window silently dropped. Three causes, one
+of them dominant:
+
+- The frontmost-app PID read used `osascript -l JavaScript`, measured at
+  350 ms per call. It ran on the press path (the renderer awaited it
+  before starting the recording) and again on the paste path (activation
+  check, plus retries). macos-text-monitor gains `--frontmost-pid` and
+  `--activate <pid>` modes (under 5 ms); textEditMonitor uses them with
+  the JXA script kept as the fallback for an older helper binary.
+- The renderer awaited the target capture before startRecording. It is
+  only consumed at paste time and the main process serializes it, so it
+  now runs concurrently with the start.
+- Hybrid mode waited the 150 ms push hold delay before starting. Hybrid
+  decides tap-vs-hold on release, so it records from the press itself;
+  push keeps the delay (resolveHoldStartDelayMs).
+
+A press that lands while the previous transcript is still processing is
+now parked and replayed when the lifecycle leaves processing (within
+1.5 s; a released push press is discarded), instead of vanishing so the
+user presses again and flips the state they expected. Press handlers log
+the press, the start offset, and the paste breakdown at debug level.
+---
+ main.js                             | 194 +++++++++++++++++++++-------
+ resources/macos-text-monitor.swift  |  29 +++++
+ src/helpers/activationMode.js       |  24 ++++
+ src/helpers/ipcHandlers.js          |   8 ++
+ src/helpers/textEditMonitor.js      |  52 +++++++-
+ src/helpers/windowManager.js        |  21 ++-
+ src/hooks/useAudioRecording.js      |  10 +-
+ test/helpers/activationMode.test.js |  32 +++++
+ 8 files changed, 306 insertions(+), 64 deletions(-)
+
+diff --git a/main.js b/main.js
+index 41fae681..0e0c6a23 100644
+--- a/main.js
++++ b/main.js
+@@ -5,6 +5,8 @@ const {
+   usesKeyRelease,
+   resolveDictationPress,
+   resolveDictationRelease,
++  resolveHoldStartDelayMs,
++  shouldReplayPendingPress,
+ } = require("./src/helpers/activationMode");
+ 
+ if (shouldForceXWayland(process.argv)) {
+@@ -1319,6 +1321,46 @@ async function startApp() {
+     const MIN_HOLD_DURATION_MS = 150;
+     const POST_STOP_COOLDOWN_MS = 300;
+ 
++    // Hybrid records from the press itself (no hold delay); push keeps the
++    // delay that filters accidental taps.
++    const scheduleHoldStart = (activationMode, start) => {
++      const delayMs = resolveHoldStartDelayMs(activationMode, MIN_HOLD_DURATION_MS);
++      if (delayMs > 0) setTimeout(start, delayMs);
++      else start();
++    };
++
++    // A press that lands while the previous transcript is still processing
++    // (transcribe + paste, roughly a second) used to be dropped silently, so
++    // the user pressed again and the second press flipped the state they
++    // expected. Park it and replay it when processing ends.
++    let pendingPress = null;
++    const deferPressWhileProcessing = (source, replay) => {
++      pendingPress = { source, pressedAt: Date.now(), released: false, replay };
++      debugLogger?.debug(`[${source}] Press deferred — dictation processing`);
++    };
++    const markPendingPressReleased = (source) => {
++      if (pendingPress?.source === source) pendingPress.released = true;
++    };
++    windowManager.onDictationProcessingEnded = () => {
++      const pending = pendingPress;
++      pendingPress = null;
++      if (!pending) return;
++      const mode = windowManager.getActivationMode();
++      const ageMs = Date.now() - pending.pressedAt;
++      const replay = shouldReplayPendingPress({
++        mode,
++        pressedAt: pending.pressedAt,
++        now: Date.now(),
++        released: pending.released,
++      });
++      debugLogger?.debug(`[${pending.source}] Deferred press ${replay ? "replayed" : "expired"}`, {
++        mode,
++        ageMs,
++        released: pending.released,
++      });
++      if (replay) pending.replay();
++    };
++
+     globeKeyManager.on("globe-down", async () => {
+       const currentHotkey = hotkeyManager.getCurrentHotkey && hotkeyManager.getCurrentHotkey();
+       const mainWindowLive = isLiveWindow(windowManager.mainWindow);
+@@ -1336,8 +1378,34 @@ async function startApp() {
+       // Handle dictation if Globe/Fn is one of the dictation hotkeys
+       const dictationUsesGlobe = hotkeyManager.getSlotHotkeys("dictation").some(isGlobeLikeHotkey);
+       if (dictationUsesGlobe) {
++        // Begins the press state machine for push/hybrid. `ignoreCooldown` is
++        // for a replayed press: its stop-cooldown already elapsed while it waited.
++        const beginGlobeHold = ({ ignoreCooldown = false } = {}) => {
++          const activationMode = windowManager.getActivationMode();
++          const now = Date.now();
++          if (!ignoreCooldown && now - globeLastStopTime < POST_STOP_COOLDOWN_MS) {
++            debugLogger?.debug("[Globe] Ignored — cooldown active");
++            return;
++          }
++          windowManager.showDictationPanel();
++          windowManager.sendPrepareDictation();
++          const pressTime = now;
++          globeKeyDownTime = pressTime;
++          globeKeyIsRecording = false;
++          scheduleHoldStart(activationMode, () => {
++            if (globeKeyDownTime === pressTime && !globeKeyIsRecording) {
++              globeKeyIsRecording = true;
++              debugLogger?.debug("[Globe] Starting dictation (push hold)");
++              windowManager.sendStartDictation();
++            }
++          });
++        };
+         if (mainWindowLive && windowManager.isDictationProcessing()) {
+-          debugLogger?.debug("[Globe] Ignored — dictation processing");
++          if (usesKeyRelease(windowManager.getActivationMode())) {
++            deferPressWhileProcessing("Globe", () => beginGlobeHold({ ignoreCooldown: true }));
++          } else {
++            deferPressWhileProcessing("Globe", () => windowManager.sendToggleDictation());
++          }
+         } else if (mainWindowLive) {
+           // Capture target app PID BEFORE showing the overlay
+           if (textEditMonitor) textEditMonitor.captureTargetPid();
+@@ -1351,23 +1419,7 @@ async function startApp() {
+             globeLastStopTime = Date.now();
+             windowManager.sendStopDictation();
+           } else if (pressAction === "hold") {
+-            const now = Date.now();
+-            if (now - globeLastStopTime < POST_STOP_COOLDOWN_MS) {
+-              debugLogger?.debug("[Globe] Ignored — cooldown active");
+-              return;
+-            }
+-            windowManager.showDictationPanel();
+-            windowManager.sendPrepareDictation();
+-            const pressTime = now;
+-            globeKeyDownTime = pressTime;
+-            globeKeyIsRecording = false;
+-            setTimeout(async () => {
+-              if (globeKeyDownTime === pressTime && !globeKeyIsRecording) {
+-                globeKeyIsRecording = true;
+-                debugLogger?.debug("[Globe] Starting dictation (push hold)");
+-                windowManager.sendStartDictation();
+-              }
+-            }, MIN_HOLD_DURATION_MS);
++            beginGlobeHold();
+           } else {
+             windowManager.sendToggleDictation();
+           }
+@@ -1406,9 +1458,10 @@ async function startApp() {
+         const activationMode = windowManager.getActivationMode();
+         if (usesKeyRelease(activationMode)) {
+           if (globeKeyDownTime === 0 && !globeKeyIsRecording) {
+-            // The press was ignored (dictation was processing), or it was the
++            // The press was deferred (dictation was processing), or it was the
+             // hybrid stop tap; releasing it must not cancel preparation or
+             // hide the thinking pill.
++            markPendingPressReleased("Globe");
+             debugLogger?.debug("[Globe] Release without a registered press — ignored");
+           } else {
+             const heldMs = Date.now() - globeKeyDownTime;
+@@ -1476,33 +1529,57 @@ async function startApp() {
+ 
+       if (!hotkeyManager.slotHasHotkey("dictation", modifier)) return;
+       if (!isLiveWindow(windowManager.mainWindow)) return;
+-      if (windowManager.isDictationProcessing()) return;
+ 
+-      const activationMode = windowManager.getActivationMode();
+-      if (textEditMonitor) textEditMonitor.captureTargetPid();
+-      const pressAction = resolveDictationPress({
+-        mode: activationMode,
+-        isRecording: windowManager.isDictationRecording(),
+-      });
+-      if (pressAction === "stop") {
+-        rightModLastStopTime = Date.now();
+-        windowManager.sendStopDictation();
+-      } else if (pressAction === "hold") {
++      const beginRightModHold = ({ ignoreCooldown = false } = {}) => {
++        const activationMode = windowManager.getActivationMode();
+         if (rightModActiveKey && rightModActiveKey !== modifier) return;
+         const now = Date.now();
+-        if (now - rightModLastStopTime < POST_STOP_COOLDOWN_MS) return;
++        if (!ignoreCooldown && now - rightModLastStopTime < POST_STOP_COOLDOWN_MS) {
++          debugLogger?.debug("[RightMod] Ignored — cooldown active");
++          return;
++        }
+         windowManager.showDictationPanel();
+         windowManager.sendPrepareDictation();
+         const pressTime = now;
+         rightModActiveKey = modifier;
+         rightModDownTime = pressTime;
+         rightModIsRecording = false;
+-        setTimeout(() => {
++        scheduleHoldStart(activationMode, () => {
+           if (rightModDownTime === pressTime && !rightModIsRecording) {
+             rightModIsRecording = true;
++            debugLogger?.debug("[RightMod] Starting dictation", {
++              sincePressMs: Date.now() - pressTime,
++            });
+             windowManager.sendStartDictation();
+           }
+-        }, MIN_HOLD_DURATION_MS);
++        });
++      };
++
++      if (windowManager.isDictationProcessing()) {
++        if (usesKeyRelease(windowManager.getActivationMode())) {
++          deferPressWhileProcessing("RightMod", () => beginRightModHold({ ignoreCooldown: true }));
++        } else {
++          deferPressWhileProcessing("RightMod", () => windowManager.sendToggleDictation());
++        }
++        return;
++      }
++
++      const activationMode = windowManager.getActivationMode();
++      debugLogger?.debug("[RightMod] Press received", {
++        modifier,
++        activationMode,
++        recording: windowManager.isDictationRecording(),
++      });
++      if (textEditMonitor) textEditMonitor.captureTargetPid();
++      const pressAction = resolveDictationPress({
++        mode: activationMode,
++        isRecording: windowManager.isDictationRecording(),
++      });
++      if (pressAction === "stop") {
++        rightModLastStopTime = Date.now();
++        windowManager.sendStopDictation();
++      } else if (pressAction === "hold") {
++        beginRightModHold();
+       } else {
+         windowManager.sendToggleDictation();
+       }
+@@ -1518,8 +1595,9 @@ async function startApp() {
+           (!rightModActiveKey || rightModActiveKey === modifier)
+         ) {
+           if (rightModDownTime === 0 && !rightModIsRecording) {
+-            // The press was ignored (dictation was processing); releasing it
++            // The press was deferred (dictation was processing); releasing it
+             // must not cancel preparation or hide the thinking pill.
++            markPendingPressReleased("RightMod");
+             debugLogger?.debug("[RightMod] Release without a registered press — ignored");
+           } else {
+             const heldMs = Date.now() - rightModDownTime;
+@@ -1574,34 +1652,49 @@ async function startApp() {
+ 
+       if (!hotkeyManager.slotHasHotkey("dictation", button)) return;
+       if (!isLiveWindow(windowManager.mainWindow)) return;
+-      if (windowManager.isDictationProcessing()) return;
+-
+-      const activationMode = windowManager.getActivationMode();
+-      if (textEditMonitor) textEditMonitor.captureTargetPid();
+ 
+-      const pressAction = resolveDictationPress({
+-        mode: activationMode,
+-        isRecording: windowManager.isDictationRecording(),
+-      });
+-      if (pressAction === "stop") {
+-        mouseButtonLastStopTime = Date.now();
+-        windowManager.sendStopDictation();
+-      } else if (pressAction === "hold") {
++      const beginMouseButtonHold = ({ ignoreCooldown = false } = {}) => {
++        const activationMode = windowManager.getActivationMode();
+         if (mouseButtonActiveButton && mouseButtonActiveButton !== button) return;
+         const now = Date.now();
+-        if (now - mouseButtonLastStopTime < POST_STOP_COOLDOWN_MS) return;
++        if (!ignoreCooldown && now - mouseButtonLastStopTime < POST_STOP_COOLDOWN_MS) return;
+         windowManager.showDictationPanel();
+         windowManager.sendPrepareDictation();
+         const pressTime = now;
+         mouseButtonActiveButton = button;
+         mouseButtonDownTime = pressTime;
+         mouseButtonIsRecording = false;
+-        setTimeout(() => {
++        scheduleHoldStart(activationMode, () => {
+           if (mouseButtonDownTime === pressTime && !mouseButtonIsRecording) {
+             mouseButtonIsRecording = true;
+             windowManager.sendStartDictation();
+           }
+-        }, MIN_HOLD_DURATION_MS);
++        });
++      };
++
++      if (windowManager.isDictationProcessing()) {
++        if (usesKeyRelease(windowManager.getActivationMode())) {
++          deferPressWhileProcessing("MouseButton", () =>
++            beginMouseButtonHold({ ignoreCooldown: true })
++          );
++        } else {
++          deferPressWhileProcessing("MouseButton", () => windowManager.sendToggleDictation());
++        }
++        return;
++      }
++
++      const activationMode = windowManager.getActivationMode();
++      if (textEditMonitor) textEditMonitor.captureTargetPid();
++
++      const pressAction = resolveDictationPress({
++        mode: activationMode,
++        isRecording: windowManager.isDictationRecording(),
++      });
++      if (pressAction === "stop") {
++        mouseButtonLastStopTime = Date.now();
++        windowManager.sendStopDictation();
++      } else if (pressAction === "hold") {
++        beginMouseButtonHold();
+       } else {
+         windowManager.sendToggleDictation();
+       }
+@@ -1620,8 +1713,9 @@ async function startApp() {
+         (!mouseButtonActiveButton || mouseButtonActiveButton === button)
+       ) {
+         if (mouseButtonDownTime === 0 && !mouseButtonIsRecording) {
+-          // The press was ignored (dictation was processing); releasing it
++          // The press was deferred (dictation was processing); releasing it
+           // must not cancel preparation or hide the thinking pill.
++          markPendingPressReleased("MouseButton");
+           debugLogger?.debug("[MouseButton] Release without a registered press — ignored");
+         } else {
+           const heldMs = Date.now() - mouseButtonDownTime;
+diff --git a/resources/macos-text-monitor.swift b/resources/macos-text-monitor.swift
+index 1048acdf..db8a812b 100644
+--- a/resources/macos-text-monitor.swift
++++ b/resources/macos-text-monitor.swift
+@@ -113,6 +113,35 @@ func observerCallback(
+ //        macos-text-monitor --selected-text <pid>
+ //        macos-text-monitor --editable-target <pid>
+ //        macos-text-monitor --window-bounds <pid>
++//        macos-text-monitor --frontmost-pid
++//        macos-text-monitor --activate <pid>
++//
++// The last two sit on the dictation hot paths (target capture at key press,
++// target activation right before paste). Each used to be an
++// `osascript -l JavaScript` round trip, measured at ~350 ms per call on Apple
++// silicon; a direct NSWorkspace call from this binary is a process spawn.
++if CommandLine.arguments.count >= 2 && CommandLine.arguments[1] == "--frontmost-pid" {
++    if let app = NSWorkspace.shared.frontmostApplication {
++        writeOutput("FRONTMOST_PID:\(app.processIdentifier)")
++        exit(0)
++    }
++    writeOutput("FRONTMOST_PID:")
++    exit(1)
++}
++
++if CommandLine.arguments.count >= 3 && CommandLine.arguments[1] == "--activate" {
++    guard let activatePid = Int32(CommandLine.arguments[2]),
++          let app = NSRunningApplication(processIdentifier: activatePid) else {
++        writeOutput("ACTIVATE_FAILED")
++        exit(1)
++    }
++    // Same options the JXA path passed as activateWithOptions(3): bring every
++    // window forward and ignore the currently active app.
++    app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
++    writeOutput("ACTIVATE_OK:\(activatePid)")
++    exit(0)
++}
++
+ let selectionReadMode = CommandLine.arguments.count >= 3 &&
+     CommandLine.arguments[1] == "--selected-text"
+ let editableTargetMode = CommandLine.arguments.count >= 3 &&
+diff --git a/src/helpers/activationMode.js b/src/helpers/activationMode.js
+index bb1770c4..040df7bd 100644
+--- a/src/helpers/activationMode.js
++++ b/src/helpers/activationMode.js
+@@ -38,6 +38,30 @@ export function resolveDictationPress({ mode, isRecording = false }) {
+   return "hold";
+ }
+ 
++// How long a press must be held before recording starts. Push needs the delay
++// to filter accidental taps; hybrid decides tap-vs-hold on release and can
++// record from the press itself, so the user hears the cue immediately.
++export function resolveHoldStartDelayMs(mode, holdDelayMs) {
++  return normalizeActivationMode(mode) === "hybrid" ? 0 : holdDelayMs;
++}
++
++// A press that landed while the previous transcript was still processing is
++// held and replayed once the lifecycle returns to idle, instead of vanishing.
++export const PENDING_PRESS_TTL_MS = 1500;
++
++export function shouldReplayPendingPress({
++  mode,
++  pressedAt,
++  now,
++  released = false,
++  ttlMs = PENDING_PRESS_TTL_MS,
++}) {
++  if (now - pressedAt > ttlMs) return false;
++  // Push records only while held: a press already released has nothing to do.
++  if (normalizeActivationMode(mode) === "push") return !released;
++  return true;
++}
++
+ // What the release of a tracked press does.
+ //   "latch"  -- hybrid tap: recording keeps running until the next press
+ //   "stop"   -- the press was recording: stop now
+diff --git a/src/helpers/ipcHandlers.js b/src/helpers/ipcHandlers.js
+index 187716dc..47937ea2 100644
+--- a/src/helpers/ipcHandlers.js
++++ b/src/helpers/ipcHandlers.js
+@@ -2840,9 +2840,11 @@ class IPCHandlers {
+       // Activating the target by PID is more reliable than hide()'s implicit
+       // focus hand-off for Chromium apps like Claude desktop and Brave (#668).
+       let activated = false;
++      const pasteStartedAt = Date.now();
+       if (process.platform === "darwin" && this.textEditMonitor) {
+         activated = await this.textEditMonitor.activateTargetPid();
+       }
++      const activateMs = Date.now() - pasteStartedAt;
+ 
+       if (!activated && mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()) {
+         if (process.platform === "darwin") {
+@@ -2876,6 +2878,12 @@ class IPCHandlers {
+         targetWindow,
+       });
+       const pasted = pasteResult?.pasted !== false;
++      debugLogger.debug("[Paste] timing", {
++        activated,
++        activateMs,
++        pasteMs: Date.now() - pasteStartedAt - activateMs,
++        totalMs: Date.now() - pasteStartedAt,
++      });
+       debugLogger.debug("[AutoLearn] Paste completed", {
+         autoLearnEnabled: this._autoLearnEnabled,
+         hasMonitor: !!this.textEditMonitor,
+diff --git a/src/helpers/textEditMonitor.js b/src/helpers/textEditMonitor.js
+index a36d443d..2b0dee2e 100644
+--- a/src/helpers/textEditMonitor.js
++++ b/src/helpers/textEditMonitor.js
+@@ -135,11 +135,31 @@ class TextEditMonitor extends EventEmitter {
+    * macOS: resolve the frontmost app's PID, or null if it can't be read.
+    */
+   _readFrontmostPid() {
++    if (process.platform !== "darwin") return Promise.resolve(null);
++    // The native helper answers in one process spawn; the JXA script below
++    // costs ~350 ms per call and sat on both the key-press and paste paths.
++    const resolved = this.resolveBinary();
++    if (!resolved) return this._readFrontmostPidViaOsascript();
++    return new Promise((resolve) => {
++      execFile(
++        resolved.command,
++        [...resolved.args, "--frontmost-pid"],
++        { timeout: 1000 },
++        (err, stdout) => {
++          const match = (stdout || "").match(/^FRONTMOST_PID:(\d+)/m);
++          if (!err && match) {
++            resolve(parseInt(match[1], 10));
++            return;
++          }
++          // A helper built before this mode existed prints usage and exits 1.
++          this._readFrontmostPidViaOsascript().then(resolve);
++        }
++      );
++    });
++  }
++
++  _readFrontmostPidViaOsascript() {
+     return new Promise((resolve) => {
+-      if (process.platform !== "darwin") {
+-        resolve(null);
+-        return;
+-      }
+       const script =
+         'ObjC.import("AppKit"); $.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier';
+       execFile(
+@@ -156,10 +176,30 @@ class TextEditMonitor extends EventEmitter {
+ 
+   /**
+    * macOS: request activation of the app with the given PID, bringing all its
+-   * windows forward (AllWindows|IgnoringOtherApps) so one becomes key. Scans
+-   * runningApplications because NSRunningApplication's PID lookup returns nil under JXA.
++   * windows forward (AllWindows|IgnoringOtherApps) so one becomes key.
+    */
+   _activateApp(pid) {
++    const resolved = this.resolveBinary();
++    if (!resolved) return this._activateAppViaOsascript(pid);
++    return new Promise((resolve) => {
++      execFile(
++        resolved.command,
++        [...resolved.args, "--activate", String(pid)],
++        { timeout: 1000 },
++        (err, stdout) => {
++          if (!err && /^ACTIVATE_OK:/m.test(stdout || "")) {
++            resolve();
++            return;
++          }
++          this._activateAppViaOsascript(pid).then(resolve);
++        }
++      );
++    });
++  }
++
++  // Scans runningApplications because NSRunningApplication's PID lookup returns
++  // nil under JXA.
++  _activateAppViaOsascript(pid) {
+     return new Promise((resolve) => {
+       const script = `
+         ObjC.import("AppKit");
+diff --git a/src/helpers/windowManager.js b/src/helpers/windowManager.js
+index d85dab87..84f5a89d 100644
+--- a/src/helpers/windowManager.js
++++ b/src/helpers/windowManager.js
+@@ -29,6 +29,7 @@ const {
+   toHotkeyRegistrationMode,
+   resolveDictationPress,
+   resolveDictationRelease,
++  resolveHoldStartDelayMs,
+ } = require("./activationMode");
+ const { DEV_SERVER_PORT } = DevServerManager;
+ const AUTO_END_NOTIFICATION_LOAD_TIMEOUT_MS = 10_000;
+@@ -693,7 +694,7 @@ class WindowManager {
+       safetyTimeoutId,
+     };
+ 
+-    setTimeout(() => {
++    const startRecording = () => {
+       if (!this.macCompoundPushState || this.macCompoundPushState.downTime !== downTime) {
+         return;
+       }
+@@ -702,7 +703,10 @@ class WindowManager {
+         this.macCompoundPushState.isRecording = true;
+         this.sendStartDictation();
+       }
+-    }, MIN_HOLD_DURATION_MS);
++    };
++    const holdDelayMs = resolveHoldStartDelayMs(this.getActivationMode(), MIN_HOLD_DURATION_MS);
++    if (holdDelayMs > 0) setTimeout(startRecording, holdDelayMs);
++    else startRecording();
+   }
+ 
+   handleMacPushModifierUp(modifier) {
+@@ -826,7 +830,7 @@ class WindowManager {
+       safetyTimeoutId,
+     };
+ 
+-    setTimeout(() => {
++    const startRecording = () => {
+       if (!this.winPushState || this.winPushState.downTime !== downTime) {
+         return;
+       }
+@@ -835,7 +839,10 @@ class WindowManager {
+         this.winPushState.isRecording = true;
+         this.sendStartDictation();
+       }
+-    }, MIN_HOLD_DURATION_MS);
++    };
++    const holdDelayMs = resolveHoldStartDelayMs(this.getActivationMode(), MIN_HOLD_DURATION_MS);
++    if (holdDelayMs > 0) setTimeout(startRecording, holdDelayMs);
++    else startRecording();
+   }
+ 
+   // With several dictation hotkeys bound, only the key that started the push
+@@ -976,11 +983,17 @@ class WindowManager {
+       return;
+     }
+ 
++    const wasProcessing = shouldIgnoreDictationHotkey(this._dictationLifecycleState);
+     this._dictationLifecycleState = nextState;
+     this._dictationInputKind = nextInputKind;
+     this._isDictatingToggle = isDictationRecording(nextState);
+     this.meetingDetectionEngine?.setUserRecording(this._isDictatingToggle);
+     this._sendAgentDictationPillState();
++    // Hotkey presses are dropped while a transcript is processing; the press
++    // handlers park the press and replay it from this hook.
++    if (wasProcessing && !shouldIgnoreDictationHotkey(nextState)) {
++      this.onDictationProcessingEnded?.();
++    }
+   }
+ 
+   _sendAgentDictationPillState() {
+diff --git a/src/hooks/useAudioRecording.js b/src/hooks/useAudioRecording.js
+index 4d70f49e..223525a7 100644
+--- a/src/hooks/useAudioRecording.js
++++ b/src/hooks/useAudioRecording.js
+@@ -151,11 +151,13 @@ export const useAudioRecording = (toast, options = {}) => {
+         // still the user's actual editing target here. Refresh it for recordings
+         // started from the panel itself as well as from global hotkeys; otherwise
+         // paste can reactivate a stale target from the preceding dictation.
+-        try {
+-          await window.electronAPI.captureDictationTarget?.();
+-        } catch (error) {
++        // Not awaited: the capture is only consumed at paste time, seconds from
++        // now, and the main process serializes it behind any in-flight read.
++        // Awaiting it here put the whole frontmost-app lookup between the key
++        // press and the first recorded frame.
++        window.electronAPI.captureDictationTarget?.()?.catch?.((error) => {
+           logger.warn("Failed to refresh dictation target", { error: error?.message });
+-        }
++        });
+ 
+         demoKindRef.current = getOnboardingDemoKind(voiceAgentRequested);
+         audioManagerRef.current.setVoiceAgentRequested(voiceAgentRequested);
+diff --git a/test/helpers/activationMode.test.js b/test/helpers/activationMode.test.js
+index 0c042988..6703f42f 100644
+--- a/test/helpers/activationMode.test.js
++++ b/test/helpers/activationMode.test.js
+@@ -3,11 +3,14 @@ const assert = require("node:assert/strict");
+ 
+ const {
+   HYBRID_TAP_THRESHOLD_MS,
++  PENDING_PRESS_TTL_MS,
+   normalizeActivationMode,
+   usesKeyRelease,
+   toHotkeyRegistrationMode,
+   resolveDictationPress,
+   resolveDictationRelease,
++  resolveHoldStartDelayMs,
++  shouldReplayPendingPress,
+ } = require("../../src/helpers/activationMode");
+ 
+ test("unknown modes normalize to tap; hybrid survives", () => {
+@@ -76,6 +79,35 @@ test("a forced release (listener reset, safety timeout) never latches", () => {
+   );
+ });
+ 
++test("hybrid records from the press; push keeps the hold delay", () => {
++  assert.equal(resolveHoldStartDelayMs("hybrid", 150), 0);
++  assert.equal(resolveHoldStartDelayMs("push", 150), 150);
++  assert.equal(resolveHoldStartDelayMs("tap", 150), 150);
++});
++
++test("a press parked during processing replays while fresh", () => {
++  const pressedAt = 1000;
++  const fresh = pressedAt + PENDING_PRESS_TTL_MS;
++  const stale = pressedAt + PENDING_PRESS_TTL_MS + 1;
++  assert.equal(shouldReplayPendingPress({ mode: "hybrid", pressedAt, now: fresh }), true);
++  assert.equal(shouldReplayPendingPress({ mode: "tap", pressedAt, now: fresh }), true);
++  assert.equal(shouldReplayPendingPress({ mode: "hybrid", pressedAt, now: stale }), false);
++  // A hybrid tap released while waiting still latches a recording.
++  assert.equal(
++    shouldReplayPendingPress({ mode: "hybrid", pressedAt, now: fresh, released: true }),
++    true
++  );
++  // Push only records while held: a released press has nothing to replay.
++  assert.equal(
++    shouldReplayPendingPress({ mode: "push", pressedAt, now: fresh, released: true }),
++    false
++  );
++  assert.equal(
++    shouldReplayPendingPress({ mode: "push", pressedAt, now: fresh, released: false }),
++    true
++  );
++});
++
+ test("a tap-latch-tap cycle on one key", () => {
+   // First tap: press with nothing running -> hold state machine; release at 120 ms latches.
+   assert.equal(resolveDictationPress({ mode: "hybrid", isRecording: false }), "hold");
+-- 
+2.55.0
+

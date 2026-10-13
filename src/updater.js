@@ -1,6 +1,13 @@
 const { autoUpdater } = require("electron-updater");
 const { appUpdatesEnabled } = require("./helpers/updateCheckPolicy");
 
+// Fork: builds are produced and installed locally from this repo. The feed
+// above points at OpenWhispr's GitHub releases, so a check there would either
+// nag for a version this fork already carries or replace the fork build with
+// an upstream one. Update checks are off and the update UI reports as such.
+// OPENWHISPR_ENABLE_UPDATES=1 restores upstream behavior (used by the tests).
+const FORK_UPDATES_DISABLED = process.env.OPENWHISPR_ENABLE_UPDATES !== "1";
+
 class UpdateManager {
   constructor() {
     this.updateAvailable = false;
@@ -23,7 +30,7 @@ class UpdateManager {
   }
 
   setupAutoUpdater() {
-    if (process.env.NODE_ENV === "development") {
+    if (FORK_UPDATES_DISABLED || process.env.NODE_ENV === "development") {
       return;
     }
 
@@ -162,6 +169,12 @@ class UpdateManager {
 
   async checkForUpdates() {
     try {
+      if (FORK_UPDATES_DISABLED) {
+        return {
+          updateAvailable: false,
+          message: "Update checks are disabled in this fork build",
+        };
+      }
       if (process.env.NODE_ENV === "development") {
         return {
           updateAvailable: false,
@@ -283,7 +296,8 @@ class UpdateManager {
       return {
         updateAvailable: this.updateAvailable,
         updateDownloaded: this.updateDownloaded,
-        isDevelopment: process.env.NODE_ENV === "development",
+        // The renderer hides every update surface behind this flag.
+        isDevelopment: FORK_UPDATES_DISABLED || process.env.NODE_ENV === "development",
       };
     } catch (error) {
       console.error("❌ Error getting update status:", error);
@@ -314,6 +328,7 @@ class UpdateManager {
   }
 
   checkForUpdatesOnStartup() {
+    if (FORK_UPDATES_DISABLED) return;
     if (process.env.NODE_ENV !== "development") {
       setTimeout(() => {
         this._autoCheckForUpdates("Startup");

@@ -63,3 +63,30 @@ test("legacy microphone preferences retain their behavior", async () => {
   );
   assert.equal(getMicrophoneSelectionMode({ preferBuiltInMic: false }), "system");
 });
+
+test("recording-time Lark status reads force a fresh helper query", async (t) => {
+  const { getLarkM2TrackAvailability, resolvePreferredMicrophone } =
+    await import("../../src/helpers/microphoneSelection.js");
+  const requests = [];
+  const originalWindow = globalThis.window;
+  globalThis.window = {
+    electronAPI: {
+      getLarkM2Status: async (options) => {
+        requests.push(options);
+        return { status: "connected" };
+      },
+    },
+  };
+  t.after(() => {
+    globalThis.window = originalWindow;
+  });
+  const lark = mic("lark", "Wireless Microphone (3547:0007)");
+
+  assert.equal(await getLarkM2TrackAvailability(lark), true);
+  await resolvePreferredMicrophone({
+    settings: { microphoneSelectionMode: "automatic" },
+    mediaDevices: { enumerateDevices: async () => [lark] },
+    getSystemDefault: async () => null,
+  });
+  assert.deepEqual(requests, [{ refresh: true }, { refresh: true }]);
+});

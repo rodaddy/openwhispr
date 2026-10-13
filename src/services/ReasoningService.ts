@@ -8,7 +8,7 @@ import {
 } from "../models/ModelRegistry";
 import { BaseReasoningService, ReasoningConfig } from "./BaseReasoningService";
 import { SecureCache } from "../utils/SecureCache";
-import { withRetry, createApiRetryStrategy, httpError } from "../utils/retry";
+import { withRetry, createApiRetryStrategy, httpError, llmTimeoutError } from "../utils/retry";
 import { API_ENDPOINTS, TOKEN_LIMITS, buildApiUrl, ensureV1Suffix } from "../config/constants";
 import logger from "../utils/logger";
 import { getSettings, isCloudCleanupMode } from "../stores/settingsStore";
@@ -320,13 +320,14 @@ class ReasoningService extends BaseReasoningService {
     });
 
     const requestGeneration = this.requestCancellationGeneration;
+    const retryStrategy = createApiRetryStrategy({ timeoutSeconds: config.timeoutSeconds });
     const response = await withRetry(async () => {
       if (requestGeneration !== this.requestCancellationGeneration) {
         throw httpError("Request cancelled", 499);
       }
       const controller = new AbortController();
       this.activeRequestControllers.add(controller);
-      const timeoutSeconds = getLlmRequestTimeoutSeconds();
+      const timeoutSeconds = getLlmRequestTimeoutSeconds({ timeoutSeconds: config.timeoutSeconds });
       const timeoutId = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
       try {
         const headers: Record<string, string> = {
@@ -389,14 +390,14 @@ class ReasoningService extends BaseReasoningService {
           if (requestGeneration !== this.requestCancellationGeneration) {
             throw httpError("Request cancelled", 499);
           }
-          throw new Error(`Request timed out after ${timeoutSeconds}s`);
+          throw llmTimeoutError(timeoutSeconds);
         }
         throw error;
       } finally {
         clearTimeout(timeoutId);
         this.activeRequestControllers.delete(controller);
       }
-    }, createApiRetryStrategy());
+    }, retryStrategy);
 
     if (!response.choices || !response.choices[0]) {
       logger.logReasoning(`${providerName.toUpperCase()}_RESPONSE_ERROR`, {

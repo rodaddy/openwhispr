@@ -3,6 +3,7 @@ import { createLatestValueScheduler } from "../utils/latestValueScheduler";
 import {
   getLiveTranscriptEntranceTimeline,
   LIVE_TRANSCRIPT_ENTRANCE_TIMING,
+  LIVE_TRANSCRIPT_INSTANT_ENTRANCE,
   LIVE_TRANSCRIPT_SURFACE_LIMITS,
   shouldOfferLiveTranscriptReopen,
 } from "../helpers/voicePillPresentation";
@@ -237,6 +238,13 @@ export function useLiveTranscriptPanel({
       openFrameRef.current = requestAnimationFrame(() => {
         if (generation !== openGenerationRef.current) return;
         setOpen(true);
+        if (LIVE_TRANSCRIPT_INSTANT_ENTRANCE) {
+          // The window is already at the three-line surface; show the panel
+          // whole and let text flow from the next scheduler tick.
+          setEntrancePhase("content");
+          resumeText();
+          return;
+        }
         const timeline = getLiveTranscriptEntranceTimeline();
         entranceTimersRef.current = [
           setTimeout(() => setEntrancePhase("horizontal"), timeline.horizontalAtMs),

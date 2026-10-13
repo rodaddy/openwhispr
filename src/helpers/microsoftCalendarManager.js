@@ -5,6 +5,8 @@ const CalendarSyncInterval = require("./calendarSyncInterval");
 const { MAX_BUFFER_MINUTES } = require("./calendarAvailability");
 const { extractMeetingUrl } = require("./meetingJoinUrl");
 const { broadcastToWindows } = require("./windowBroadcast");
+const { CalendarSyncHealth, showReconnectNotification } = require("./calendarSyncHealth");
+const { runCalendarSyncNow, singleFlight } = require("./calendarSyncNow");
 
 const GRAPH_API_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -59,9 +61,17 @@ class MicrosoftCalendarManager {
     this.oauth = new MicrosoftCalendarOAuth(databaseManager);
     this.accounts = new Map();
     this.primaryOnly = true;
+    this.syncHealth = new CalendarSyncHealth();
     this.syncRunner = new CalendarSyncInterval(
       () => this.syncEvents().then(() => this.reminderScheduler.scheduleNextMeeting()),
       { intervalMs: 2 * 60 * 1000, maxIntervalMs: 30 * 60 * 1000, logScope: "mcal" }
+    );
+    // User-initiated (#433): returns { success, error? } instead of only logging.
+    this.syncNow = singleFlight(() =>
+      runCalendarSyncNow({
+        fetchCalendars: (errors) => this.fetchCalendars(null, errors),
+        syncEvents: () => this.syncEvents(),
+      })
     );
   }
 
@@ -93,6 +103,8 @@ class MicrosoftCalendarManager {
 
   removeAccount(email) {
     this.accounts.delete(email);
+    this.syncHealth.remove(email);
+    this._broadcastSyncHealth();
     this.databaseManager.removeMicrosoftAccount(email);
     this._broadcastAccountsChanged();
 
@@ -124,6 +136,8 @@ class MicrosoftCalendarManager {
     } else {
       this.stop();
       this.accounts.clear();
+      this.syncHealth.remove();
+      this._broadcastSyncHealth();
       this.databaseManager.clearMicrosoftCalendarData();
       this.reminderScheduler.reset("microsoft");
       this.reminderScheduler.scheduleNextMeeting();
@@ -140,7 +154,8 @@ class MicrosoftCalendarManager {
     return this.databaseManager.getMicrosoftAccounts();
   }
 
-  async fetchCalendars(accountEmail = null) {
+  // `errors`, when given, collects each account's failure for the caller.
+  async fetchCalendars(accountEmail = null, errors = null) {
     const emails = accountEmail ? [accountEmail] : this._getAccountEmails();
     const allCalendars = [];
 
@@ -164,6 +179,7 @@ class MicrosoftCalendarManager {
         allCalendars.push(...calendars);
       } catch (err) {
         debugLogger.error("Error fetching calendars", { email, error: err.message }, "mcal");
+        errors?.push(err);
       }
     }
 
@@ -176,10 +192,13 @@ class MicrosoftCalendarManager {
     const selectedCalendars = this.databaseManager.getSelectedMicrosoftCalendars();
     if (selectedCalendars.length === 0) return;
 
+    const results = [];
     for (const calendar of selectedCalendars) {
       try {
         await this._syncCalendar(calendar);
+        results.push([calendar.account_email, null]);
       } catch (err) {
+        results.push([calendar.account_email, err]);
         debugLogger.error(
           "Error syncing calendar",
           { calendarId: calendar.id, error: err.message },
@@ -188,8 +207,22 @@ class MicrosoftCalendarManager {
       }
     }
 
+    if (this.syncHealth.recordSyncPass(results).length > 0) {
+      showReconnectNotification("Microsoft Calendar");
+    }
+    this._broadcastSyncHealth();
+
     broadcastToWindows("mcal-events-synced", {});
     this.reminderScheduler.scheduleNextMeeting();
+    return results;
+  }
+
+  getSyncHealth() {
+    return this.syncHealth.snapshot();
+  }
+
+  _broadcastSyncHealth() {
+    broadcastToWindows("mcal-sync-health-changed", this.getSyncHealth());
   }
 
   async _syncCalendar(calendar) {

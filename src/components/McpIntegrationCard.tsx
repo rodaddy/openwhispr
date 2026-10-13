@@ -10,8 +10,8 @@ import claudeIcon from "../assets/icons/providers/claude.svg";
 import openaiIcon from "../assets/icons/providers/openai.svg";
 import cursorIcon from "../assets/icons/providers/cursor.svg";
 
-const MCP_URL = "https://mcp.openwhispr.com/mcp";
-const MCP_DOCS_URL = "https://docs.openwhispr.com/integrations/mcp";
+const RTW_DOCS_URL = "https://github.com/rodaddy/openwhispr/blob/main/tools/rtw/README.md";
+const MCP_ADD_CMD = "claude mcp add rtech-whisper -- <repo>/tools/rtw/bin/rtw mcp";
 
 interface McpIntegrationCardProps {
   isPaid: boolean;
@@ -25,7 +25,7 @@ export default function McpIntegrationCard({ isPaid, onUpgrade }: McpIntegration
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(MCP_URL);
+      await navigator.clipboard.writeText(MCP_ADD_CMD);
       setCopied(true);
       toast({ title: t("integrations.mcp.copied"), variant: "success", duration: 2000 });
       setTimeout(() => setCopied(false), 2000);
@@ -37,7 +37,7 @@ export default function McpIntegrationCard({ isPaid, onUpgrade }: McpIntegration
   return (
     <div className="rounded-lg border border-border/50 dark:border-border-subtle/70 bg-card/50 dark:bg-surface-2/50 backdrop-blur-sm p-4">
       <div className="flex items-center gap-2 mb-4">
-        <LogoTile src={logo} alt="OpenWhispr" />
+        <LogoTile src={logo} alt="rTech Whisper" />
         <Plus className="h-3 w-3 text-muted-foreground/40 shrink-0" />
         <div className="flex items-center gap-1">
           <LogoTile src={claudeIcon} alt="Claude" monochrome />
@@ -60,14 +60,15 @@ export default function McpIntegrationCard({ isPaid, onUpgrade }: McpIntegration
 
       {isPaid && (
         <ol className="space-y-1.5 text-xs text-muted-foreground mb-4 list-decimal pl-4 marker:text-muted-foreground/40">
+          <li className="leading-relaxed">{t("integrations.mcp.step1")}</li>
           <li className="leading-relaxed">
-            {t("integrations.mcp.step1")}{" "}
+            {t("integrations.mcp.step2")}{" "}
             <span className="inline-flex items-center gap-1 rounded-md border border-primary/15 bg-primary/5 px-1.5 py-0.5 font-mono text-[10.5px] text-foreground align-middle">
-              {MCP_URL}
+              {MCP_ADD_CMD}
               <button
                 type="button"
                 onClick={handleCopy}
-                aria-label={t("integrations.mcp.copyUrl")}
+                aria-label={t("integrations.mcp.copyCommand")}
                 className="p-0.5 rounded transition-colors hover:bg-primary/10 text-muted-foreground hover:text-foreground"
               >
                 {copied ? (
@@ -78,7 +79,6 @@ export default function McpIntegrationCard({ isPaid, onUpgrade }: McpIntegration
               </button>
             </span>
           </li>
-          <li className="leading-relaxed">{t("integrations.mcp.step2")}</li>
           <li className="leading-relaxed">{t("integrations.mcp.step3")}</li>
         </ol>
       )}
@@ -86,7 +86,7 @@ export default function McpIntegrationCard({ isPaid, onUpgrade }: McpIntegration
       {isPaid ? (
         <Button
           size="sm"
-          onClick={() => window.electronAPI?.openExternal?.(MCP_DOCS_URL)}
+          onClick={() => window.electronAPI?.openExternal?.(RTW_DOCS_URL)}
           className="gap-1.5"
         >
           {t("integrations.mcp.learnMore")}

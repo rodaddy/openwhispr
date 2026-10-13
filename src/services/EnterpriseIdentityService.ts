@@ -20,13 +20,10 @@ export async function getManagedEnterpriseConfig(
   forceRefresh = false
 ): Promise<ManagedEnterpriseConfigResult> {
   const request = window.electronAPI?.getManagedEnterpriseConfig;
+  // Main registers no managed-config handler and preload exposes no bridge, so
+  // the shipped app always lands here: no managed config for this identity.
   if (!request) {
-    return {
-      success: false,
-      status: "error",
-      code: "MANAGED_ENTERPRISE_UNSUPPORTED",
-      error: "Managed enterprise AI requires a newer version of OpenWhispr.",
-    };
+    return { success: true, status: "current", accountId, workspaceId, authGeneration };
   }
   // The IPC boundary type carries scope names as bare strings (see
   // src/types/electron.ts); the main process only ever populates them from

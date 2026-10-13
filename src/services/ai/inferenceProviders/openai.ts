@@ -2,7 +2,12 @@ import type { InferenceProvider } from "./types";
 import { API_ENDPOINTS, TOKEN_LIMITS, buildApiUrl } from "../../../config/constants";
 import { getOpenAiApiConfig } from "../../../models/ModelRegistry";
 import { getSettings } from "../../../stores/settingsStore";
-import { withRetry, createApiRetryStrategy, httpError } from "../../../utils/retry";
+import {
+  withRetry,
+  createApiRetryStrategy,
+  httpError,
+  llmTimeoutError,
+} from "../../../utils/retry";
 import logger from "../../../utils/logger";
 import { canBorrowCleanupCustomKey, resolveConfiguredOpenAIBase } from "../openaiBase";
 import {
@@ -210,15 +215,19 @@ export const openaiProvider: InferenceProvider = {
       });
     }
 
-    const retryStrategy = createApiRetryStrategy();
+    const retryStrategy = createApiRetryStrategy({ timeoutSeconds: config.timeoutSeconds });
     const response = await withRetry(async () => {
       let lastError: Error | null = null;
       let lastRetryableError: Error | null = null;
+      const timeoutSeconds = getLlmRequestTimeoutSeconds({
+        timeoutSeconds: config.timeoutSeconds,
+      });
+      // One deadline per attempt: a fallback endpoint gets only the time that is left.
+      const deadline = Date.now() + timeoutSeconds * 1000;
 
       for (const { url: endpoint, type } of endpointCandidates) {
         const controller = new AbortController();
-        const timeoutSeconds = getLlmRequestTimeoutSeconds();
-        const timeoutId = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
+        const timeoutId = setTimeout(() => controller.abort(), Math.max(0, deadline - Date.now()));
         try {
           const maxTokens =
             config.maxTokens ||
@@ -293,10 +302,11 @@ export const openaiProvider: InferenceProvider = {
           }
 
           rememberPreference(openAiBase, type);
-          return res.json();
+          // Await inside the try so the deadline also covers reading the body.
+          return await res.json();
         } catch (error) {
           if ((error as Error).name === "AbortError") {
-            throw new Error(`Request timed out after ${timeoutSeconds}s`);
+            throw llmTimeoutError(timeoutSeconds);
           }
           lastError = error as Error;
           if (retryStrategy.shouldRetry(lastError)) {

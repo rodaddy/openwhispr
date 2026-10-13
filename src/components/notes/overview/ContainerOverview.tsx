@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, UserPlus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import InviteTeammateDialog from "../../InviteTeammateDialog";
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
-import { canManageSpace } from "../../../lib/spacePermissions";
 import {
   useNotes,
   useNotesByContainer,
@@ -43,7 +41,6 @@ export function ContainerOverview({
   const folderCounts = useFolderCounts();
   const spaceRootCounts = useSpaceRootCounts();
   const [spaceNotes, setSpaceNotes] = useState<NoteItem[] | null>(null);
-  const [showInviteDialog, setShowInviteDialog] = useState(false);
 
   // Folder overviews mirror the store's active container; space overviews list
   // the whole space (foldered + root), which the store doesn't hold — fetched
@@ -71,12 +68,6 @@ export function ContainerOverview({
   const workspace = space.workspace_id
     ? workspaces.find((w) => w.id === space.workspace_id)
     : undefined;
-  const canInvite =
-    space.kind === "team" &&
-    !!space.cloud_space_id &&
-    !!workspace &&
-    canManageSpace(space, workspace.role ?? null);
-
   const spaceFolders = useMemo(
     () => folders.filter((f) => f.space_id === space.id),
     [folders, space.id]
@@ -125,15 +116,6 @@ export function ContainerOverview({
                 {t("notes.list.newNote")}
               </button>
             )}
-            {canInvite && (
-              <button
-                onClick={() => setShowInviteDialog(true)}
-                className="inline-flex items-center gap-1.5 px-3 h-7 rounded-md border border-border/40 dark:border-white/10 text-xs font-medium text-foreground/60 hover:text-foreground/85 hover:border-border/70 hover:bg-foreground/3 dark:hover:bg-white/3 transition-colors duration-150 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring/30"
-              >
-                <UserPlus size={12} />
-                {t("notes.overview.invite")}
-              </button>
-            )}
           </div>
         </div>
 
@@ -161,16 +143,6 @@ export function ContainerOverview({
           />
         </div>
       </div>
-
-      {canInvite && workspace && space.cloud_space_id && (
-        <InviteTeammateDialog
-          open={showInviteDialog}
-          onOpenChange={setShowInviteDialog}
-          workspaceId={workspace.id}
-          workspaceName={workspace.name}
-          teamIds={space.teams.map((team) => team.id)}
-        />
-      )}
     </div>
   );
 }

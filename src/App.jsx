@@ -7,12 +7,16 @@ import { formatHotkeyListLabel } from "./utils/hotkeys";
 import { useWindowDrag } from "./hooks/useWindowDrag";
 import { useAudioRecording } from "./hooks/useAudioRecording";
 import { useAssistantPanel } from "./hooks/useAssistantPanel";
+import { useNoteDestinationRequest } from "./hooks/useNoteDestinationRequest";
 import { useLiveTranscriptPanel } from "./hooks/useLiveTranscriptPanel";
 import { useMainWindowSizeOwner } from "./hooks/useMainWindowSizeOwner";
 import { useMainProcessNotifications } from "./hooks/useMainProcessNotifications";
 import { useListeningEntrancePhase } from "./hooks/useListeningEntrancePhase";
 import { useWindowResizeCompensation } from "./hooks/useWindowResizeCompensation";
+import { useTrayMicrophoneState } from "./hooks/useTrayMicrophoneState";
+import { useBrainDumpRoundups } from "./hooks/useBrainDumpRoundups";
 import { useSettingsStore } from "./stores/settingsStore";
+import { useMeetingRecordingStore } from "./stores/meetingRecordingStore";
 import { isAgentAllowed } from "./stores/policyRules";
 import { usePolicyStore } from "./stores/policyStore";
 import { VoicePill } from "./components/dictation/VoicePill";
@@ -26,6 +30,7 @@ import { createMainWindowResizeCoordinator } from "./utils/mainWindowResizeCoord
 import {
   ASSISTANT_FOOTER_TRANSITION_TIMING,
   LIVE_TRANSCRIPT_ENTRANCE_TIMING,
+  resolveLiveTranscriptStageDurationMs,
   resolveLiveTranscriptEntrancePresentation,
   resolveAssistantFooterPresentation,
   resolveAgentModeActive,
@@ -38,6 +43,9 @@ import {
   resolveVoicePillInteraction,
   VOICE_PILL_FOOTPRINT,
   isVoicePillActivationKey,
+  LATENCY_CAPTION_MS,
+  resolveLatencyCaption,
+  resolveLatencyFlashPhase,
   shouldActivateVoicePill,
   shouldOfferLiveTranscriptReopen,
   shouldSuppressPillForAssistantActions,
@@ -56,6 +64,7 @@ const UNMOUNTED_RESIZE = {
 };
 
 export default function App() {
+  const [dictationActivationState, setDictationActivationState] = useState("idle");
   const [isHovered, setIsHovered] = useState(false);
   const [isCommandMenuOpen, setIsCommandMenuOpen] = useState(false);
   const buttonRef = useRef(null);
@@ -71,6 +80,8 @@ export default function App() {
   // Floating icon auto-hide setting (read from store, synced via IPC)
   const floatingIconAutoHide = useSettingsStore((s) => s.floatingIconAutoHide);
   const panelStartPosition = useSettingsStore((s) => s.panelStartPosition);
+  const transcriptionPreviewLayout = useSettingsStore((s) => s.transcriptionPreviewLayout);
+  const dictationShowLatency = useSettingsStore((s) => s.dictationShowLatency);
   const prevAutoHideRef = useRef(floatingIconAutoHide);
   const [voiceHorizontalDirection, setVoiceHorizontalDirection] = useState(() =>
     resolveVoiceHorizontalDirection(panelStartPosition)
@@ -84,6 +95,27 @@ export default function App() {
     () => dismissByPresentation("dictation-error"),
     [dismissByPresentation]
   );
+
+  useEffect(() => {
+    let disposed = false;
+    let eventSeen = false;
+    const applyState = (state) => {
+      if (disposed || !["idle", "held", "latched"].includes(state)) return;
+      eventSeen = true;
+      setDictationActivationState(state);
+    };
+    const unsubscribe = window.electronAPI?.onDictationActivationStateChanged?.(applyState);
+    window.electronAPI
+      ?.getDictationActivationState?.()
+      .then((state) => {
+        if (!eventSeen) applyState(state);
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
+  }, []);
 
   useEffect(() => {
     setWindowInteractivity(false);
@@ -160,6 +192,16 @@ export default function App() {
     onPanelOpened,
   });
   const { noteDictationError, openRef: assistantOpenRef } = assistant;
+  const noteDestination = useNoteDestinationRequest();
+  const resolveNoteDestinationVoiceCommand = noteDestination.resolveVoiceCommand;
+  const handleAssistantPanelCommand = assistant.handleCommand;
+  const handleAssistantCommand = React.useCallback(
+    (command) => {
+      if (resolveNoteDestinationVoiceCommand(command.text)) return;
+      handleAssistantPanelCommand(command);
+    },
+    [handleAssistantPanelCommand, resolveNoteDestinationVoiceCommand]
+  );
 
   const handleDictationError = React.useCallback(
     (options = {}) => {
@@ -183,6 +225,7 @@ export default function App() {
     isPreparing,
     isStopping,
     micCaptureStatus,
+    latencyReadout,
     toggleListening,
     cancelRecording,
     cancelProcessing,
@@ -194,7 +237,7 @@ export default function App() {
       if (localStorage.getItem("onboardingCompleted") === "true") return;
       window.electronAPI?.publishOnboardingDemoEvent?.(event);
     },
-    onAssistantCommand: assistant.handleCommand,
+    onAssistantCommand: handleAssistantCommand,
     dismissDictationError,
     onDictationError: handleDictationError,
     getAssistantSelectionContext: assistant.getSelectionContext,
@@ -210,6 +253,11 @@ export default function App() {
     assistantOpenRef,
   });
   const isVisuallyProcessing = isProcessing || isPreparing || isStopping;
+  const meetingRecordingActive = useMeetingRecordingStore((state) => state.isRecording);
+  useTrayMicrophoneState(isRecording || isPreparing || isStopping || meetingRecordingActive);
+  // Daily brain-dump roundups (#423): this window always exists while the app
+  // runs, even on a hidden or login launch, unlike the control panel.
+  useBrainDumpRoundups();
 
   useLayoutEffect(() => {
     recordingControlsRef.current = {
@@ -269,30 +317,84 @@ export default function App() {
   const voicePillOwnsActivity = !assistant.open || assistant.closing || isAssistantVoice;
   const voicePillIsRecording = isRecording && voicePillOwnsActivity;
   const voicePillIsProcessing = (isProcessing || isStopping) && voicePillOwnsActivity;
+  // #563: a start still opening the mic arms the floating pill (listening
+  // shape, still bars) instead of reading as processing. Under the open Agent
+  // panel the footer handoff owns the entrance, so arming stays off there.
+  const voicePillIsArming = isPreparing && !isRecording && !isStopping && !assistant.open;
   const voiceActivity = resolveVoiceActivityPresentation({
     isRecording: voicePillIsRecording,
     // Mic warm-up is an acknowledged press, not work on a transcript. Keeping
-    // isPreparing out of the thinking state leaves the press on the pulsing
-    // "processing" mic-state pill instead of lighting the glow at hotkey time.
+    // isPreparing out of the thinking state leaves the press on the arming
+    // pill (#563) instead of lighting the glow at hotkey time.
     isProcessing: voicePillIsProcessing,
     isAssistantVoice,
     assistantThinking: assistant.thinking || assistant.busy,
   });
   const listeningEntrancePhase = useListeningEntrancePhase(voicePillIsRecording, {
     afterAssistantFooterHandoff: assistant.open,
+    isArming: voicePillIsArming,
   });
   const listeningEntrance = resolveListeningEntrancePresentation({
     isRecording: voicePillIsRecording,
+    isArming: voicePillIsArming,
     phase: listeningEntrancePhase,
   });
-  const isCompactPill = voicePillIsRecording
-    ? listeningEntrance.compactPill
-    : voiceActivity.compactPill;
+  // #699: each pasted take flashes its latency on the pill. A new readout
+  // object queues the flash; its 2.5 s start once the pill rests.
+  const [latencyFlashPhase, setLatencyFlashPhase] = useState("idle");
+  useEffect(() => {
+    if (latencyReadout) setLatencyFlashPhase("pending");
+  }, [latencyReadout]);
+  // isRecording and isVisuallyProcessing are the mic state's recording,
+  // unavailable and processing values (getMicState below).
+  const latencyPillBusy =
+    voicePillIsRecording ||
+    voicePillIsArming ||
+    voicePillIsProcessing ||
+    voiceActivity.activeState === "thinking" ||
+    isRecording ||
+    isVisuallyProcessing;
+  const latencyPanelOpen =
+    assistant.open || assistant.mounted || liveTranscript.open || liveTranscript.mounted;
+  useEffect(() => {
+    setLatencyFlashPhase((phase) =>
+      resolveLatencyFlashPhase({
+        phase,
+        atRest: !latencyPillBusy && !latencyPanelOpen,
+        recording: isRecording,
+        settingOn: dictationShowLatency,
+      })
+    );
+  }, [latencyFlashPhase, latencyPillBusy, latencyPanelOpen, isRecording, dictationShowLatency]);
+  useEffect(() => {
+    if (latencyFlashPhase !== "showing") return undefined;
+    const timeout = setTimeout(() => setLatencyFlashPhase("idle"), LATENCY_CAPTION_MS);
+    return () => clearTimeout(timeout);
+  }, [latencyFlashPhase]);
+  const latencyCaption = resolveLatencyCaption({
+    settingOn: dictationShowLatency,
+    flashActive: latencyFlashPhase === "showing",
+    readout: latencyReadout,
+    pillBusy: latencyPillBusy,
+    panelOpen: latencyPanelOpen,
+  });
+  const latencyCaptionVisible = Boolean(latencyCaption);
+  // With auto-hide on, the window may already be hidden when the paste lands.
+  // The caption brings it back without focus; the auto-hide effect below hides
+  // it again once the caption ends.
+  useEffect(() => {
+    if (latencyCaptionVisible && floatingIconAutoHide) window.electronAPI?.showDictationPanel?.();
+  }, [latencyCaptionVisible, floatingIconAutoHide]);
+  const isCompactPill =
+    (voicePillIsRecording || voicePillIsArming
+      ? listeningEntrance.compactPill
+      : voiceActivity.compactPill) || latencyCaptionVisible;
   // BASE and RECORDING resolve to the same native box (windowConfig.js), so
   // recording edges never call setBounds — resizing the transparent window
   // always kicks a compositor frame. This flag still feeds the size ladder so
   // a menu opening over the compact pill resolves to EXPANDED geometry.
-  const windowFitsCompactPill = voicePillIsRecording || voiceActivity.compactPill;
+  const windowFitsCompactPill =
+    voicePillIsRecording || voicePillIsArming || voiceActivity.compactPill || latencyCaptionVisible;
 
   const { dictationErrorPillHandoffActive, panelReturnResizeActive } = useMainWindowSizeOwner({
     requestMainWindowSize,
@@ -306,6 +408,7 @@ export default function App() {
     liveTranscriptOpen: liveTranscript.open,
     liveTranscriptMounted: liveTranscript.mounted,
     liveTranscriptOpenRef: liveTranscript.openRef,
+    isTakeLive: isRecording || isVisuallyProcessing,
   });
 
   useEffect(() => {
@@ -346,7 +449,7 @@ export default function App() {
 
   useEffect(() => {
     const unsubscribe = window.electronAPI?.onCancelHotkeyPressed?.(() => {
-      if (isRecordingRef.current) cancelRecording();
+      if (isRecordingRef.current) cancelRecording("escape-hotkey");
     });
     return () => unsubscribe?.();
   }, [cancelRecording]);
@@ -355,7 +458,7 @@ export default function App() {
   // owns the recording, so it decides what "cancel" means at arrival time.
   useEffect(() => {
     const unsubscribe = window.electronAPI?.onCancelDictation?.(() => {
-      if (isRecording || isPreparing) cancelRecording();
+      if (isRecording || isPreparing) cancelRecording("agent-pill");
       else if (isProcessing) cancelProcessing();
     });
     return () => unsubscribe?.();
@@ -372,7 +475,8 @@ export default function App() {
       toastCount === 0 &&
       !dictationErrorPillHandoffActive &&
       !assistant.mounted &&
-      !liveTranscript.mounted
+      !liveTranscript.mounted &&
+      !latencyCaptionVisible
     ) {
       // Delay briefly so processing can start after recording stops without a flash
       hideTimeout = setTimeout(() => {
@@ -392,6 +496,7 @@ export default function App() {
     dictationErrorPillHandoffActive,
     assistant.mounted,
     liveTranscript.mounted,
+    latencyCaptionVisible,
   ]);
 
   const handleClose = () => {
@@ -406,9 +511,9 @@ export default function App() {
         if (isCommandMenuOpen) {
           setIsCommandMenuOpen(false);
         } else if (isRecording) {
-          cancelRecording();
+          cancelRecording("escape-key");
         } else if (isPreparing) {
-          cancelRecording();
+          cancelRecording("escape-key");
         } else if (isProcessing) {
           cancelProcessing();
         } else {
@@ -442,6 +547,7 @@ export default function App() {
   const micState = getMicState();
 
   const getMicTooltip = () => {
+    if (voicePillIsArming) return t("app.mic.waitingForMicrophone");
     switch (micState) {
       case "recording":
         return t("app.mic.recording");
@@ -547,10 +653,11 @@ export default function App() {
     panelStartPosition,
     horizontalDirection: voiceHorizontalDirection,
   });
-  const voicePillTravelDuration =
+  const voicePillTravelDuration = resolveLiveTranscriptStageDurationMs(
     liveTranscript.open && liveTranscript.entrancePhase === "encapsulate"
       ? LIVE_TRANSCRIPT_ENTRANCE_TIMING.encapsulateMs
-      : LIVE_TRANSCRIPT_ENTRANCE_TIMING.horizontalMs;
+      : LIVE_TRANSCRIPT_ENTRANCE_TIMING.horizontalMs
+  );
   const dictationErrorSuppressesPill =
     dictationErrorActionCount > 0 || dictationErrorPillHandoffActive;
   // Keep one pill DOM node alive while final Agent actions own the footer. On
@@ -632,6 +739,20 @@ export default function App() {
               agentMode={agentModeActive}
               showExpandChevron={canReopenLiveTranscript && isHovered}
               getAudioLevel={getAudioLevel}
+              activationState={dictationActivationState}
+              caption={
+                latencyCaption
+                  ? {
+                      top: t("transcriptionPreview.latencyLast", { ms: latencyCaption.lastMs }),
+                      bottom:
+                        latencyCaption.averageMs === null
+                          ? null
+                          : t("transcriptionPreview.latencyAverageShort", {
+                              average: latencyCaption.averageMs,
+                            }),
+                    }
+                  : null
+              }
               isDragging={isDragging}
               horizontalDirection={voiceHorizontalDirection}
               role={pillIsInteractive ? "button" : "status"}
@@ -702,7 +823,7 @@ export default function App() {
               isRecording ? t("app.buttons.cancelRecording") : t("app.buttons.cancelProcessing")
             }
             onCancel={() => {
-              if (isRecording) cancelRecording();
+              if (isRecording) cancelRecording("pill-button");
               else cancelProcessing();
             }}
             onFusedSkinChange={setCancelSkinActive}
@@ -745,6 +866,7 @@ export default function App() {
           activeVoicePanelMode === "live-transcript" ? liveTranscript.measurementText : null
         }
         onPreferredHeightChange={liveTranscript.requestHeight}
+        transcriptionPreviewLayout={transcriptionPreviewLayout}
         onClosingFadeComplete={assistant.completeContentFade}
       >
         {activeVoicePanelMode === "assistant" && assistant.mounted && (
@@ -766,6 +888,7 @@ export default function App() {
             onResponseContent={assistant.handleResponseContent}
             onConversationReset={assistant.handleConversationReset}
             onSelectionContextChange={assistant.handleSelectionContextChange}
+            noteDestination={noteDestination}
           />
         )}
 
@@ -779,6 +902,8 @@ export default function App() {
             contentVisible={liveTranscript.mounted && liveTranscriptEntrance.contentVisible}
             onCollapse={() => liveTranscript.close({ suppress: true })}
             onHoldChange={liveTranscript.holdFinal}
+            layout={transcriptionPreviewLayout}
+            latency={dictationShowLatency ? latencyReadout : null}
           />
         )}
       </VoiceModePanelCore>

@@ -76,11 +76,17 @@ function mergeSegments(segments) {
     if (!seg.text?.trim()) continue;
     const ts = seg.timestamp || 0;
     const last = merged[merged.length - 1];
-    if (last && speakerKey(last) === speakerKey(seg) && ts - lastTimestamp < 2) {
+    // A highlight never merges with the speech around it, so it keeps its marker.
+    const mergeable = last && last.source !== "highlight" && seg.source !== "highlight";
+    if (mergeable && speakerKey(last) === speakerKey(seg) && ts - lastTimestamp < 2) {
       last.text = last.text + " " + seg.text.trim();
       last.endTimestamp = ts;
     } else {
-      merged.push({ ...seg, timestamp: ts, endTimestamp: ts, text: seg.text.trim() });
+      const text =
+        seg.source === "highlight"
+          ? `[${i18nMain.t("notes.highlight.label")}] ${seg.text.trim()}`
+          : seg.text.trim();
+      merged.push({ ...seg, timestamp: ts, endTimestamp: ts, text });
     }
     lastTimestamp = ts;
   }

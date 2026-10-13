@@ -302,7 +302,7 @@ const MANAGED_STT = {
   },
 };
 
-test("a managed resolution outranks every personal setting", async () => {
+test("a managed resolution fails closed over every personal setting (no managed transport)", async () => {
   const route = await resolve(
     {
       transcriptionMode: "self-hosted",
@@ -314,16 +314,11 @@ test("a managed resolution outranks every personal setting", async () => {
     },
     { managed: MANAGED_STT }
   );
-  assert.equal(route.transport, "managed");
-  assert.equal(route.provider, "azure");
-  assert.equal(route.deployment, "gpt-4o-transcribe");
-  assert.equal(route.context, MANAGED_STT.context);
-  assert.equal(route.language, "de");
-  // Routes never carry secrets — the context is identity metadata only.
-  assert.equal("auth" in route, false);
+  assert.equal(route.transport, "error");
+  assert.equal(route.code, "MANAGED_CONFIG_UNAVAILABLE");
 });
 
-test("a managed resolution bypasses the personal-selection policy floor", async () => {
+test("a managed resolution fails closed ahead of the personal-selection policy floor", async () => {
   const enterpriseOnly = structuredClone(MANAGED_OPENAI_ONLY);
   enterpriseOnly.policy.transcription.allowedModes = ["enterprise"];
   enterpriseOnly.policy.transcription.allowedByokProviders = [];
@@ -332,7 +327,8 @@ test("a managed resolution bypasses the personal-selection policy floor", async 
     { cloudTranscriptionProvider: "openai" },
     { policy: enterpriseOnly, managed: MANAGED_STT }
   );
-  assert.equal(route.transport, "managed");
+  assert.equal(route.transport, "error");
+  assert.equal(route.code, "MANAGED_CONFIG_UNAVAILABLE");
   // Without the managed resolution the same settings fail closed.
   const blocked = await resolve(
     { cloudTranscriptionProvider: "openai" },
@@ -366,12 +362,11 @@ test("an enterprise transcription mode without a managed resolution fails closed
   assert.equal(route.code, "MANAGED_CONFIG_UNAVAILABLE");
 });
 
-test("an enterprise transcription mode WITH a managed resolution takes the managed transport, not the fail-closed guard", async () => {
+test("an enterprise transcription mode WITH a managed resolution still fails closed", async () => {
   const route = await resolve(
     { transcriptionMode: "enterprise", cloudTranscriptionProvider: "openai" },
     { managed: MANAGED_STT }
   );
-  assert.equal(route.transport, "managed");
-  assert.equal(route.provider, "azure");
-  assert.equal(route.deployment, "gpt-4o-transcribe");
+  assert.equal(route.transport, "error");
+  assert.equal(route.code, "MANAGED_CONFIG_UNAVAILABLE");
 });

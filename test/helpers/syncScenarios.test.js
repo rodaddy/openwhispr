@@ -31,7 +31,6 @@ const CAN_SYNC = { isSignedIn: "true", cloudBackupEnabled: "true", isSubscribed:
 const T_SHELL = "2026-07-20 10:00:00";
 const T_TRANSCRIPT = "2026-07-20 11:00:00";
 const T_PEER = "2026-07-20 13:00:00";
-const T_FUTURE = "2027-01-01 00:00:00";
 
 // S2 keeps its sync cursors across every relaunch, so its edits have to be newer
 // than the wall-clock stamp a completed pass leaves behind, as real edits are.
@@ -326,9 +325,8 @@ test("S2 two devices: an older empty shell never destroys the transcript and the
   const mark2 = cloud.log.length;
   await syncOnce(deviceA);
   assert.equal(
-    cloud.log
-      .slice(mark2)
-      .filter((c) => c.method === "PATCH" && c.path === "/api/notes/update").length,
+    cloud.log.slice(mark2).filter((c) => c.method === "PATCH" && c.path === "/api/notes/update")
+      .length,
     0,
     "a conflicted row must not be re-pushed before the user resolves it"
   );
@@ -635,6 +633,8 @@ test("S5 a tombstone as the last row of a delta page still hands the next page a
   await cloud.request({ method: "DELETE", path: "/api/notes/delete", body: { id: boundary.id } });
   cloud.setClock(() => new Date().toISOString());
 
+  // A cursor this version stored: the one-time upgrade rewind does not apply.
+  device.storage["sync.cursorVersion"] = "2";
   device.storage["lastSyncedAt.notes"] = cursor;
   const before = snapshotNotes(db);
   await syncOnce(device);
@@ -731,7 +731,7 @@ test("S6 a fresh device adopts the cloud's default folders and both note directi
   assertNoContentRegression(before, snapshotNotes(db), cloud.notes());
 });
 
-test("S6 a note in a never-synced folder pushes without one and re-pushes once the folder is mapped", async (t) => {
+test("S6 a note in a never-synced folder waits for it and pushes filed once the folder is mapped", async (t) => {
   const cloud = freshCloud();
   const device = createDevice(t, cloud);
   if (!device) return;
@@ -746,39 +746,37 @@ test("S6 a note in a never-synced folder pushes without one and re-pushes once t
   const before = snapshotNotes(db);
   await syncOnce(device);
 
-  const [batch] = cloud.logFor("/api/notes/batch-create");
-  assert.equal(
-    batch.body.notes[0].folder_id,
-    null,
-    "an unmapped folder must null the reference, never leak the local integer id"
+  assert.deepEqual(
+    cloud.logFor("/api/notes/batch-create").flatMap((c) => c.body.notes),
+    [],
+    "a note in an unmapped folder must wait, never push unfiled or leak the local integer id"
   );
-  const cloudId = db.getNote(note.id).cloud_id;
-  assert.ok(cloudId, "the note must reach the cloud even with its folder stuck");
-  assert.equal(cloud.note(cloudId).folder_id, null);
+  assert.equal(db.getNote(note.id).cloud_id, null);
+  assert.equal(db.getNote(note.id).sync_status, "pending");
   assert.equal(db.db.prepare("SELECT * FROM folders WHERE id = ?").get(folder.id).cloud_id, null);
 
-  // The folder push recovers, and the next edit is what carries the mapping up.
+  // The folder push recovers; the held note goes up filed, with no edit needed.
   cloud.clearFailures();
-  db.updateNote(note.id, { content: "interview body, second draft" });
-  setNoteRow(db, note.id, { updated_at: T_FUTURE });
   const mark = cloud.log.length;
   await syncOnce(device);
 
   const folderCloudId = db.db.prepare("SELECT * FROM folders WHERE id = ?").get(folder.id).cloud_id;
   assert.ok(folderCloudId, "the retried folder push must land");
 
-  const patches = cloud.log
+  const creates = cloud.log
     .slice(mark)
-    .filter((c) => c.method === "PATCH" && c.path === "/api/notes/update");
-  assert.equal(patches.length, 1);
+    .filter((c) => c.path === "/api/notes/batch-create")
+    .flatMap((c) => c.body.notes);
+  assert.equal(creates.length, 1);
   assert.equal(
-    patches[0].body.folder_id,
+    creates[0].folder_id,
     folderCloudId,
     "once the folder is mapped the note must be filed under it in the cloud"
   );
-  assert.equal(patches[0].body.content, "interview body, second draft");
+  const cloudId = db.getNote(note.id).cloud_id;
+  assert.ok(cloudId, "the held note reaches the cloud once its folder does");
   assert.equal(cloud.note(cloudId).folder_id, folderCloudId);
-  assert.equal(cloud.note(cloudId).content, "interview body, second draft");
+  assert.equal(cloud.note(cloudId).content, "interview body");
   assert.equal(db.getNote(note.id).sync_status, "synced");
 
   assertNoContentRegression(before, snapshotNotes(db), cloud.notes());

@@ -216,6 +216,16 @@ test("speaker expectation reports cap as other-speaker count in every system-mod
     "an explicit count of 3 means 2 other speakers"
   );
   assert.deepEqual(
+    resolve({ sessionConfig: { expectedCount: 16, explicit: true } }),
+    { numSpeakers: 15, cap: 15 },
+    "an explicit total above 8 still excludes the local user"
+  );
+  assert.deepEqual(
+    resolve({ sessionConfig: { expectedCount: 32, explicit: true } }),
+    { numSpeakers: 31, cap: 31 },
+    "the maximum total still excludes the local user"
+  );
+  assert.deepEqual(
     resolve({ noteId: NOTE_ID, note: { expected_speaker_count: 4 } }),
     { numSpeakers: 3, cap: 3 },
     "a note count outranks a non-explicit session config"

@@ -1,0 +1,9 @@
+# Upstream OpenWhispr API docs show curl examples with the placeholder key
+# YOUR_KEY (agent-skills/openwhispr-api/SKILL.md). Not a secret.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "placeholder API key in upstream docs"
+regexTarget = "match"
+regexes = ['''Bearer ow[a-z_]*_YOUR_KEY''']

@@ -12,6 +12,7 @@ class TrayManager {
     this.controlPanelWindow = null;
     this.windowManager = null;
     this.attachedControlPanels = new WeakSet();
+    this.microphoneState = null;
   }
 
   setWindows(mainWindow, controlPanelWindow) {
@@ -38,6 +39,15 @@ class TrayManager {
 
   setCreateControlPanelCallback(callback) {
     this.createControlPanelCallback = callback;
+  }
+
+  setMicrophoneSelectionCallback(callback) {
+    this.microphoneSelectionCallback = callback;
+  }
+
+  setMicrophoneState(state) {
+    this.microphoneState = state;
+    this.updateTrayMenu();
   }
 
   attachControlPanelListeners(window) {
@@ -254,6 +264,54 @@ class TrayManager {
   buildContextMenuTemplate() {
     const dictationVisible = this.windowManager?.isDictationPanelVisible?.() ?? false;
 
+    const mic = this.microphoneState;
+    const selectMic = (selection) => this.microphoneSelectionCallback?.(selection);
+    const microphoneSubmenu = mic
+      ? [
+          {
+            label:
+              mic.mode === "automatic"
+                ? i18nMain.t("tray.microphone.automatic")
+                : i18nMain.t("tray.microphone.resumeAutomatic"),
+            type: "radio",
+            checked: mic.mode === "automatic",
+            enabled: !mic.captureActive,
+            click: () => selectMic({ mode: "automatic" }),
+          },
+          {
+            label: i18nMain.t("tray.microphone.systemDefault"),
+            type: "radio",
+            checked: mic.mode === "system",
+            enabled: !mic.captureActive,
+            click: () => selectMic({ mode: "system" }),
+          },
+          ...(mic.devices.some((device) => device.isBuiltIn)
+            ? [
+                {
+                  label: i18nMain.t("tray.microphone.builtIn"),
+                  type: "radio",
+                  checked: mic.mode === "built-in",
+                  enabled: !mic.captureActive,
+                  click: () => selectMic({ mode: "built-in" }),
+                },
+              ]
+            : []),
+          { type: "separator" },
+          ...mic.devices
+            .filter(
+              (device) => device.deviceId !== "default" && device.deviceId !== "communications"
+            )
+            .map((device) => ({
+              label: device.label,
+              type: "radio",
+              checked: mic.mode === "specific" && mic.selectedMicDeviceId === device.deviceId,
+              enabled: !mic.captureActive,
+              click: () =>
+                selectMic({ mode: "specific", deviceId: device.deviceId, label: device.label }),
+            })),
+        ]
+      : [{ label: i18nMain.t("tray.microphone.unavailable"), enabled: false }];
+
     return [
       {
         label: dictationVisible
@@ -276,6 +334,13 @@ class TrayManager {
         click: () => {
           void this.toggleControlPanelFromTray();
         },
+      },
+      { type: "separator" },
+      {
+        label: mic?.resolvedActiveLabel
+          ? i18nMain.t("tray.microphone.input", { device: mic.resolvedActiveLabel })
+          : i18nMain.t("tray.microphone.inputUnknown"),
+        submenu: microphoneSubmenu,
       },
       { type: "separator" },
       {

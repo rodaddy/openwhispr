@@ -290,9 +290,17 @@ const AUTO_END_NOTIFICATION_WINDOW_SIZE = {
   height: 128,
 };
 
+const CALENDAR_END_NOTIFICATION_WINDOW_SIZE = {
+  width: 392,
+  height: 112,
+};
+
 function getMeetingNotificationWindowSize(promptData) {
   if (promptData?.kind === "auto-end") {
     return AUTO_END_NOTIFICATION_WINDOW_SIZE;
+  }
+  if (promptData?.kind === "calendar-end") {
+    return CALENDAR_END_NOTIFICATION_WINDOW_SIZE;
   }
   return {
     width: NOTIFICATION_WINDOW_CONFIG.width,

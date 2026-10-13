@@ -3,6 +3,14 @@ const assert = require("node:assert/strict");
 
 const load = () => import("../../src/utils/transcriptionPreview.ts");
 
+test("preview layout defaults to grow and accepts only fixed two-line mode", async () => {
+  const { normalizeTranscriptionPreviewLayout } = await load();
+  assert.equal(normalizeTranscriptionPreviewLayout(), "grow");
+  assert.equal(normalizeTranscriptionPreviewLayout("invalid"), "grow");
+  assert.equal(normalizeTranscriptionPreviewLayout("grow"), "grow");
+  assert.equal(normalizeTranscriptionPreviewLayout("fixed2lines"), "fixed2lines");
+});
+
 test("live transcription preview remains available for local transcription", async () => {
   const { supportsLiveTranscriptionPreview } = await load();
 
@@ -22,10 +30,10 @@ test("BYOK preview availability follows the selected model's streaming capabilit
   assert.equal(supportsLiveTranscriptionPreview("providers", false), false);
 });
 
-test("batch-only self-hosted transcription does not advertise live preview", async () => {
+test("self-hosted transcription advertises live preview via the chunked path", async () => {
   const { supportsLiveTranscriptionPreview } = await load();
 
-  assert.equal(supportsLiveTranscriptionPreview("self-hosted", true), false);
+  assert.equal(supportsLiveTranscriptionPreview("self-hosted", false), true);
 });
 
 test("live preview joins completed cloud turns with the current partial turn", async () => {

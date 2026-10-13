@@ -9,6 +9,7 @@ import type {
 import { NotesService, type CloudNote } from "./NotesService.js";
 import { ConversationsService } from "./ConversationsService.js";
 import { FoldersService } from "./FoldersService.js";
+import { GRILL_FOLDER_NAME, LIFE_STORY_FOLDER_NAME } from "./grill/grillSession";
 import { SpacesService, type MySpace } from "./SpacesService.js";
 import { TranscriptionsService } from "./TranscriptionsService.js";
 import { syncPendingAnalytics } from "./AnalyticsService.js";
@@ -20,6 +21,7 @@ import {
   getValidatedAuthGeneration,
   hasValidatedAuthContext,
 } from "../lib/authRequestContext";
+import { isHubAuthBackingOff, isHubMode, refreshHubMode } from "../lib/hubMode";
 import { partitionLocalTeamSpaces } from "./accountSpaceValidation";
 import {
   clearTeamSpacesCapability,
@@ -52,6 +54,7 @@ import {
   recordUpdate404,
   resolvePulledNoteFolderId,
   resolvePullCursorAdvance,
+  lookbackCursor,
   resolveSyncConsent,
   shouldRunAmbientTeamOnlyPass,
   revokedNoteForkUpdate,
@@ -61,6 +64,44 @@ import {
   type PurgedSpaceReason,
   type SyncConsent,
 } from "./syncPassPolicy";
+
+// Every stored delta cursor (protocol section 8). Conversations are not in
+// hub v1 and keep their own cursor.
+export const DELTA_CURSOR_KEYS = [
+  "lastSyncedAt.folders",
+  "lastSyncedAt.folders.team",
+  "lastSyncedAt.notes",
+  "lastSyncedAt.notes.team",
+  "lastSyncedAt.transcriptions",
+  "lastSyncedAt.dictionary",
+  "lastSyncedAt.snippets",
+] as const;
+export const CURSOR_VERSION_KEY = "sync.cursorVersion";
+const CURSOR_VERSION = 2;
+
+// A cursor stored before the lookback could sit past a row that was stamped
+// but not yet committed when that pass read, so it moves back L once
+// (protocol section 8), and its since_id goes: the lookback window replaces
+// the (stamp, id) tie-break between passes. A kind with no stored cursor is
+// left alone, so a fresh install still snapshots. Every pull runs this before
+// reading its cursor; the marker makes it a no-op after the first.
+export function rewindLegacyDeltaCursors(): void {
+  if (Number(localStorage.getItem(CURSOR_VERSION_KEY) ?? 0) >= CURSOR_VERSION) return;
+  for (const key of DELTA_CURSOR_KEYS) {
+    const since = localStorage.getItem(key);
+    if (since) {
+      try {
+        localStorage.setItem(key, lookbackCursor(since));
+      } catch {
+        // An unparseable cursor cannot be moved back safely; the kind
+        // snapshots again instead.
+        localStorage.removeItem(key);
+      }
+    }
+    localStorage.removeItem(`${key}.id`);
+  }
+  localStorage.setItem(CURSOR_VERSION_KEY, String(CURSOR_VERSION));
+}
 
 function isHttpStatus(err: unknown, status: number): boolean {
   return err instanceof CloudApiError && err.status === status;
@@ -112,6 +153,8 @@ interface SpaceSyncContext {
   refreshedSpaces: boolean;
 }
 
+// Non-default folders every install seeds (src/helpers/grillFolders.js).
+const SEEDED_FOLDER_NAMES = new Set([GRILL_FOLDER_NAME, LIFE_STORY_FOLDER_NAME]);
 const PUSH_DEBOUNCE_MS = 2000;
 const BATCH_SIZE = 50;
 const TRANSCRIPTION_BATCH_SIZE = 100;
@@ -121,6 +164,12 @@ const SNIPPET_BATCH_SIZE = 200;
 // any window (the stamp lives in shared localStorage).
 const AUTO_SYNC_THROTTLE_MS = 20000;
 const AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+// Hub settings live in the main process, so another window's URL or key change
+// only reaches this one by re-reading them; every trigger does, at most this often.
+const HUB_MODE_REFRESH_MS = 5000;
+
+type SyncRequestReason =
+  "start" | "focus" | "interval" | "online" | "manual" | "team-push" | "retry";
 // While a note is open, pull on this much shorter cadence so a teammate's edits
 // surface in seconds rather than at the ambient interval above.
 const OPEN_NOTE_SYNC_INTERVAL_MS = 30_000;
@@ -244,6 +293,8 @@ export class SyncService {
   private syncing = false;
   private syncAllPending = false;
   private autoSyncStarted = false;
+  private hubModeRefresh: Promise<unknown> | null = null;
+  private hubModeRefreshedAt = 0;
   private dictionaryDirty = false;
   private snippetsDirty = false;
   // One owner_user_id backfill probe per session (see backfillNoteOwners).
@@ -261,12 +312,16 @@ export class SyncService {
 
   private consent(): SyncConsent {
     const policyState = usePolicyStore.getState();
+    // Hub mode (URL + device key) is the consent: the device key stands in for
+    // the sign-in session, the plan, and the backup toggle. Outside hub mode
+    // these are exactly the account-backed inputs.
+    const hub = isHubMode();
     return resolveSyncConsent({
       authValidated: hasValidatedAuthContext(),
-      signedIn: localStorage.getItem("isSignedIn") === "true",
-      backupEnabled: localStorage.getItem("cloudBackupEnabled") === "true",
-      subscribed: readIsSubscribed(),
-      backupAllowedByPolicy: isCloudBackupAllowed(policyState),
+      signedIn: hub || localStorage.getItem("isSignedIn") === "true",
+      backupEnabled: hub || localStorage.getItem("cloudBackupEnabled") === "true",
+      subscribed: hub || readIsSubscribed(),
+      backupAllowedByPolicy: hub || isCloudBackupAllowed(policyState),
       dataRetentionEnabled: effectiveLocalHistoryEnabled(
         policyState,
         localStorage.getItem("dataRetentionEnabled") !== "false"
@@ -416,7 +471,9 @@ export class SyncService {
     if (this.autoSyncStarted) return;
     this.autoSyncStarted = true;
 
-    this.requestSyncAll("start");
+    // Hub mode is cached and starts off, and requestSyncAll gates on that
+    // cache, so read it before the first kick.
+    void this.refreshHubModeThrottled().then(() => this.requestSyncAll("start"));
     window.addEventListener("focus", () => this.requestSyncAll("focus"));
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") {
@@ -475,6 +532,7 @@ export class SyncService {
   }
 
   async syncAll(waitForLock = false): Promise<void> {
+    await refreshHubMode();
     const full = this.canSync();
     if (!full && !this.canSyncTeamSpaces()) return;
     const authGeneration = getValidatedAuthGeneration();
@@ -565,9 +623,22 @@ export class SyncService {
     }
   }
 
-  requestSyncAll(
-    reason: "start" | "focus" | "interval" | "online" | "manual" | "team-push" | "retry"
-  ): void {
+  // Shares one in-flight read and reuses it for HUB_MODE_REFRESH_MS.
+  private refreshHubModeThrottled(): Promise<unknown> {
+    if (!this.hubModeRefresh || Date.now() - this.hubModeRefreshedAt >= HUB_MODE_REFRESH_MS) {
+      this.hubModeRefreshedAt = Date.now();
+      this.hubModeRefresh = refreshHubMode();
+    }
+    return this.hubModeRefresh;
+  }
+
+  requestSyncAll(reason: SyncRequestReason): void {
+    // canSync() reads the cached hub mode; refresh it first so a hub URL or key
+    // change made in another window takes effect here without a restart.
+    void this.refreshHubModeThrottled().then(() => this.requestSyncAllNow(reason));
+  }
+
+  private requestSyncAllNow(reason: SyncRequestReason): void {
     if (!this.canSync() && !this.canSyncSharedNotes()) return;
     const waitForLock = reason === "manual" || reason === "retry";
     // An older client may have just stamped the global sync time without ever
@@ -578,6 +649,9 @@ export class SyncService {
       this.canSyncTeamSpaces() &&
       localStorage.getItem("teamSpacesCapability.probedAt") == null;
     const bypassThrottle = waitForLock || firstTeamSpacesProbe;
+    // A hub that just rejected this device key answers every pass with 401;
+    // ambient triggers wait instead of re-running a failing pass each time.
+    if (!bypassThrottle && isHubMode() && isHubAuthBackingOff()) return;
     if (
       !bypassThrottle &&
       (this.syncing || Date.now() - this.lastCompletedSyncAt() < AUTO_SYNC_THROTTLE_MS)
@@ -932,6 +1006,7 @@ export class SyncService {
   }
 
   private async pushConversation(id: number): Promise<void> {
+    if (isHubMode()) return;
     const full = await window.electronAPI.getAgentConversation?.(id);
     if (!full) return;
 
@@ -981,6 +1056,13 @@ export class SyncService {
   // ones.
   private async syncSpaces(authGeneration: number): Promise<boolean> {
     if (!this.canSyncTeamSpaces()) return true;
+    // The hub contract has no spaces (protocol 12). Treat hub mode exactly like
+    // the rollout 404 below without asking, so a hub that ever answers
+    // /api/me/spaces with an empty list cannot purge local team spaces.
+    if (isHubMode()) {
+      this.cacheTeamSpacesCapability(false);
+      return true;
+    }
     let cloudSpaces: MySpace[];
     try {
       cloudSpaces = await SpacesService.mySpaces();
@@ -1341,8 +1423,11 @@ export class SyncService {
   }
 
   private async syncFolders(teamOnly = false): Promise<void> {
-    if (!teamOnly) await this.adoptDefaultFolders();
-    await this.pushPendingFolders(teamOnly);
+    // When the hub's folder list could not be read, fresh private folders
+    // wait a pass: creating them blind would 409 on every name the hub
+    // already holds instead of adopting it.
+    const adopted = teamOnly ? true : await this.adoptFoldersByName();
+    await this.pushPendingFolders(teamOnly, !adopted);
     await this.pushFolderDeletes(teamOnly);
     if (!teamOnly && this.teamCursorLagging("folders")) {
       await this.pullFolders(true);
@@ -1354,22 +1439,32 @@ export class SyncService {
   // client_folder_id, so the second device to sync would register them as
   // new folders and collide with the cloud's per-user unique folder name.
   // Before the first push, adopt the cloud identity of any same-named
-  // default folder so both platforms converge on a single folder.
-  private async adoptDefaultFolders(): Promise<void> {
+  // folder so both devices converge on a single folder. Seeded folders match
+  // case-insensitively; any other folder the hub already holds under exactly
+  // the same name is the same user's folder from another device, and would
+  // otherwise 409 folder_name_taken on every pass. Returns false when the
+  // hub's list could not be read, so the caller holds fresh creates back.
+  private async adoptFoldersByName(): Promise<boolean> {
     // Private space only — team folders never adopt by name.
+    // The grill folders are seeded on every install too, but not as defaults,
+    // so the hub's same-name rule rejects a second device's copy with a 409.
+    const seeded = (f: { name: string; is_default?: boolean | number | null }) =>
+      !!f.is_default || SEEDED_FOLDER_NAMES.has(f.name);
     const pending = (await window.electronAPI.getPendingFolders?.("private")) ?? [];
-    const unlinkedDefaults = pending.filter((f) => f.is_default && !f.cloud_id);
-    if (unlinkedDefaults.length === 0) return;
+    const unlinked = pending.filter((f) => !f.cloud_id);
+    if (unlinked.length === 0) return true;
 
     try {
       const { folders: cloudFolders } = await FoldersService.list();
-      const cloudByName = new Map(
-        cloudFolders
-          .filter((f) => f.is_default && !f.deleted_at)
-          .map((f) => [f.name.toLowerCase(), f])
+      const live = cloudFolders.filter((f) => !f.deleted_at);
+      const seededByName = new Map(
+        live.filter((f) => seeded(f)).map((f) => [f.name.toLowerCase(), f])
       );
-      for (const local of unlinkedDefaults) {
-        const match = cloudByName.get(local.name.toLowerCase());
+      const byExactName = new Map(live.map((f) => [f.name, f]));
+      for (const local of unlinked) {
+        const match =
+          (seeded(local) ? seededByName.get(local.name.toLowerCase()) : undefined) ??
+          byExactName.get(local.name);
         if (!match) continue;
         await window.electronAPI.acknowledgeFolderCreate?.(
           local.id,
@@ -1381,8 +1476,10 @@ export class SyncService {
         );
       }
     } catch (err) {
-      console.error("Default folder adoption failed:", err);
+      console.error("Folder adoption by name failed:", err);
+      return false;
     }
+    return true;
   }
 
   private async pushFolderDeletes(teamOnly = false): Promise<void> {
@@ -1415,7 +1512,7 @@ export class SyncService {
     if (denied) await this.restoreDeniedRows("folder");
   }
 
-  private async pushPendingFolders(teamOnly = false): Promise<void> {
+  private async pushPendingFolders(teamOnly = false, holdFreshPrivate = false): Promise<void> {
     const pending =
       (await window.electronAPI.getPendingFolders?.(teamOnly ? "team" : undefined)) ?? [];
     if (pending.length === 0) return;
@@ -1429,7 +1526,10 @@ export class SyncService {
     }
 
     const migration = pushable.filter(({ folder }) => folder.cloud_id);
-    const fresh = pushable.filter(({ folder }) => !folder.cloud_id);
+    const fresh = pushable.filter(
+      ({ folder }) =>
+        !folder.cloud_id && !(holdFreshPrivate && ctx.byId.get(folder.space_id)?.kind !== "team")
+    );
 
     let denied = false;
     for (const { folder, scope } of migration) {
@@ -1495,10 +1595,16 @@ export class SyncService {
           );
         }
       } catch (err) {
-        if (isSpaceAccessError(err) || isPermissionDenialError(err)) {
+        if (
+          isSpaceAccessError(err) ||
+          isPermissionDenialError(err) ||
+          isFolderNameTakenError(err)
+        ) {
           // A typed rejection can't be attributed to a row from the batch
           // response; create individually so one rejected folder settles
-          // terminally without stranding (or relocating) the rest.
+          // terminally without stranding (or relocating) the rest. A 409
+          // folder_name_taken rejects the whole batch for one clashing name,
+          // so the rest must still be created one by one.
           for (const { folder, scope } of fresh) {
             await this.pushFreshFolder(folder, scope, ctx);
           }
@@ -1533,6 +1639,7 @@ export class SyncService {
 
   private async pullFolders(teamOnly = false, snapshot = false): Promise<boolean> {
     try {
+      rewindLegacyDeltaCursors();
       const cursorKey = teamOnly ? "lastSyncedAt.folders.team" : "lastSyncedAt.folders";
       const since = snapshot ? undefined : (localStorage.getItem(cursorKey) ?? undefined);
       const syncStartedAt = new Date().toISOString();
@@ -1691,8 +1798,10 @@ export class SyncService {
         teamCapable,
         hasTeamSpaces: [...ctx.byId.values()].some((s) => s.kind === "team"),
       });
-      if (advanceCursor) localStorage.setItem(cursorKey, syncStartedAt);
-      if (advanceTeamCursor) localStorage.setItem("lastSyncedAt.folders.team", syncStartedAt);
+      // The pass-start clock minus the lookback (protocol section 8).
+      const nextSince = lookbackCursor(syncStartedAt);
+      if (advanceCursor) localStorage.setItem(cursorKey, nextSince);
+      if (advanceTeamCursor) localStorage.setItem("lastSyncedAt.folders.team", nextSince);
       return parkedRows === 0;
     } catch (err) {
       console.error("Folder pull failed:", err);
@@ -1896,6 +2005,7 @@ export class SyncService {
 
   private async pullNotes(teamOnly = false, snapshot = false): Promise<boolean> {
     try {
+      rewindLegacyDeltaCursors();
       const cursorKey = teamOnly ? "lastSyncedAt.notes.team" : "lastSyncedAt.notes";
       const since = snapshot ? undefined : (localStorage.getItem(cursorKey) ?? undefined);
       const syncStartedAt = new Date().toISOString();
@@ -2067,8 +2177,10 @@ export class SyncService {
         teamCapable,
         hasTeamSpaces: [...ctx.byId.values()].some((s) => s.kind === "team"),
       });
-      if (advanceCursor) localStorage.setItem(cursorKey, syncStartedAt);
-      if (advanceTeamCursor) localStorage.setItem("lastSyncedAt.notes.team", syncStartedAt);
+      // The pass-start clock minus the lookback (protocol section 8).
+      const nextSince = lookbackCursor(syncStartedAt);
+      if (advanceCursor) localStorage.setItem(cursorKey, nextSince);
+      if (advanceTeamCursor) localStorage.setItem("lastSyncedAt.notes.team", nextSince);
       return parkedRows === 0;
     } catch (err) {
       console.error("Note pull failed:", err);
@@ -2077,6 +2189,9 @@ export class SyncService {
   }
 
   private async syncConversations(): Promise<void> {
+    // The hub contract has no /api/conversations routes (protocol 12): hub
+    // mode uploads no agent conversations until the contract adds them.
+    if (isHubMode()) return;
     await this.pushPendingConversations();
     await this.pushConversationDeletes();
     await this.pullConversations();
@@ -2272,14 +2387,29 @@ export class SyncService {
 
   private async pullTranscriptions(): Promise<void> {
     try {
-      const since = localStorage.getItem("lastSyncedAt.transcriptions") ?? undefined;
+      // Between passes the cursor is the desktop clock at pass start minus the
+      // lookback, with no id (protocol section 8). The hub stamps a row before
+      // its insert commits and orders nothing across rows, so a row can commit
+      // after this pass has read past it, even with a stamp before the pass
+      // started; saving the newest row served, or the bare pass-start clock,
+      // would skip it for good. The lookback window overlaps instead, and
+      // re-pulls are harmless: an existing row is left alone, and a tombstone
+      // only deletes.
+      // Inside a pass, pages still resume by (stamp, id) so a run of rows
+      // sharing one stamp is neither skipped nor looped.
+      rewindLegacyDeltaCursors();
       const syncStartedAt = new Date().toISOString();
+      const since = localStorage.getItem("lastSyncedAt.transcriptions") ?? undefined;
 
       let cursor: string | undefined = since;
+      let cursorId: string | undefined;
+
       while (true) {
+        // Snapshot pages run created_at descending, delta pages updated_at
+        // ascending; both tie-break by id (protocol section 7).
         const { transcriptions: cloudTs } = since
-          ? await TranscriptionsService.list(TRANSCRIPTION_BATCH_SIZE, undefined, cursor)
-          : await TranscriptionsService.list(TRANSCRIPTION_BATCH_SIZE, cursor);
+          ? await TranscriptionsService.list(TRANSCRIPTION_BATCH_SIZE, undefined, cursor, cursorId)
+          : await TranscriptionsService.list(TRANSCRIPTION_BATCH_SIZE, cursor, undefined, cursorId);
         if (cloudTs.length === 0) break;
 
         for (const cloudT of cloudTs) {
@@ -2304,11 +2434,14 @@ export class SyncService {
         if (cloudTs.length < TRANSCRIPTION_BATCH_SIZE) break;
         const last = cloudTs[cloudTs.length - 1];
         const next = since ? last.updated_at : last.created_at;
-        if (next === cursor) break;
+        // Stall guard: a full page that did not move the (stamp, id) cursor
+        // would loop forever.
+        if (next === cursor && last.id === cursorId) break;
         cursor = next;
+        cursorId = last.id;
       }
 
-      localStorage.setItem("lastSyncedAt.transcriptions", syncStartedAt);
+      localStorage.setItem("lastSyncedAt.transcriptions", lookbackCursor(syncStartedAt));
     } catch (err) {
       console.error("Transcription pull failed:", err);
     }
@@ -2427,14 +2560,15 @@ export class SyncService {
 
   private async pullDictionary(): Promise<void> {
     try {
+      rewindLegacyDeltaCursors();
+      // The pass-start clock, taken before the first request (protocol
+      // section 8): the next pass reaches back L from here.
+      const syncStartedAt = new Date().toISOString();
       const since = localStorage.getItem("lastSyncedAt.dictionary") ?? undefined;
-      const sinceId = localStorage.getItem("lastSyncedAt.dictionary.id") ?? undefined;
       let changed = false;
 
       let cursor: string | undefined = since;
-      let cursorId: string | undefined = sinceId;
-      let maxUpdatedAt = normalizeTimestamp(since);
-      let maxId = sinceId ?? "";
+      let cursorId: string | undefined;
 
       while (true) {
         const { entries, hasMore } = await DictionaryService.list(
@@ -2445,6 +2579,7 @@ export class SyncService {
         if (entries.length === 0) break;
 
         for (const cloudEntry of entries) {
+          const cloudTs = normalizeTimestamp(cloudEntry.updated_at);
           const local = await window.electronAPI.getDictionaryByClientId?.(
             cloudEntry.client_dict_id ?? ""
           );
@@ -2457,21 +2592,21 @@ export class SyncService {
             continue;
           }
 
+          // A pending cloud-backed row is a local edit or delete the push has
+          // not landed yet; a re-served copy must not overwrite it (D2, as for
+          // notes and folders). Its local stamp is on the device clock, so
+          // last-writer-wins cannot decide this.
+          if (local?.sync_status === "pending" && local.cloud_id) continue;
+
           // Last-writer-wins on normalized timestamps (see normalizeTimestamp).
-          const cloudTs = normalizeTimestamp(cloudEntry.updated_at);
           const localTs = local ? normalizeTimestamp(local.updated_at) : "";
           if (!local || cloudTs > localTs) {
-            await window.electronAPI.upsertDictionaryFromCloud?.(
+            // null: nothing written (a stale copy of a word another cloud row
+            // already holds, or an invalid payload).
+            const applied = await window.electronAPI.upsertDictionaryFromCloud?.(
               cloudEntry as unknown as Record<string, unknown>
             );
-            changed = true;
-          }
-
-          if (cloudTs > maxUpdatedAt) {
-            maxUpdatedAt = cloudTs;
-            maxId = cloudEntry.id;
-          } else if (cloudTs === maxUpdatedAt && cloudEntry.id > maxId) {
-            maxId = cloudEntry.id;
+            if (applied !== null) changed = true;
           }
         }
 
@@ -2484,8 +2619,9 @@ export class SyncService {
         cursorId = last.id;
       }
 
-      if (maxUpdatedAt) localStorage.setItem("lastSyncedAt.dictionary", maxUpdatedAt);
-      if (maxId) localStorage.setItem("lastSyncedAt.dictionary.id", maxId);
+      // The pass-start clock minus the lookback, with no id: the window
+      // re-serves a row that committed after this pass read past it.
+      localStorage.setItem("lastSyncedAt.dictionary", lookbackCursor(syncStartedAt));
       if (changed) await window.electronAPI.broadcastDictionaryUpdated?.();
     } catch (err) {
       console.error("Dictionary pull failed:", err);
@@ -2620,14 +2756,15 @@ export class SyncService {
 
   private async pullSnippets(): Promise<void> {
     try {
+      rewindLegacyDeltaCursors();
+      // The pass-start clock, taken before the first request (protocol
+      // section 8): the next pass reaches back L from here.
+      const syncStartedAt = new Date().toISOString();
       const since = localStorage.getItem("lastSyncedAt.snippets") ?? undefined;
-      const sinceId = localStorage.getItem("lastSyncedAt.snippets.id") ?? undefined;
       let changed = false;
 
       let cursor: string | undefined = since;
-      let cursorId: string | undefined = sinceId;
-      let maxUpdatedAt = normalizeTimestamp(since);
-      let maxId = sinceId ?? "";
+      let cursorId: string | undefined;
       const cursorField: keyof Pick<CloudSnippetEntry, "created_at" | "updated_at"> = since
         ? "updated_at"
         : "created_at";
@@ -2644,20 +2781,26 @@ export class SyncService {
             cloudEntry as unknown as Record<string, unknown>
           );
 
-          if (cloudTs > maxUpdatedAt) {
-            maxUpdatedAt = cloudTs;
-            maxId = cloudEntry.id;
-          } else if (cloudTs === maxUpdatedAt && cloudEntry.id > maxId) {
-            maxId = cloudEntry.id;
-          }
-
           if (cloudEntry.deleted_at) {
-            if (local && !(local.sync_status === "pending" && !local.cloud_id)) {
+            // Delete only the row this tombstone owns. The trigger fallback can
+            // match a live row that reuses the trigger under another cloud id
+            // (delete then recreate), and the lookback re-serves the tombstone
+            // on every pass.
+            const owned =
+              !!local &&
+              (local.cloud_id === cloudEntry.id ||
+                (!!cloudEntry.client_snippet_id &&
+                  local.client_snippet_id === cloudEntry.client_snippet_id));
+            if (owned && !(local.sync_status === "pending" && !local.cloud_id)) {
               await window.electronAPI.hardDeleteSnippet?.(local.id);
               changed = true;
             }
             continue;
           }
+
+          // A pending cloud-backed row is an unpushed local edit or delete; a
+          // re-served copy must not overwrite it (D2, as for notes and folders).
+          if (local?.sync_status === "pending" && local.cloud_id) continue;
 
           const localTs = local ? normalizeTimestamp(local.updated_at) : "";
           const shouldApply =
@@ -2681,8 +2824,8 @@ export class SyncService {
         cursorId = last.id;
       }
 
-      if (maxUpdatedAt) localStorage.setItem("lastSyncedAt.snippets", maxUpdatedAt);
-      if (maxId) localStorage.setItem("lastSyncedAt.snippets.id", maxId);
+      // The pass-start clock minus the lookback, with no id.
+      localStorage.setItem("lastSyncedAt.snippets", lookbackCursor(syncStartedAt));
       if (changed) await window.electronAPI.broadcastSnippetsUpdated?.();
     } catch (err) {
       console.error("Snippet pull failed:", err);
@@ -2691,17 +2834,21 @@ export class SyncService {
 
   private async buildLocalToCloudFolderMap(): Promise<{
     localToCloud: Map<number, string>;
-    // Cloud-backed folders with unpushed changes: their migration PATCH
-    // failed or hasn't run yet (folders push before notes in a pass), so
-    // pushing a child note's folder_id + scope now could be rejected as out
-    // of scope. Those notes defer and stay pending.
+    // Folders a child note cannot safely name yet, so those notes defer and
+    // stay pending:
+    // - cloud-backed with unpushed changes: their migration PATCH failed or
+    //   hasn't run yet (folders push before notes in a pass), so the note's
+    //   folder_id + scope could be rejected as out of scope;
+    // - not on the cloud at all (create not landed, e.g. a 409 name clash or
+    //   a failed batch): the note would push with folder_id null and land
+    //   unfiled on the other devices.
     blockedFolderIds: Set<number>;
   }> {
     const folders = (await window.electronAPI.getFolderIdMap?.()) ?? [];
     return {
       localToCloud: new Map(folders.filter((f) => f.cloud_id).map((f) => [f.id, f.cloud_id!])),
       blockedFolderIds: new Set(
-        folders.filter((f) => f.cloud_id && f.sync_status === "pending").map((f) => f.id)
+        folders.filter((f) => !f.cloud_id || f.sync_status === "pending").map((f) => f.id)
       ),
     };
   }

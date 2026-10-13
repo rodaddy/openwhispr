@@ -190,3 +190,49 @@ test("resetting a provider re-arms the next meeting timer for upcoming events", 
 
   scheduler.stop();
 });
+
+test("scheduled end is forwarded before the scheduler releases its active event", () => {
+  const event = activeEvent("google", "meeting-1");
+  const databaseManager = {
+    getUpcomingEvents: () => [event],
+    getActiveEvents: () => [event],
+  };
+  const scheduler = new CalendarReminderScheduler(databaseManager);
+  const ended = [];
+  scheduler.meetingDetectionEngine = {
+    handleCalendarReminder: () => undefined,
+    handleCalendarMeetingEnd: (active) => ended.push(active.id),
+  };
+  scheduler.onMeetingStart(event);
+
+  scheduler.onMeetingEnd();
+
+  assert.deepEqual(ended, ["meeting-1"]);
+  assert.equal(scheduler.activeMeeting, null);
+  scheduler.stop();
+});
+
+test("every scheduling pass reconciles the recording link from the database", () => {
+  const event = activeEvent("google", "meeting-1");
+  const databaseManager = {
+    getUpcomingEvents: () => [],
+    getActiveEvents: () => [],
+    getCalendarEventById: (id) => (id === event.id ? event : null),
+  };
+  const scheduler = new CalendarReminderScheduler(databaseManager);
+  const reconciled = [];
+  scheduler.meetingDetectionEngine = {
+    reconcileCalendarMeeting: (provider, lookup) =>
+      reconciled.push({ provider, event: lookup(event.id) }),
+  };
+
+  scheduler.scheduleNextMeeting();
+  scheduler.reset("google");
+
+  assert.deepEqual(reconciled, [
+    { provider: null, event },
+    { provider: "google", event },
+    { provider: null, event },
+  ]);
+  scheduler.stop();
+});

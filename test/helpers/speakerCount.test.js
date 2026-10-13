@@ -7,6 +7,8 @@ const { MAX_SPEAKER_COUNT } = require("../../src/constants/speakerDetection.json
 test("keeps a usable stored count", () => {
   assert.equal(normalizeStoredSpeakerCount(1), 1);
   assert.equal(normalizeStoredSpeakerCount(3), 3);
+  assert.equal(normalizeStoredSpeakerCount(16), 16);
+  assert.equal(normalizeStoredSpeakerCount(32), 32);
   assert.equal(normalizeStoredSpeakerCount(MAX_SPEAKER_COUNT), MAX_SPEAKER_COUNT);
 });
 

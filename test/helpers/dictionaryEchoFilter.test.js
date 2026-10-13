@@ -352,3 +352,14 @@ test("payloadSendsDictionaryBias: nullish or malformed payloads never enable the
   assert.equal(payloadSendsDictionaryBias(undefined), false);
   assert.equal(payloadSendsDictionaryBias("prompt"), false);
 });
+
+test("#130: the renderer's hub prompt cap matches hubFirst's", async () => {
+  const { capHubPrompt, HUB_PROMPT_MAX_CHARS } =
+    await import("../../src/utils/dictionaryEchoFilter.js");
+  const { capPrompt, MAX_PROMPT_CHARS } = require("../../src/helpers/hubFirst.js");
+  assert.equal(HUB_PROMPT_MAX_CHARS, MAX_PROMPT_CHARS);
+  const surrogateAtCut = "a".repeat(MAX_PROMPT_CHARS - 1) + "\u{1F600}tail";
+  for (const prompt of [null, "", "short", "x".repeat(2500), surrogateAtCut]) {
+    assert.equal(capHubPrompt(prompt), capPrompt(prompt));
+  }
+});

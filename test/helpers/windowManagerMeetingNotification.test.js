@@ -103,13 +103,18 @@ Module._load = function loadWindowManagerWithStubs(request, parent, isMain) {
   if (request === "./windowConfig") {
     const detectionSize = { width: 392, height: 92 };
     const autoEndSize = { width: 620, height: 116 };
+    const calendarEndSize = { width: 392, height: 112 };
     return {
       MAIN_WINDOW_CONFIG: {},
       CONTROL_PANEL_CONFIG: {},
       NOTIFICATION_WINDOW_CONFIG: { ...detectionSize, acceptFirstMouse: true },
       AUTO_END_NOTIFICATION_WINDOW_SIZE: autoEndSize,
       getMeetingNotificationWindowSize: (data) =>
-        data?.kind === "auto-end" ? autoEndSize : detectionSize,
+        data?.kind === "auto-end"
+          ? autoEndSize
+          : data?.kind === "calendar-end"
+            ? calendarEndSize
+            : detectionSize,
       WINDOW_SIZES: {},
       WindowPositionUtil: {
         getNotificationPosition: (_display, size = detectionSize) => ({
@@ -381,6 +386,34 @@ test("window creation uses the auto-end dimensions and variant-aware position", 
       expiresAt: 70_000,
       reason: "silence",
     });
+
+    notificationWindow.loadDeferred.resolve();
+    await showPromise;
+  } finally {
+    manager.dismissMeetingNotification();
+  }
+});
+
+test("calendar-end notification gets room for its two-row action layout", async () => {
+  const manager = createNormalWindowManager();
+
+  try {
+    const showPromise = manager.showMeetingNotification({
+      kind: "calendar-end",
+      sessionId: "meeting-1",
+      eventId: "event-1",
+    });
+    const notificationWindow = createdWindows[0];
+
+    assert.deepEqual(
+      {
+        width: notificationWindow.options.width,
+        height: notificationWindow.options.height,
+        x: notificationWindow.options.x,
+        y: notificationWindow.options.y,
+      },
+      { width: 392, height: 112, x: 608, y: 16 }
+    );
 
     notificationWindow.loadDeferred.resolve();
     await showPromise;

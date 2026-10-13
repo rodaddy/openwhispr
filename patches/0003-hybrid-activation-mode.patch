@@ -1,0 +1,1137 @@
+From 4618056f0800ba9d5eca0ace65ebea1d2948f321 Mon Sep 17 00:00:00 2001
+From: Rico Rojas <rickrojas@gmail.com>
+Date: Tue, 8 Sep 2026 17:34:55 -0400
+Subject: [PATCH] feat(hotkey): hybrid activation mode, tap to latch or hold to
+ talk
+
+Add a third dictation activation mode, "hybrid", alongside tap and push.
+A press starts the push state machine as before; a release under 400 ms
+latches the recording on until the next press, a longer hold stops on
+release. A press while a latched recording runs is the stop tap. Forced
+releases (listener reset, safety timeout) never latch.
+
+The decisions live in src/helpers/activationMode.js as pure functions
+(resolveDictationPress / resolveDictationRelease) with unit tests; the
+five key-release sites (Globe, right modifier, mouse button, macOS
+compound, Windows/Linux native) call them and share
+windowManager.applyDictationRelease. The hotkey layer still registers
+hybrid as push, so it is available exactly where Hold is.
+
+Settings and onboarding show a three-way Tap / Hold / Both selector; the
+env var, store, and IPC types accept "hybrid". Locale keys common.hybrid
+and onboarding.activation.hybridDescription added to every language in
+English.
+
+Closes openwhispr#1.
+
+Claude-Session: https://claude.ai/code/session_015uYKeUK2xoKRQMj5gCikCq
+---
+ main.js                                      | 97 +++++++++++++-------
+ src/components/OnboardingFlow.tsx            |  6 +-
+ src/components/SettingsPage.tsx              |  2 +-
+ src/components/ui/ActivationModeSelector.tsx | 26 ++++--
+ src/helpers/activationMode.d.ts              | 17 ++++
+ src/helpers/activationMode.js                | 55 +++++++++++
+ src/helpers/environment.js                   |  6 +-
+ src/helpers/ipcHandlers.js                   |  5 +-
+ src/helpers/windowManager.js                 | 91 +++++++++++++-----
+ src/hooks/useSettings.ts                     |  3 +-
+ src/locales/de/translation.json              |  6 +-
+ src/locales/en/translation.json              |  6 +-
+ src/locales/es/translation.json              |  6 +-
+ src/locales/fr/translation.json              |  6 +-
+ src/locales/it/translation.json              |  6 +-
+ src/locales/ja/translation.json              |  6 +-
+ src/locales/pt/translation.json              |  6 +-
+ src/locales/ru/translation.json              |  6 +-
+ src/locales/zh-CN/translation.json           |  6 +-
+ src/locales/zh-TW/translation.json           |  6 +-
+ src/stores/settingsStore.ts                  | 13 +--
+ src/types/electron.ts                        |  6 +-
+ test/helpers/activationMode.test.js          | 88 ++++++++++++++++++
+ test/helpers/activationModeSelector.test.js  |  8 +-
+ 24 files changed, 383 insertions(+), 100 deletions(-)
+ create mode 100644 src/helpers/activationMode.d.ts
+ create mode 100644 src/helpers/activationMode.js
+ create mode 100644 test/helpers/activationMode.test.js
+
+diff --git a/main.js b/main.js
+index a7725789..41fae681 100644
+--- a/main.js
++++ b/main.js
+@@ -1,6 +1,11 @@
+ // Chromium picks the display backend before JS runs, so appendSwitch is too
+ // late — the flag has to come from a relaunch.
+ const { XWAYLAND_FLAG, shouldForceXWayland } = require("./src/helpers/xwayland");
++const {
++  usesKeyRelease,
++  resolveDictationPress,
++  resolveDictationRelease,
++} = require("./src/helpers/activationMode");
+ 
+ if (shouldForceXWayland(process.argv)) {
+   const { spawn } = require("child_process");
+@@ -1337,7 +1342,15 @@ async function startApp() {
+           // Capture target app PID BEFORE showing the overlay
+           if (textEditMonitor) textEditMonitor.captureTargetPid();
+           const activationMode = windowManager.getActivationMode();
+-          if (activationMode === "push") {
++          const pressAction = resolveDictationPress({
++            mode: activationMode,
++            isRecording: windowManager.isDictationRecording(),
++          });
++          if (pressAction === "stop") {
++            debugLogger?.debug("[Globe] Stopping latched dictation (hybrid tap)");
++            globeLastStopTime = Date.now();
++            windowManager.sendStopDictation();
++          } else if (pressAction === "hold") {
+             const now = Date.now();
+             if (now - globeLastStopTime < POST_STOP_COOLDOWN_MS) {
+               debugLogger?.debug("[Globe] Ignored — cooldown active");
+@@ -1391,22 +1404,25 @@ async function startApp() {
+ 
+       if (hotkeyManager.getSlotHotkeys("dictation").some(isGlobeLikeHotkey)) {
+         const activationMode = windowManager.getActivationMode();
+-        if (activationMode === "push") {
++        if (usesKeyRelease(activationMode)) {
+           if (globeKeyDownTime === 0 && !globeKeyIsRecording) {
+-            // The press was ignored (dictation was processing); releasing it
+-            // must not cancel preparation or hide the thinking pill.
++            // The press was ignored (dictation was processing), or it was the
++            // hybrid stop tap; releasing it must not cancel preparation or
++            // hide the thinking pill.
+             debugLogger?.debug("[Globe] Release without a registered press — ignored");
+           } else {
++            const heldMs = Date.now() - globeKeyDownTime;
++            const wasRecording = globeKeyIsRecording;
+             globeKeyDownTime = 0;
++            globeKeyIsRecording = false;
+             globeLastStopTime = Date.now();
+-            if (globeKeyIsRecording) {
+-              globeKeyIsRecording = false;
+-              debugLogger?.debug("[Globe] Stopping dictation (push release)");
+-              windowManager.sendStopDictation();
+-            } else {
+-              windowManager.sendCancelDictationPreparation();
+-              windowManager.hideDictationPanel();
+-            }
++            const action = resolveDictationRelease({
++              mode: activationMode,
++              heldMs,
++              isRecording: wasRecording,
++            });
++            debugLogger?.debug("[Globe] Release", { action, heldMs, wasRecording });
++            windowManager.applyDictationRelease(action, wasRecording);
+           }
+         }
+       }
+@@ -1464,7 +1480,14 @@ async function startApp() {
+ 
+       const activationMode = windowManager.getActivationMode();
+       if (textEditMonitor) textEditMonitor.captureTargetPid();
+-      if (activationMode === "push") {
++      const pressAction = resolveDictationPress({
++        mode: activationMode,
++        isRecording: windowManager.isDictationRecording(),
++      });
++      if (pressAction === "stop") {
++        rightModLastStopTime = Date.now();
++        windowManager.sendStopDictation();
++      } else if (pressAction === "hold") {
+         if (rightModActiveKey && rightModActiveKey !== modifier) return;
+         const now = Date.now();
+         if (now - rightModLastStopTime < POST_STOP_COOLDOWN_MS) return;
+@@ -1490,22 +1513,25 @@ async function startApp() {
+         if (!isLiveWindow(windowManager.mainWindow)) return;
+ 
+         const activationMode = windowManager.getActivationMode();
+-        if (activationMode === "push" && (!rightModActiveKey || rightModActiveKey === modifier)) {
++        if (
++          usesKeyRelease(activationMode) &&
++          (!rightModActiveKey || rightModActiveKey === modifier)
++        ) {
+           if (rightModDownTime === 0 && !rightModIsRecording) {
+             // The press was ignored (dictation was processing); releasing it
+             // must not cancel preparation or hide the thinking pill.
+             debugLogger?.debug("[RightMod] Release without a registered press — ignored");
+           } else {
++            const heldMs = Date.now() - rightModDownTime;
++            const wasRecording = rightModIsRecording;
+             rightModActiveKey = null;
+             rightModDownTime = 0;
++            rightModIsRecording = false;
+             rightModLastStopTime = Date.now();
+-            if (rightModIsRecording) {
+-              rightModIsRecording = false;
+-              windowManager.sendStopDictation();
+-            } else {
+-              windowManager.sendCancelDictationPreparation();
+-              windowManager.hideDictationPanel();
+-            }
++            windowManager.applyDictationRelease(
++              resolveDictationRelease({ mode: activationMode, heldMs, isRecording: wasRecording }),
++              wasRecording
++            );
+           }
+         }
+       }
+@@ -1553,7 +1579,14 @@ async function startApp() {
+       const activationMode = windowManager.getActivationMode();
+       if (textEditMonitor) textEditMonitor.captureTargetPid();
+ 
+-      if (activationMode === "push") {
++      const pressAction = resolveDictationPress({
++        mode: activationMode,
++        isRecording: windowManager.isDictationRecording(),
++      });
++      if (pressAction === "stop") {
++        mouseButtonLastStopTime = Date.now();
++        windowManager.sendStopDictation();
++      } else if (pressAction === "hold") {
+         if (mouseButtonActiveButton && mouseButtonActiveButton !== button) return;
+         const now = Date.now();
+         if (now - mouseButtonLastStopTime < POST_STOP_COOLDOWN_MS) return;
+@@ -1583,7 +1616,7 @@ async function startApp() {
+ 
+       const activationMode = windowManager.getActivationMode();
+       if (
+-        activationMode === "push" &&
++        usesKeyRelease(activationMode) &&
+         (!mouseButtonActiveButton || mouseButtonActiveButton === button)
+       ) {
+         if (mouseButtonDownTime === 0 && !mouseButtonIsRecording) {
+@@ -1591,16 +1624,16 @@ async function startApp() {
+           // must not cancel preparation or hide the thinking pill.
+           debugLogger?.debug("[MouseButton] Release without a registered press — ignored");
+         } else {
++          const heldMs = Date.now() - mouseButtonDownTime;
++          const wasRecording = mouseButtonIsRecording;
+           mouseButtonActiveButton = null;
+           mouseButtonDownTime = 0;
++          mouseButtonIsRecording = false;
+           mouseButtonLastStopTime = Date.now();
+-          if (mouseButtonIsRecording) {
+-            mouseButtonIsRecording = false;
+-            windowManager.sendStopDictation();
+-          } else {
+-            windowManager.sendCancelDictationPreparation();
+-            windowManager.hideDictationPanel();
+-          }
++          windowManager.applyDictationRelease(
++            resolveDictationRelease({ mode: activationMode, heldMs, isRecording: wasRecording }),
++            wasRecording
++          );
+         }
+       }
+     });
+@@ -1672,7 +1705,7 @@ async function startApp() {
+     const dispatchNativeKeyDown = (key) => {
+       if (hotkeyManager.slotHasHotkey("dictation", key)) {
+         if (!isLiveWindow(windowManager.mainWindow)) return;
+-        if (windowManager.getActivationMode() === "push") {
++        if (usesKeyRelease(windowManager.getActivationMode())) {
+           windowManager.startWindowsPushToTalk(key);
+         } else {
+           windowManager.sendToggleDictation();
+@@ -1697,7 +1730,7 @@ async function startApp() {
+         windowManager.handleWindowsPushKeyUp(key);
+       } else if (
+         isLiveWindow(windowManager.mainWindow) &&
+-        windowManager.getActivationMode() === "push"
++        usesKeyRelease(windowManager.getActivationMode())
+       ) {
+         windowManager.handleWindowsPushKeyUp(key);
+       }
+diff --git a/src/components/OnboardingFlow.tsx b/src/components/OnboardingFlow.tsx
+index 2fcfb1a7..20546db4 100644
+--- a/src/components/OnboardingFlow.tsx
++++ b/src/components/OnboardingFlow.tsx
+@@ -821,7 +821,9 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
+                     {t(
+                       activationMode === "push"
+                         ? "onboarding.activation.holdDescription"
+-                        : "onboarding.activation.tapDescription"
++                        : activationMode === "hybrid"
++                          ? "onboarding.activation.hybridDescription"
++                          : "onboarding.activation.tapDescription"
+                     )}
+                   </p>
+                 </div>
+@@ -835,7 +837,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
+                   }
+                 />
+               </div>
+-              {getPlatform() === "linux" && activationMode === "push" && (
++              {getPlatform() === "linux" && activationMode !== "tap" && (
+                 <LinuxPttSetupInfo isAvailable={supportsPushToTalk} />
+               )}
+             </div>
+diff --git a/src/components/SettingsPage.tsx b/src/components/SettingsPage.tsx
+index 948f936d..bfb9bd25 100644
+--- a/src/components/SettingsPage.tsx
++++ b/src/components/SettingsPage.tsx
+@@ -4073,7 +4073,7 @@ EOF`,
+                         }
+                       />
+                     </div>
+-                    {getCachedPlatform() === "linux" && activationMode === "push" && (
++                    {getCachedPlatform() === "linux" && activationMode !== "tap" && (
+                       <LinuxPttSetupInfo isAvailable={linuxPttAvailable} />
+                     )}
+                   </SettingsPanelRow>
+diff --git a/src/components/ui/ActivationModeSelector.tsx b/src/components/ui/ActivationModeSelector.tsx
+index 5ce66b4a..4420c096 100644
+--- a/src/components/ui/ActivationModeSelector.tsx
++++ b/src/components/ui/ActivationModeSelector.tsx
+@@ -1,7 +1,9 @@
+-import { MousePointerClick, MicVocal } from "lucide-react";
++import { MousePointerClick, MicVocal, Pointer } from "lucide-react";
+ import { useTranslation } from "react-i18next";
+ 
+-type ActivationMode = "tap" | "push";
++// Mirrors ActivationMode in src/helpers/activationMode.js (kept inline so the
++// node --test renderer harness can load this file without a type import).
++type ActivationMode = "tap" | "push" | "hybrid";
+ 
+ interface ActivationModeSelectorProps {
+   value: ActivationMode;
+@@ -9,11 +11,19 @@ interface ActivationModeSelectorProps {
+   pushDisabledReason?: string;
+ }
+ 
++// Hybrid rides on the push-to-talk plumbing, so it is unavailable wherever Hold is.
+ const OPTIONS = [
+-  { mode: "tap", Icon: MousePointerClick, labelKey: "common.tap" },
+-  { mode: "push", Icon: MicVocal, labelKey: "common.hold" },
++  { mode: "tap", Icon: MousePointerClick, labelKey: "common.tap", needsPush: false },
++  { mode: "push", Icon: MicVocal, labelKey: "common.hold", needsPush: true },
++  { mode: "hybrid", Icon: Pointer, labelKey: "common.hybrid", needsPush: true },
+ ] as const;
+ 
++const INDICATOR_OFFSET: Record<ActivationMode, string> = {
++  tap: "translate-x-0",
++  push: "translate-x-[calc(100%+2px)]",
++  hybrid: "translate-x-[calc(200%+4px)]",
++};
++
+ export function ActivationModeSelector({
+   value,
+   onChange,
+@@ -26,15 +36,15 @@ export function ActivationModeSelector({
+       {/* Sliding indicator */}
+       <div
+         className={`
+-          absolute top-0.5 bottom-0.5 w-[calc(50%-2px)] rounded
++          absolute top-0.5 bottom-0.5 w-[calc(33.333%-2px)] rounded
+           bg-surface-raised border border-border-subtle
+           transition-transform duration-200 ease-out
+-          ${value === "push" ? "translate-x-[calc(100%+4px)]" : "translate-x-0"}
++          ${INDICATOR_OFFSET[value] ?? INDICATOR_OFFSET.tap}
+         `}
+       />
+ 
+-      {OPTIONS.map(({ mode, Icon, labelKey }) => {
+-        const disabledReason = mode === "push" ? pushDisabledReason : undefined;
++      {OPTIONS.map(({ mode, Icon, labelKey, needsPush }) => {
++        const disabledReason = needsPush ? pushDisabledReason : undefined;
+         const disabled = Boolean(disabledReason);
+         const label = t(labelKey);
+ 
+diff --git a/src/helpers/activationMode.d.ts b/src/helpers/activationMode.d.ts
+new file mode 100644
+index 00000000..7c462ea2
+--- /dev/null
++++ b/src/helpers/activationMode.d.ts
+@@ -0,0 +1,17 @@
++export type ActivationMode = "tap" | "push" | "hybrid";
++export const ACTIVATION_MODES: readonly ActivationMode[];
++export const HYBRID_TAP_THRESHOLD_MS: number;
++export function normalizeActivationMode(mode: unknown): ActivationMode;
++export function usesKeyRelease(mode: unknown): boolean;
++export function toHotkeyRegistrationMode(mode: unknown): "tap" | "push";
++export function resolveDictationPress(input: {
++  mode: unknown;
++  isRecording?: boolean;
++}): "toggle" | "stop" | "hold";
++export function resolveDictationRelease(input: {
++  mode: unknown;
++  heldMs: number;
++  isRecording?: boolean;
++  force?: boolean;
++  thresholdMs?: number;
++}): "latch" | "stop" | "cancel";
+diff --git a/src/helpers/activationMode.js b/src/helpers/activationMode.js
+new file mode 100644
+index 00000000..bb1770c4
+--- /dev/null
++++ b/src/helpers/activationMode.js
+@@ -0,0 +1,55 @@
++// Dictation hotkey activation modes.
++//
++//   tap    -- a press toggles recording on/off.
++//   push   -- recording runs only while the key is held.
++//   hybrid -- a short tap latches recording on until the next tap; a press
++//             held past HYBRID_TAP_THRESHOLD_MS records while held and stops
++//             on release. The same threshold/latch behaviour as the
++//             "Automatic (Both)" mode in FluidVoice, reimplemented here.
++//
++// Pure decisions only; the main-process key handlers own the timers and IPC.
++// ESM like the other renderer-shared helpers; main-process callers require() it.
++
++export const ACTIVATION_MODES = Object.freeze(["tap", "push", "hybrid"]);
++export const HYBRID_TAP_THRESHOLD_MS = 400;
++
++export function normalizeActivationMode(mode) {
++  return mode === "push" || mode === "hybrid" ? mode : "tap";
++}
++
++// Whether the mode needs key-release events (native listeners, push plumbing).
++export function usesKeyRelease(mode) {
++  return normalizeActivationMode(mode) !== "tap";
++}
++
++// The hotkey-manager side only knows tap vs push; hybrid rides on push plumbing.
++export function toHotkeyRegistrationMode(mode) {
++  return usesKeyRelease(mode) ? "push" : "tap";
++}
++
++// What a hotkey press does, before any press state exists.
++//   "toggle" -- tap mode
++//   "stop"   -- hybrid with a latched recording running: this press ends it
++//   "hold"   -- push/hybrid: start the press state machine
++export function resolveDictationPress({ mode, isRecording = false }) {
++  const normalized = normalizeActivationMode(mode);
++  if (normalized === "tap") return "toggle";
++  if (normalized === "hybrid" && isRecording) return "stop";
++  return "hold";
++}
++
++// What the release of a tracked press does.
++//   "latch"  -- hybrid tap: recording keeps running until the next press
++//   "stop"   -- the press was recording: stop now
++//   "cancel" -- the press never reached recording: drop the preparation
++export function resolveDictationRelease({
++  mode,
++  heldMs,
++  isRecording = false,
++  force = false,
++  thresholdMs = HYBRID_TAP_THRESHOLD_MS,
++}) {
++  const normalized = normalizeActivationMode(mode);
++  if (!force && normalized === "hybrid" && heldMs < thresholdMs) return "latch";
++  return isRecording ? "stop" : "cancel";
++}
+diff --git a/src/helpers/environment.js b/src/helpers/environment.js
+index a519287c..057c7eea 100644
+--- a/src/helpers/environment.js
++++ b/src/helpers/environment.js
+@@ -5,6 +5,7 @@ const { app } = require("electron");
+ const debugLogger = require("./debugLogger");
+ const { normalizeUiLanguage } = require("./i18nMain");
+ const secretCrypto = require("./secretCrypto");
++const { normalizeActivationMode } = require("./activationMode");
+ const { BYOK_API_KEYS } = require("../config/secretKeys");
+ 
+ const SECRET_KEYS = [
+@@ -442,12 +443,11 @@ class EnvironmentManager {
+   }
+ 
+   getActivationMode() {
+-    const mode = this._getKey("ACTIVATION_MODE");
+-    return mode === "push" ? "push" : "tap";
++    return normalizeActivationMode(this._getKey("ACTIVATION_MODE"));
+   }
+ 
+   saveActivationMode(mode) {
+-    const validMode = mode === "push" ? "push" : "tap";
++    const validMode = normalizeActivationMode(mode);
+     const result = this._saveKey("ACTIVATION_MODE", validMode);
+     this.saveAllKeysToEnvFile().catch(() => {});
+     return result;
+diff --git a/src/helpers/ipcHandlers.js b/src/helpers/ipcHandlers.js
+index 03f7fa94..d3f2cd77 100644
+--- a/src/helpers/ipcHandlers.js
++++ b/src/helpers/ipcHandlers.js
+@@ -5,6 +5,7 @@ const os = require("os");
+ const crypto = require("crypto");
+ const debugLogger = require("./debugLogger");
+ const { PARAKEET_UNSUPPORTED_OS_CODE } = require("./parakeetCapability");
++const { usesKeyRelease } = require("./activationMode");
+ const { getModelType, isSherpaLocalProvider } = require("./parakeetModelInfo");
+ const { transcribeSelfHostedChunk } = require("./selfHostedMeetingTranscription");
+ const { broadcastToWindows } = require("./windowBroadcast");
+@@ -3937,7 +3938,7 @@ class IPCHandlers {
+           );
+           await hotkeyManager.hyprlandManager.registerKeybinding(
+             effectiveHotkey,
+-            this.windowManager.getActivationMode() === "push"
++            usesKeyRelease(this.windowManager.getActivationMode())
+           );
+         }
+ 
+@@ -3951,7 +3952,7 @@ class IPCHandlers {
+             effectiveHotkey,
+             "dictation",
+             callback,
+-            this.windowManager.getActivationMode() === "push"
++            usesKeyRelease(this.windowManager.getActivationMode())
+           );
+           if (result !== true) {
+             debugLogger.warn(
+diff --git a/src/helpers/windowManager.js b/src/helpers/windowManager.js
+index c1ecf8ec..d85dab87 100644
+--- a/src/helpers/windowManager.js
++++ b/src/helpers/windowManager.js
+@@ -23,6 +23,13 @@ const {
+   isDictationRecording,
+   shouldBlockDictationWhilePanelOpen,
+ } = require("./dictationLifecycle");
++const {
++  normalizeActivationMode,
++  usesKeyRelease,
++  toHotkeyRegistrationMode,
++  resolveDictationPress,
++  resolveDictationRelease,
++} = require("./activationMode");
+ const { DEV_SERVER_PORT } = DevServerManager;
+ const AUTO_END_NOTIFICATION_LOAD_TIMEOUT_MS = 10_000;
+ const DRAG_MOVE_TOLERANCE_PX = 2;
+@@ -584,7 +591,7 @@ class WindowManager {
+       const activationMode = this.getActivationMode();
+       const currentHotkey = triggeredHotkey || this.hotkeyManager.getCurrentHotkey?.();
+ 
+-      if (process.platform === "linux" && activationMode === "push") {
++      if (process.platform === "linux" && usesKeyRelease(activationMode)) {
+         if (phase === "down") {
+           this.startWindowsPushToTalk(currentHotkey);
+         } else if (phase === "up") {
+@@ -596,7 +603,7 @@ class WindowManager {
+ 
+       if (
+         process.platform === "darwin" &&
+-        activationMode === "push" &&
++        usesKeyRelease(activationMode) &&
+         currentHotkey &&
+         !isGlobeLikeHotkey(currentHotkey) &&
+         currentHotkey.includes("+")
+@@ -608,7 +615,7 @@ class WindowManager {
+       // Push mode: defer to native listener (globalShortcut can't detect key-up)
+       if (
+         (process.platform === "win32" || process.platform === "linux") &&
+-        activationMode === "push"
++        usesKeyRelease(activationMode)
+       ) {
+         return;
+       }
+@@ -623,11 +630,40 @@ class WindowManager {
+     };
+   }
+ 
++  // Hybrid mode: a press while a latched recording runs is the "stop" tap.
++  // Returns true when the press was consumed that way.
++  _consumeHybridStopPress() {
++    const action = resolveDictationPress({
++      mode: this.getActivationMode(),
++      isRecording: this.isDictationRecording(),
++    });
++    if (action !== "stop") return false;
++    this.sendStopDictation();
++    return true;
++  }
++
++  // Shared tail of every push/hybrid key release.
++  applyDictationRelease(action, wasRecording) {
++    if (action === "latch") {
++      // A tap released before the deferred start fired: start now, the
++      // recording stays on until the next press.
++      if (!wasRecording) this.sendStartDictation();
++      return;
++    }
++    if (action === "stop") {
++      this.sendStopDictation();
++      return;
++    }
++    this.sendCancelDictationPreparation();
++    this.hideDictationPanel();
++  }
++
+   startMacCompoundPushToTalk(hotkey) {
+     if (!this._isOnboardingInputAllowed("dictation")) return;
+     if (this.macCompoundPushState?.active || this.isDictationProcessing()) {
+       return;
+     }
++    if (this._consumeHybridStopPress()) return;
+ 
+     const requiredModifiers = this.getMacRequiredModifiers(hotkey);
+     if (requiredModifiers.size === 0) {
+@@ -683,14 +719,17 @@ class WindowManager {
+     }
+ 
+     const wasRecording = this.macCompoundPushState.isRecording;
++    const heldMs = Date.now() - this.macCompoundPushState.downTime;
+     this.macCompoundPushState = null;
+ 
+-    if (wasRecording) {
+-      this.sendStopDictation();
+-    } else {
+-      this.sendCancelDictationPreparation();
+-      this.hideDictationPanel();
+-    }
++    this.applyDictationRelease(
++      resolveDictationRelease({
++        mode: this.getActivationMode(),
++        heldMs,
++        isRecording: wasRecording,
++      }),
++      wasRecording
++    );
+   }
+ 
+   forceStopMacCompoundPush(reason = "manual") {
+@@ -764,6 +803,7 @@ class WindowManager {
+     if (this.winPushState?.active || this.isDictationProcessing()) {
+       return;
+     }
++    if (this._consumeHybridStopPress()) return;
+ 
+     const MIN_HOLD_DURATION_MS = 150;
+     const MAX_PUSH_DURATION_MS = 300000;
+@@ -775,7 +815,7 @@ class WindowManager {
+     const safetyTimeoutId = setTimeout(() => {
+       if (!this.winPushState || this.winPushState.downTime !== downTime) return;
+       debugLogger.warn("Native PTT safety timeout", undefined, "ptt");
+-      this.handleWindowsPushKeyUp();
++      this.handleWindowsPushKeyUp(undefined, { force: true });
+     }, MAX_PUSH_DURATION_MS);
+ 
+     this.winPushState = {
+@@ -800,7 +840,7 @@ class WindowManager {
+ 
+   // With several dictation hotkeys bound, only the key that started the push
+   // may stop it; called without a key to force-stop (resetWindowsPushState).
+-  handleWindowsPushKeyUp(key) {
++  handleWindowsPushKeyUp(key, { force = false } = {}) {
+     if (!this.winPushState?.active) {
+       return;
+     }
+@@ -813,14 +853,18 @@ class WindowManager {
+     }
+ 
+     const wasRecording = this.winPushState.isRecording;
++    const heldMs = Date.now() - this.winPushState.downTime;
+     this.winPushState = null;
+ 
+-    if (wasRecording) {
+-      this.sendStopDictation();
+-    } else {
+-      this.sendCancelDictationPreparation();
+-      this.hideDictationPanel();
+-    }
++    this.applyDictationRelease(
++      resolveDictationRelease({
++        mode: this.getActivationMode(),
++        heldMs,
++        isRecording: wasRecording,
++        force,
++      }),
++      wasRecording
++    );
+   }
+ 
+   resetWindowsPushState() {
+@@ -828,7 +872,7 @@ class WindowManager {
+       return;
+     }
+ 
+-    this.handleWindowsPushKeyUp();
++    this.handleWindowsPushKeyUp(undefined, { force: true });
+   }
+ 
+   _isOnboardingInputAllowed(inputKind) {
+@@ -974,6 +1018,10 @@ class WindowManager {
+     return shouldIgnoreDictationHotkey(this._dictationLifecycleState);
+   }
+ 
++  isDictationRecording() {
++    return isDictationRecording(this._dictationLifecycleState);
++  }
++
+   sendToggleDictation() {
+     this._sendDictationToggle("toggle-dictation", "dictation");
+   }
+@@ -1062,8 +1110,9 @@ class WindowManager {
+   }
+ 
+   async setActivationModeCache(mode) {
+-    const nextMode = mode === "push" ? "push" : "tap";
+-    const success = await this.hotkeyManager.setActivationMode(nextMode);
++    const nextMode = normalizeActivationMode(mode);
++    // The hotkey layer only knows tap vs push; hybrid rides on push plumbing.
++    const success = await this.hotkeyManager.setActivationMode(toHotkeyRegistrationMode(nextMode));
+     if (!success) return false;
+     this._cachedActivationMode = nextMode;
+     return true;
+@@ -1077,7 +1126,7 @@ class WindowManager {
+   reconcileNativeKeyListeners() {
+     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
+     if (this.hotkeyManager.isInListeningMode()) return;
+-    const activationMode = this.getActivationMode();
++    const activationMode = toHotkeyRegistrationMode(this.getActivationMode());
+     const nativeListenerKeys = this.hotkeyManager.getNativeListenerKeys(activationMode);
+     // Native desktop shortcuts replace the low-level listener in tap mode. In
+     // push mode, keep the dictation listener as a release-event fallback; the
+diff --git a/src/hooks/useSettings.ts b/src/hooks/useSettings.ts
+index e38fd18d..54984d9c 100644
+--- a/src/hooks/useSettings.ts
++++ b/src/hooks/useSettings.ts
+@@ -1,6 +1,7 @@
+ import React, { createContext, useCallback, useContext, useEffect, useRef } from "react";
+ import { useSettingsStore, initializeSettings } from "../stores/settingsStore";
+ import logger from "../utils/logger";
++import type { ActivationMode } from "../helpers/activationMode";
+ import { useLocalStorage } from "./useLocalStorage";
+ import type {
+   ChineseScriptPreference,
+@@ -61,7 +62,7 @@ export interface HotkeySettings {
+   meetingKey: string;
+   voiceAgentKey: string;
+   meetingHotkeyLayoutMode: "side-panel" | "full-width";
+-  activationMode: "tap" | "push";
++  activationMode: ActivationMode;
+ }
+ 
+ export interface OnboardingSettings {
+diff --git a/src/locales/de/translation.json b/src/locales/de/translation.json
+index 955a75d3..09d2eb06 100644
+--- a/src/locales/de/translation.json
++++ b/src/locales/de/translation.json
+@@ -204,7 +204,8 @@
+     "policyTranscriptionRestricted": "Die Transkription ist durch Ihre Organisation eingeschränkt.",
+     "managedConfigLoading": "Die verwaltete Einrichtung Ihrer Organisation wird überprüft. Versuchen Sie es gleich noch einmal.",
+     "managedConfigUnavailable": "Der verwaltete Unternehmenszugriff ist nicht verfügbar. Melden Sie sich erneut an oder wenden Sie sich an Ihren Administrator.",
+-    "managedPolicyConflict": "Der verwaltete Zugriff wird durch Ihre Workspace-Richtlinie blockiert. Wenden Sie sich an Ihren Administrator."
++    "managedPolicyConflict": "Der verwaltete Zugriff wird durch Ihre Workspace-Richtlinie blockiert. Wenden Sie sich an Ihren Administrator.",
++    "hybrid": "Both"
+   },
+   "onboarding": {
+     "rehaul": {
+@@ -475,7 +476,8 @@
+       "test": "Test",
+       "hotkeyToStartStop": "{{hotkey}} zum Starten/Stoppen",
+       "holdHotkey": "{{hotkey}} gedrückt halten",
+-      "textareaPlaceholder": "Hier klicken und Hotkey zum Diktieren verwenden..."
++      "textareaPlaceholder": "Hier klicken und Hotkey zum Diktieren verwenden...",
++      "hybridDescription": "Tap to keep it on, hold to talk"
+     },
+     "voiceAgent": {
+       "title": "Sprachassistent-Einrichtung",
+diff --git a/src/locales/en/translation.json b/src/locales/en/translation.json
+index b07e0689..72486a10 100644
+--- a/src/locales/en/translation.json
++++ b/src/locales/en/translation.json
+@@ -204,7 +204,8 @@
+     "policyTranscriptionRestricted": "Transcription is restricted by your organization.",
+     "managedConfigLoading": "Checking your organization's managed setup. Try again in a moment.",
+     "managedConfigUnavailable": "Managed enterprise access is unavailable. Sign in again or contact your administrator.",
+-    "managedPolicyConflict": "Managed access is blocked by your workspace policy. Contact your administrator."
++    "managedPolicyConflict": "Managed access is blocked by your workspace policy. Contact your administrator.",
++    "hybrid": "Both"
+   },
+   "onboarding": {
+     "rehaul": {
+@@ -475,7 +476,8 @@
+       "test": "Test",
+       "hotkeyToStartStop": "{{hotkey}} to start/stop",
+       "holdHotkey": "Hold {{hotkey}}",
+-      "textareaPlaceholder": "Click here and use your hotkey to dictate..."
++      "textareaPlaceholder": "Click here and use your hotkey to dictate...",
++      "hybridDescription": "Tap to keep it on, hold to talk"
+     },
+     "voiceAgent": {
+       "title": "Voice Assistant Setup",
+diff --git a/src/locales/es/translation.json b/src/locales/es/translation.json
+index 81d74e4f..48eea1e1 100644
+--- a/src/locales/es/translation.json
++++ b/src/locales/es/translation.json
+@@ -204,7 +204,8 @@
+     "policyTranscriptionRestricted": "La transcripción está restringida por tu organización.",
+     "managedConfigLoading": "Comprobando la configuración gestionada de tu organización. Inténtalo de nuevo en un momento.",
+     "managedConfigUnavailable": "El acceso empresarial gestionado no está disponible. Vuelve a iniciar sesión o contacta a tu administrador.",
+-    "managedPolicyConflict": "El acceso gestionado está bloqueado por la política de tu espacio de trabajo. Contacta a tu administrador."
++    "managedPolicyConflict": "El acceso gestionado está bloqueado por la política de tu espacio de trabajo. Contacta a tu administrador.",
++    "hybrid": "Both"
+   },
+   "onboarding": {
+     "rehaul": {
+@@ -475,7 +476,8 @@
+       "test": "Prueba",
+       "hotkeyToStartStop": "{{hotkey}} para iniciar/detener",
+       "holdHotkey": "Mantener {{hotkey}}",
+-      "textareaPlaceholder": "Haz clic aquí y usa tu atajo para dictar..."
++      "textareaPlaceholder": "Haz clic aquí y usa tu atajo para dictar...",
++      "hybridDescription": "Tap to keep it on, hold to talk"
+     },
+     "voiceAgent": {
+       "title": "Configuración del asistente de voz",
+diff --git a/src/locales/fr/translation.json b/src/locales/fr/translation.json
+index 69fb4494..5a705c70 100644
+--- a/src/locales/fr/translation.json
++++ b/src/locales/fr/translation.json
+@@ -204,7 +204,8 @@
+     "policyTranscriptionRestricted": "La transcription est restreinte par votre organisation.",
+     "managedConfigLoading": "Vérification de la configuration gérée de votre organisation en cours. Réessayez dans un instant.",
+     "managedConfigUnavailable": "L'accès d'entreprise géré est indisponible. Reconnectez-vous ou contactez votre administrateur.",
+-    "managedPolicyConflict": "L'accès géré est bloqué par la politique de votre espace de travail. Contactez votre administrateur."
++    "managedPolicyConflict": "L'accès géré est bloqué par la politique de votre espace de travail. Contactez votre administrateur.",
++    "hybrid": "Both"
+   },
+   "onboarding": {
+     "rehaul": {
+@@ -475,7 +476,8 @@
+       "test": "Test",
+       "hotkeyToStartStop": "{{hotkey}} pour démarrer/arrêter",
+       "holdHotkey": "Maintenir {{hotkey}}",
+-      "textareaPlaceholder": "Cliquez ici puis utilisez votre raccourci pour dicter..."
++      "textareaPlaceholder": "Cliquez ici puis utilisez votre raccourci pour dicter...",
++      "hybridDescription": "Tap to keep it on, hold to talk"
+     },
+     "voiceAgent": {
+       "title": "Configuration de l'assistant vocal",
+diff --git a/src/locales/it/translation.json b/src/locales/it/translation.json
+index 803e9966..83ac0bfa 100644
+--- a/src/locales/it/translation.json
++++ b/src/locales/it/translation.json
+@@ -204,7 +204,8 @@
+     "policyTranscriptionRestricted": "La trascrizione è limitata dalla tua organizzazione.",
+     "managedConfigLoading": "Verifica della configurazione gestita della tua organizzazione in corso. Riprova tra un momento.",
+     "managedConfigUnavailable": "L'accesso aziendale gestito non è disponibile. Accedi di nuovo o contatta l'amministratore.",
+-    "managedPolicyConflict": "L'accesso gestito è bloccato dai criteri del tuo spazio di lavoro. Contatta l'amministratore."
++    "managedPolicyConflict": "L'accesso gestito è bloccato dai criteri del tuo spazio di lavoro. Contatta l'amministratore.",
++    "hybrid": "Both"
+   },
+   "onboarding": {
+     "rehaul": {
+@@ -475,7 +476,8 @@
+       "test": "Test",
+       "hotkeyToStartStop": "{{hotkey}} per avviare/fermare",
+       "holdHotkey": "Tieni premuto {{hotkey}}",
+-      "textareaPlaceholder": "Clicca qui e usa la scorciatoia per dettare..."
++      "textareaPlaceholder": "Clicca qui e usa la scorciatoia per dettare...",
++      "hybridDescription": "Tap to keep it on, hold to talk"
+     },
+     "voiceAgent": {
+       "title": "Configurazione dell'assistente vocale",
+diff --git a/src/locales/ja/translation.json b/src/locales/ja/translation.json
+index c09c3ec7..11f15634 100644
+--- a/src/locales/ja/translation.json
++++ b/src/locales/ja/translation.json
+@@ -204,7 +204,8 @@
+     "policyTranscriptionRestricted": "文字起こしは組織によって制限されています。",
+     "managedConfigLoading": "組織のマネージド設定を確認しています。しばらくしてからもう一度お試しください。",
+     "managedConfigUnavailable": "マネージド エンタープライズ アクセスを利用できません。再度サインインするか、管理者にお問い合わせください。",
+-    "managedPolicyConflict": "ワークスペースのポリシーによりマネージド アクセスがブロックされています。管理者にお問い合わせください。"
++    "managedPolicyConflict": "ワークスペースのポリシーによりマネージド アクセスがブロックされています。管理者にお問い合わせください。",
++    "hybrid": "Both"
+   },
+   "onboarding": {
+     "rehaul": {
+@@ -475,7 +476,8 @@
+       "test": "テスト",
+       "hotkeyToStartStop": "{{hotkey}} で開始/停止",
+       "holdHotkey": "{{hotkey}} を押し続ける",
+-      "textareaPlaceholder": "ここをクリックしてホットキーでディクテーション..."
++      "textareaPlaceholder": "ここをクリックしてホットキーでディクテーション...",
++      "hybridDescription": "Tap to keep it on, hold to talk"
+     },
+     "voiceAgent": {
+       "title": "音声アシスタント設定",
+diff --git a/src/locales/pt/translation.json b/src/locales/pt/translation.json
+index affa3ea6..aed78a00 100644
+--- a/src/locales/pt/translation.json
++++ b/src/locales/pt/translation.json
+@@ -183,7 +183,8 @@
+     "policyTranscriptionRestricted": "A transcrição está restrita pela sua organização.",
+     "managedConfigLoading": "Verificando a configuração gerenciada da sua organização. Tente novamente em instantes.",
+     "managedConfigUnavailable": "O acesso empresarial gerenciado está indisponível. Entre novamente ou entre em contato com o administrador.",
+-    "managedPolicyConflict": "O acesso gerenciado está bloqueado pela política do seu espaço de trabalho. Entre em contato com o administrador."
++    "managedPolicyConflict": "O acesso gerenciado está bloqueado pela política do seu espaço de trabalho. Entre em contato com o administrador.",
++    "hybrid": "Both"
+   },
+   "onboarding": {
+     "rehaul": {
+@@ -454,7 +455,8 @@
+       "test": "Teste",
+       "hotkeyToStartStop": "{{hotkey}} para iniciar/parar",
+       "holdHotkey": "Segure {{hotkey}}",
+-      "textareaPlaceholder": "Clique aqui e use seu atalho para ditar..."
++      "textareaPlaceholder": "Clique aqui e use seu atalho para ditar...",
++      "hybridDescription": "Tap to keep it on, hold to talk"
+     },
+     "voiceAgent": {
+       "title": "Configuração do assistente de voz",
+diff --git a/src/locales/ru/translation.json b/src/locales/ru/translation.json
+index fc7e48bd..a7d7af30 100644
+--- a/src/locales/ru/translation.json
++++ b/src/locales/ru/translation.json
+@@ -204,7 +204,8 @@
+     "policyTranscriptionRestricted": "Транскрипция ограничена вашей организацией.",
+     "managedConfigLoading": "Проверяется управляемая настройка вашей организации. Повторите попытку через некоторое время.",
+     "managedConfigUnavailable": "Управляемый корпоративный доступ недоступен. Войдите снова или обратитесь к администратору.",
+-    "managedPolicyConflict": "Управляемый доступ заблокирован политикой вашего рабочего пространства. Обратитесь к администратору."
++    "managedPolicyConflict": "Управляемый доступ заблокирован политикой вашего рабочего пространства. Обратитесь к администратору.",
++    "hybrid": "Both"
+   },
+   "onboarding": {
+     "rehaul": {
+@@ -475,7 +476,8 @@
+       "test": "Тест",
+       "hotkeyToStartStop": "{{hotkey}} для старта/остановки",
+       "holdHotkey": "Удерживайте {{hotkey}}",
+-      "textareaPlaceholder": "Нажмите сюда и используйте горячую клавишу для диктовки..."
++      "textareaPlaceholder": "Нажмите сюда и используйте горячую клавишу для диктовки...",
++      "hybridDescription": "Tap to keep it on, hold to talk"
+     },
+     "voiceAgent": {
+       "title": "Настройка голосового помощника",
+diff --git a/src/locales/zh-CN/translation.json b/src/locales/zh-CN/translation.json
+index aa51a081..ec3ba9b1 100644
+--- a/src/locales/zh-CN/translation.json
++++ b/src/locales/zh-CN/translation.json
+@@ -204,7 +204,8 @@
+     "policyTranscriptionRestricted": "转录已被您的组织限制。",
+     "managedConfigLoading": "正在检查您组织的托管设置。请稍候再试。",
+     "managedConfigUnavailable": "托管企业访问不可用。请重新登录或联系管理员。",
+-    "managedPolicyConflict": "托管访问已被您工作区的策略阻止。请联系管理员。"
++    "managedPolicyConflict": "托管访问已被您工作区的策略阻止。请联系管理员。",
++    "hybrid": "Both"
+   },
+   "onboarding": {
+     "rehaul": {
+@@ -475,7 +476,8 @@
+       "test": "测试",
+       "hotkeyToStartStop": "{{hotkey}} 开始/停止",
+       "holdHotkey": "按住 {{hotkey}}",
+-      "textareaPlaceholder": "点击此处，然后使用快捷键进行听写..."
++      "textareaPlaceholder": "点击此处，然后使用快捷键进行听写...",
++      "hybridDescription": "Tap to keep it on, hold to talk"
+     },
+     "voiceAgent": {
+       "title": "语音助手设置",
+diff --git a/src/locales/zh-TW/translation.json b/src/locales/zh-TW/translation.json
+index 6d8eb3e3..505b0adf 100644
+--- a/src/locales/zh-TW/translation.json
++++ b/src/locales/zh-TW/translation.json
+@@ -204,7 +204,8 @@
+     "policyTranscriptionRestricted": "轉錄已被您的組織限制。",
+     "managedConfigLoading": "正在檢查您組織的託管設定。請稍候再試。",
+     "managedConfigUnavailable": "託管企業存取無法使用。請重新登入或聯絡管理員。",
+-    "managedPolicyConflict": "託管存取已被您工作區的政策封鎖。請聯絡管理員。"
++    "managedPolicyConflict": "託管存取已被您工作區的政策封鎖。請聯絡管理員。",
++    "hybrid": "Both"
+   },
+   "onboarding": {
+     "rehaul": {
+@@ -475,7 +476,8 @@
+       "test": "測試",
+       "hotkeyToStartStop": "{{hotkey}} 開始/停止",
+       "holdHotkey": "按住 {{hotkey}}",
+-      "textareaPlaceholder": "點擊這裡，然後使用快捷鍵開始語音輸入..."
++      "textareaPlaceholder": "點擊這裡，然後使用快捷鍵開始語音輸入...",
++      "hybridDescription": "Tap to keep it on, hold to talk"
+     },
+     "voiceAgent": {
+       "title": "語音助理設定",
+diff --git a/src/stores/settingsStore.ts b/src/stores/settingsStore.ts
+index 221095f3..0d5f56fa 100644
+--- a/src/stores/settingsStore.ts
++++ b/src/stores/settingsStore.ts
+@@ -3,6 +3,7 @@ import { API_ENDPOINTS } from "../config/constants";
+ import i18n, { normalizeUiLanguage } from "../i18n";
+ import { ensureAgentNameInDictionary } from "../utils/agentName";
+ import { chooseDictionaryStartupAction } from "../helpers/dictionaryStartup";
++import { normalizeActivationMode, type ActivationMode } from "../helpers/activationMode";
+ import { DEFAULT_FILLER_WORDS } from "../helpers/fillerWords";
+ import logger from "../utils/logger";
+ import whisperVadConstants from "../constants/whisperVad.json";
+@@ -955,7 +956,7 @@ export interface SettingsState
+   setOnboardingUseCases: (useCases: string[]) => void;
+   setOnboardingUseCaseNote: (note: string) => void;
+   setSpokenLanguages: (languages: string[]) => void;
+-  setActivationMode: (mode: "tap" | "push") => void;
++  setActivationMode: (mode: ActivationMode) => void;
+ 
+   setPreferBuiltInMic: (value: boolean) => void;
+   setMicrophoneSelectionMode: (mode: MicrophoneSelectionMode) => void;
+@@ -1357,8 +1358,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
+   meetingHotkeyLayoutMode: (readString("meetingHotkeyLayoutMode", "full-width") === "side-panel"
+     ? "side-panel"
+     : "full-width") as "side-panel" | "full-width",
+-  activationMode: (readString("activationMode", "tap") === "push" ? "push" : "tap") as
+-    "tap" | "push",
++  activationMode: normalizeActivationMode(readString("activationMode", "tap")),
+ 
+   microphoneSelectionMode: (() => {
+     const mode = readString("microphoneSelectionMode", "system");
+@@ -2099,7 +2099,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
+     set({ spokenLanguages: languages });
+   },
+ 
+-  setActivationMode: (mode: "tap" | "push") => {
++  setActivationMode: (mode: ActivationMode) => {
+     if (isBrowser) localStorage.setItem("activationMode", mode);
+     set({ activationMode: mode });
+     if (isBrowser) {
+@@ -3188,8 +3188,9 @@ export async function initializeSettings(): Promise<void> {
+     try {
+       let envMode = await window.electronAPI.getActivationMode?.();
+       if (envMode && envMode !== state.activationMode) {
+-        if (isBrowser) localStorage.setItem("activationMode", envMode);
+-        useSettingsStore.setState({ activationMode: envMode });
++        const nextMode = normalizeActivationMode(envMode);
++        if (isBrowser) localStorage.setItem("activationMode", nextMode);
++        useSettingsStore.setState({ activationMode: nextMode });
+       }
+     } catch (err) {
+       logger.warn(
+diff --git a/src/types/electron.ts b/src/types/electron.ts
+index 168f8f6e..87a29d56 100644
+--- a/src/types/electron.ts
++++ b/src/types/electron.ts
+@@ -2063,8 +2063,8 @@ declare global {
+       saveDictationKey?: (key: string) => Promise<void>;
+ 
+       // Activation mode persistence (file-based for reliable startup)
+-      getActivationMode?: () => Promise<"tap" | "push">;
+-      saveActivationMode?: (mode: "tap" | "push") => Promise<void>;
++      getActivationMode?: () => Promise<"tap" | "push" | "hybrid">;
++      saveActivationMode?: (mode: "tap" | "push" | "hybrid") => Promise<void>;
+ 
+       // Debug logging
+       getLogLevel?: () => Promise<string>;
+@@ -2121,7 +2121,7 @@ declare global {
+       openWhisperModelsFolder?: () => Promise<{ success: boolean; error?: string }>;
+ 
+       // Windows Push-to-Talk notifications
+-      notifyActivationModeChanged?: (mode: "tap" | "push") => void;
++      notifyActivationModeChanged?: (mode: "tap" | "push" | "hybrid") => void;
+       notifyHotkeyChanged?: (hotkey: string) => void;
+       registerMeetingHotkey?: (hotkey: string) => Promise<{ success: boolean; message?: string }>;
+       notifyFloatingIconAutoHideChanged?: (enabled: boolean) => void;
+diff --git a/test/helpers/activationMode.test.js b/test/helpers/activationMode.test.js
+new file mode 100644
+index 00000000..0c042988
+--- /dev/null
++++ b/test/helpers/activationMode.test.js
+@@ -0,0 +1,88 @@
++const test = require("node:test");
++const assert = require("node:assert/strict");
++
++const {
++  HYBRID_TAP_THRESHOLD_MS,
++  normalizeActivationMode,
++  usesKeyRelease,
++  toHotkeyRegistrationMode,
++  resolveDictationPress,
++  resolveDictationRelease,
++} = require("../../src/helpers/activationMode");
++
++test("unknown modes normalize to tap; hybrid survives", () => {
++  assert.equal(normalizeActivationMode("hybrid"), "hybrid");
++  assert.equal(normalizeActivationMode("push"), "push");
++  assert.equal(normalizeActivationMode("tap"), "tap");
++  assert.equal(normalizeActivationMode(undefined), "tap");
++  assert.equal(normalizeActivationMode("bogus"), "tap");
++});
++
++test("hybrid needs key-release plumbing and registers as push", () => {
++  assert.equal(usesKeyRelease("tap"), false);
++  assert.equal(usesKeyRelease("push"), true);
++  assert.equal(usesKeyRelease("hybrid"), true);
++  assert.equal(toHotkeyRegistrationMode("hybrid"), "push");
++  assert.equal(toHotkeyRegistrationMode("tap"), "tap");
++});
++
++test("press: tap toggles, push holds, hybrid holds unless a latched recording runs", () => {
++  assert.equal(resolveDictationPress({ mode: "tap", isRecording: false }), "toggle");
++  assert.equal(resolveDictationPress({ mode: "tap", isRecording: true }), "toggle");
++  assert.equal(resolveDictationPress({ mode: "push", isRecording: false }), "hold");
++  assert.equal(resolveDictationPress({ mode: "hybrid", isRecording: false }), "hold");
++  assert.equal(resolveDictationPress({ mode: "hybrid", isRecording: true }), "stop");
++});
++
++test("release in push mode: stop when recording, cancel otherwise", () => {
++  assert.equal(resolveDictationRelease({ mode: "push", heldMs: 50, isRecording: false }), "cancel");
++  assert.equal(resolveDictationRelease({ mode: "push", heldMs: 50, isRecording: true }), "stop");
++  assert.equal(resolveDictationRelease({ mode: "push", heldMs: 2000, isRecording: true }), "stop");
++});
++
++test("release in hybrid mode: short press latches, long press stops", () => {
++  const below = HYBRID_TAP_THRESHOLD_MS - 1;
++  const atThreshold = HYBRID_TAP_THRESHOLD_MS;
++  assert.equal(
++    resolveDictationRelease({ mode: "hybrid", heldMs: 80, isRecording: false }),
++    "latch"
++  );
++  assert.equal(
++    resolveDictationRelease({ mode: "hybrid", heldMs: below, isRecording: true }),
++    "latch"
++  );
++  assert.equal(
++    resolveDictationRelease({ mode: "hybrid", heldMs: atThreshold, isRecording: true }),
++    "stop"
++  );
++  assert.equal(
++    resolveDictationRelease({ mode: "hybrid", heldMs: 5000, isRecording: true }),
++    "stop"
++  );
++  assert.equal(
++    resolveDictationRelease({ mode: "hybrid", heldMs: 5000, isRecording: false }),
++    "cancel"
++  );
++});
++
++test("a forced release (listener reset, safety timeout) never latches", () => {
++  assert.equal(
++    resolveDictationRelease({ mode: "hybrid", heldMs: 10, isRecording: true, force: true }),
++    "stop"
++  );
++  assert.equal(
++    resolveDictationRelease({ mode: "hybrid", heldMs: 10, isRecording: false, force: true }),
++    "cancel"
++  );
++});
++
++test("a tap-latch-tap cycle on one key", () => {
++  // First tap: press with nothing running -> hold state machine; release at 120 ms latches.
++  assert.equal(resolveDictationPress({ mode: "hybrid", isRecording: false }), "hold");
++  assert.equal(
++    resolveDictationRelease({ mode: "hybrid", heldMs: 120, isRecording: true }),
++    "latch"
++  );
++  // Second tap: press with the latched recording running -> stop.
++  assert.equal(resolveDictationPress({ mode: "hybrid", isRecording: true }), "stop");
++});
+diff --git a/test/helpers/activationModeSelector.test.js b/test/helpers/activationModeSelector.test.js
+index fa1e028c..64206d23 100644
+--- a/test/helpers/activationModeSelector.test.js
++++ b/test/helpers/activationModeSelector.test.js
+@@ -26,9 +26,15 @@ test("an unsupported Hold option stays explained while Tap remains usable", () =
+   );
+   const buttons = markup.match(/<button[^>]*>/g);
+ 
+-  assert.equal(buttons.length, 2);
++  assert.equal(buttons.length, 3);
+   assert.doesNotMatch(buttons[0], /disabled/);
+   assert.match(buttons[1], /disabled/);
++  // Hybrid needs key-release events too, so it is unavailable wherever Hold is.
++  assert.match(buttons[2], /disabled/);
++  assert.match(
++    buttons[2],
++    /aria-label="common\.hybrid: Choose a hotkey with a non-modifier key\."/
++  );
+   assert.match(buttons[1], /title="Choose a hotkey with a non-modifier key\."/);
+   assert.match(buttons[1], /aria-label="common\.hold: Choose a hotkey with a non-modifier key\."/);
+ });
+-- 
+2.55.0
+

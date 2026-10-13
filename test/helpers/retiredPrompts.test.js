@@ -115,6 +115,7 @@ test("current-hash snapshot matches the live locale bundles (ratchet)", async ()
   }
   const { PROMPT_KINDS } = await loadRegistry();
   expected.chatAgent = sha256(PROMPT_KINDS.chatAgent.fallback);
+  expected.grill = sha256(PROMPT_KINDS.grill.fallback);
 
   assert.deepEqual(
     CURRENT_DEFAULT_PROMPT_HASHES,

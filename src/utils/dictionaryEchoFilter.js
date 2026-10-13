@@ -122,6 +122,23 @@ export function matchesDictionaryPrompt(text, dictionaryPrompt) {
   return textComposition >= 0.9 && dictionaryUsage >= 0.7;
 }
 
+// The hub caps a transcription prompt at 1000 UTF-16 units (protocol 10), and
+// hubFirst.js cuts the prompt there before sending (capPrompt). An echo of that
+// cut prompt covers too few of a long dictionary's words to match the full
+// prompt (rtech-whisper#130), so the hub path checks the cut prompt as well.
+// This is a renderer-side copy of hubFirst's capPrompt (a CommonJS main-process
+// module the renderer cannot import); test/helpers/dictionaryEchoFilter.test.js
+// holds the two in step.
+export const HUB_PROMPT_MAX_CHARS = 1000;
+
+export function capHubPrompt(prompt) {
+  if (typeof prompt !== "string" || prompt.length <= HUB_PROMPT_MAX_CHARS) return prompt;
+  const end = /[\uD800-\uDBFF]/.test(prompt[HUB_PROMPT_MAX_CHARS - 1])
+    ? HUB_PROMPT_MAX_CHARS - 1
+    : HUB_PROMPT_MAX_CHARS;
+  return prompt.slice(0, end);
+}
+
 export function isLikelyDictionaryPromptFragment(text, dictionaryPrompt) {
   return analyzeDictionaryPromptFragment(text, dictionaryPrompt).isPromptFragment;
 }

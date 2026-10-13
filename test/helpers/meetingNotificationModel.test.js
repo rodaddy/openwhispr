@@ -37,6 +37,49 @@ test("auto-end presentation picks body copy by reason and defaults to mic-releas
   assert.equal(bodyFor("unknown-reason"), "meetingNotification.autoEnd.body.micReleased");
 });
 
+test("auto-end confirm presentation counts down with Stop now and Keep recording", async () => {
+  const { getMeetingNotificationPresentation } = await load();
+
+  assert.deepEqual(
+    getMeetingNotificationPresentation(
+      {
+        kind: "auto-end",
+        sessionId: "meeting-2",
+        expiresAt: 130_001,
+        reason: "silence",
+        phase: "confirm",
+      },
+      120
+    ),
+    {
+      titleKey: "meetingNotification.autoEnd.confirm.title",
+      bodyKey: "meetingNotification.autoEnd.confirm.body",
+      bodyValues: { seconds: 120 },
+      actionKey: "meetingNotification.autoEnd.confirm.stop",
+      action: "stop",
+      secondaryActionKey: "meetingNotification.autoEnd.confirm.keep",
+      secondaryAction: "keep",
+      dismissible: false,
+      allowTitleWrap: true,
+    }
+  );
+});
+
+test("every locale carries the auto-end confirm copy with the seconds placeholder", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const root = path.join(__dirname, "../../src/locales");
+  for (const lang of fs.readdirSync(root).filter((name) => !name.includes("."))) {
+    const strings = JSON.parse(fs.readFileSync(path.join(root, lang, "translation.json"), "utf8"));
+    const confirm = strings.meetingNotification.autoEnd.confirm;
+    for (const key of ["title", "body", "keep", "stop"]) {
+      assert.equal(typeof confirm[key], "string", `${lang}.${key}`);
+      assert.ok(confirm[key].length > 0, `${lang}.${key}`);
+    }
+    assert.match(confirm.body, /\{\{seconds\}\}/, lang);
+  }
+});
+
 test("detection presentation preserves event title, join action, and dismissal", async () => {
   const { getMeetingNotificationPresentation } = await load();
 
@@ -60,6 +103,27 @@ test("detection presentation preserves event title, join action, and dismissal",
       action: "join",
       dismissible: true,
       allowTitleWrap: false,
+    }
+  );
+});
+
+test("calendar end presentation offers exactly stop-and-save or keep-recording", async () => {
+  const { getMeetingNotificationPresentation } = await load();
+
+  assert.deepEqual(
+    getMeetingNotificationPresentation(
+      { kind: "calendar-end", sessionId: "meeting-1", eventId: "event-1" },
+      0
+    ),
+    {
+      titleKey: "meetingNotification.calendarEnd.title",
+      bodyKey: "meetingNotification.calendarEnd.body",
+      actionKey: "meetingNotification.calendarEnd.stop",
+      action: "stop",
+      secondaryActionKey: "meetingNotification.calendarEnd.keep",
+      secondaryAction: "keep",
+      dismissible: false,
+      allowTitleWrap: true,
     }
   );
 });
@@ -183,4 +247,32 @@ test("only an explicit success keeps the auto-end card hidden", async () => {
   // wired bridge resolves undefined, which is not a success.
   assert.equal(shouldRestoreAutoEndCard(undefined), true);
   assert.equal(shouldRestoreAutoEndCard(null), true);
+});
+
+test("a grill prompt's primary action is Start grill", async () => {
+  const { getMeetingNotificationPresentation } = await load();
+
+  assert.deepEqual(
+    getMeetingNotificationPresentation(
+      {
+        kind: "detection",
+        detectionId: "grill:evt-1",
+        source: "grill",
+        key: "evt-1",
+        event: { summary: "Life Story 3" },
+        variant: "starting",
+        joinUrl: null,
+        grill: { kind: "lifetime", chapter: 3 },
+      },
+      0
+    ),
+    {
+      title: "Life Story 3",
+      bodyKey: "meetingNotification.grill.body",
+      actionKey: "meetingNotification.grill.start",
+      action: "start-grill",
+      dismissible: true,
+      allowTitleWrap: false,
+    }
+  );
 });

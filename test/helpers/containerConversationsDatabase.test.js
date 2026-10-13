@@ -946,3 +946,67 @@ test("relocateRevokedFolder moves or retires the folder's conversations", (t) =>
     0
   );
 });
+
+test("upsertNoteFromCloud stores a null or missing cloud title as Untitled Note (#320)", (t) => {
+  const db = createDb(t);
+  if (!db) return;
+  const privateId = db.getPrivateSpaceId();
+
+  const inserted = db.upsertNoteFromCloud(
+    {
+      id: "cloud-null-title",
+      client_note_id: "client-null-title",
+      title: null,
+      content: "phone body",
+      created_at: "2026-07-01 10:00:00",
+      updated_at: "2026-07-01 10:00:00",
+    },
+    null,
+    privateId
+  );
+  assert.equal(inserted?.title, "Untitled Note");
+  assert.equal(inserted?.content, "phone body");
+
+  const existing = db.upsertNoteFromCloud(
+    {
+      id: "cloud-titled",
+      client_note_id: "client-titled",
+      title: "Had a title",
+      content: "first",
+      created_at: "2026-07-01 10:00:00",
+      updated_at: "2026-07-01 10:00:00",
+    },
+    null,
+    privateId
+  );
+  assert.equal(existing.title, "Had a title");
+
+  const updated = db.upsertNoteFromCloud(
+    {
+      id: "cloud-titled",
+      client_note_id: "client-titled",
+      title: null,
+      content: "second",
+      created_at: "2026-07-01 10:00:00",
+      updated_at: "2026-07-02 10:00:00",
+    },
+    null,
+    privateId
+  );
+  assert.equal(updated?.title, "Untitled Note");
+  assert.equal(updated?.content, "second");
+
+  const missing = db.upsertNoteFromCloud(
+    {
+      id: "cloud-missing-title",
+      client_note_id: "client-missing-title",
+      content: "no title key",
+      created_at: "2026-07-01 10:00:00",
+      updated_at: "2026-07-01 10:00:00",
+    },
+    null,
+    privateId
+  );
+  assert.equal(missing?.title, "Untitled Note");
+  assert.equal(missing?.content, "no title key");
+});

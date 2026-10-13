@@ -9,7 +9,7 @@ const CALENDAR_TIMEOUT_MS = 2 * 60 * 1000;
 const MIN_RESUME_MS = 5 * 1000;
 
 function getNotificationTimeoutMs(source) {
-  return source === "calendar" ? CALENDAR_TIMEOUT_MS : DETECTION_TIMEOUT_MS;
+  return source === "calendar" || source === "grill" ? CALENDAR_TIMEOUT_MS : DETECTION_TIMEOUT_MS;
 }
 
 // Auto-dismiss countdown for the meeting notification overlay, pausable while

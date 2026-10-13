@@ -84,3 +84,16 @@ export interface Contact {
   email: string;
   display_name: string | null;
 }
+
+export interface CalendarSyncFailure {
+  kind: "auth" | "other";
+  since: number;
+  message: string;
+}
+
+export interface CalendarAccountSyncHealth {
+  lastSuccessAt: number | null;
+  failure: CalendarSyncFailure | null;
+}
+
+export type CalendarSyncHealthMap = Record<string, CalendarAccountSyncHealth>;

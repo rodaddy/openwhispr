@@ -1,6 +1,11 @@
 const fs = require("fs");
 const path = require("path");
 const { app } = require("electron");
+const { selectLogsToPrune, isDebugLogName } = require("./logPrunePolicy");
+
+const PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_LOG_LEVEL = "debug";
+const localDateKey = (d = new Date()) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 
 const LOG_LEVELS = {
   trace: 10,
@@ -54,13 +59,14 @@ class DebugLogger {
 
     // Check if app is ready before accessing app.getPath()
     // This is critical because app.getPath() can hang or fail before app.whenReady()
-    if (!app.isReady()) {
+    // `app` is undefined outside the Electron runtime (plain-Node tests).
+    if (!app?.isReady?.()) {
       // App not ready yet, will try again later via ensureFileLogging() or write()
       return;
     }
 
     try {
-      const logsDir = path.join(app.getPath("userData"), "logs");
+      const logsDir = this.getLogsDir();
       if (!fs.existsSync(logsDir)) {
         fs.mkdirSync(logsDir, { recursive: true });
       }
@@ -69,6 +75,7 @@ class DebugLogger {
       this.logFile = path.join(logsDir, `debug-${timestamp}.log`);
 
       this.logStream = fs.createWriteStream(this.logFile, { flags: "a" });
+      this.logDate = localDateKey();
       this.fileLoggingEnabled = true;
       this.fileLoggingPending = false;
 
@@ -98,6 +105,72 @@ class DebugLogger {
     if (this.fileLoggingPending && !this.fileLoggingEnabled) {
       this.initializeFileLogging();
     }
+    this.startLogMaintenance();
+  }
+
+  getLogsDir() {
+    return path.join(app.getPath("userData"), "logs");
+  }
+
+  listDebugLogs() {
+    const dir = this.getLogsDir();
+    if (!fs.existsSync(dir)) return [];
+    return fs
+      .readdirSync(dir)
+      .filter(isDebugLogName)
+      .map((name) => {
+        const stat = fs.statSync(path.join(dir, name));
+        return { name, mtimeMs: stat.mtimeMs, size: stat.size };
+      });
+  }
+
+  currentLogName() {
+    return this.logFile ? path.basename(this.logFile) : null;
+  }
+
+  deleteLogs(names) {
+    let deleted = 0;
+    for (const name of names) {
+      try {
+        fs.unlinkSync(path.join(this.getLogsDir(), name));
+        deleted += 1;
+      } catch (error) {
+        this.warn("Failed to delete log file", { name, error: error.message });
+      }
+    }
+    return deleted;
+  }
+
+  pruneLogs() {
+    try {
+      return this.deleteLogs(
+        selectLogsToPrune(this.listDebugLogs(), this.currentLogName(), Date.now())
+      );
+    } catch (error) {
+      this.warn("Log pruning failed", { error: error.message });
+      return 0;
+    }
+  }
+
+  startLogMaintenance() {
+    if (this.pruneTimer || !app?.isReady?.()) return;
+    this.pruneLogs();
+    this.pruneTimer = setInterval(() => this.pruneLogs(), PRUNE_INTERVAL_MS);
+    this.pruneTimer.unref?.();
+  }
+
+  getLogsUsage() {
+    const logs = this.listDebugLogs();
+    return { fileCount: logs.length, totalBytes: logs.reduce((sum, f) => sum + f.size, 0) };
+  }
+
+  clearLogs() {
+    const current = this.currentLogName();
+    return this.deleteLogs(
+      this.listDebugLogs()
+        .map((f) => f.name)
+        .filter((name) => name !== current)
+    );
   }
 
   resolveLogLevel() {
@@ -111,12 +184,14 @@ class DebugLogger {
       return envLevel;
     }
 
-    return "info";
+    // Debug stays on until the app is production-ready (Rico, 2026-10-13):
+    // info entries never reach the log file, so an info default leaves no trail.
+    return DEFAULT_LOG_LEVEL;
   }
 
   resolveConsoleLogging() {
     // Packaged Windows apps can inherit the launching shell's standard handles.
-    return process.platform !== "win32" || !app.isPackaged || hasConsoleLogOptIn();
+    return process.platform !== "win32" || !app?.isPackaged || hasConsoleLogOptIn();
   }
 
   refreshLogLevel() {
@@ -189,6 +264,14 @@ class DebugLogger {
 
     // Try to initialize file logging if pending and app is ready
     if (this.fileLoggingPending && !this.fileLoggingEnabled) {
+      this.initializeFileLogging();
+    }
+
+    // Rotate daily: the first write after local midnight starts a new file.
+    if (this.logStream && this.logDate !== localDateKey()) {
+      this.logStream.end();
+      this.logStream = null;
+      this.fileLoggingEnabled = false;
       this.initializeFileLogging();
     }
 
@@ -434,3 +517,4 @@ class DebugLogger {
 const debugLogger = new DebugLogger();
 
 module.exports = debugLogger;
+module.exports.DEFAULT_LOG_LEVEL = DEFAULT_LOG_LEVEL;

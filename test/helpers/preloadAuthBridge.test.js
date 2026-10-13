@@ -41,31 +41,29 @@ function loadPreloadApi() {
   return { api: exposedApi, invocations, listeners, sends };
 }
 
-test("auth token-state listener strips the Electron event object", () => {
-  const { api, listeners } = loadPreloadApi();
-  const payload = { generation: 7, hasToken: true };
-  let received;
-  const unsubscribe = api.onAuthTokenStateChanged((state) => {
-    received = state;
-  });
-
-  listeners.get("auth-token-state-changed")?.({ sender: "ipc" }, payload);
-
-  assert.equal(received, payload);
-  unsubscribe();
-  assert.equal(listeners.has("auth-token-state-changed"), false);
-});
-
-test("account ownership operations forward the account and credential generation", async () => {
-  const { api, invocations } = loadPreloadApi();
-
-  await api.setActiveAccountScope("account-a", 7);
-  await api.deleteAccountData("account-a", 7);
-
-  assert.deepEqual(invocations, [
-    ["set-active-account-scope", "account-a", 7],
-    ["delete-account-data", "account-a", 7],
-  ]);
+test("local-only preload exposes no account or managed-cloud capability", () => {
+  const { api } = loadPreloadApi();
+  for (const name of [
+    "authClearSession",
+    "authGetToken",
+    "authGetTokenState",
+    "authSetToken",
+    "onAuthTokenStateChanged",
+    "setActiveAccountScope",
+    "getActiveAccountScope",
+    "deleteAccountData",
+    "getOAuthProtocol",
+    "cloudTranscribe",
+    "cloudReason",
+    "cloudUsage",
+    "cloudCheckout",
+    "cloudBillingPortal",
+    "transcribeAudioFileCloud",
+    "startAgentStream",
+    "onAgentStreamChunk",
+  ]) {
+    assert.equal(api[name], undefined, name);
+  }
 });
 
 test("meeting stop forwards the optional expected recording session ID", async () => {
@@ -163,74 +161,12 @@ test("the Agent companion owns only its scoped window bridges", async () => {
   );
 });
 
-test("agent streaming forwards correlated start and cancel messages", () => {
-  const { api, sends } = loadPreloadApi();
-  const messages = [{ role: "user", content: "hello" }];
-  const options = { systemPrompt: "Answer clearly." };
-
-  api.startAgentStream("request-a", messages, options);
-  api.cancelAgentStream("request-a");
-
-  assert.deepEqual(sends, [
-    ["cloud-agent-stream-start", "request-a", messages, options],
-    ["cloud-agent-stream-cancel", "request-a"],
-  ]);
-});
-
-test("cloud reasoning cancellation is forwarded to the main process", () => {
-  const { api, sends } = loadPreloadApi();
-
-  api.cancelCloudReason();
-
-  assert.deepEqual(sends, [["cloud-reason-cancel"]]);
-});
-
 test("enterprise reasoning cancellation is forwarded to the main process", () => {
   const { api, sends } = loadPreloadApi();
 
   api.cancelEnterpriseReasoning();
 
   assert.deepEqual(sends, [["enterprise-reasoning-cancel"]]);
-});
-
-test("cloud transcription cancellation is forwarded to the main process", () => {
-  const { api, sends } = loadPreloadApi();
-
-  api.cancelCloudTranscription();
-
-  assert.deepEqual(sends, [["cloud-transcribe-cancel"]]);
-});
-
-test("agent streaming listeners strip Electron events and preserve correlation", () => {
-  const { api, listeners } = loadPreloadApi();
-  const received = {};
-  const cleanups = [
-    api.onAgentStreamChunk((payload) => {
-      received.chunk = payload;
-    }),
-    api.onAgentStreamError((payload) => {
-      received.error = payload;
-    }),
-    api.onAgentStreamEnd((payload) => {
-      received.end = payload;
-    }),
-  ];
-  const chunk = { requestId: "request-a", chunk: { type: "content", text: "hello" } };
-  const error = { requestId: "request-b", error: "failed", code: "SERVER_ERROR" };
-  const end = { requestId: "request-c" };
-
-  listeners.get("cloud-agent-stream-chunk")?.({ sender: "ipc" }, chunk);
-  listeners.get("cloud-agent-stream-error")?.({ sender: "ipc" }, error);
-  listeners.get("cloud-agent-stream-end")?.({ sender: "ipc" }, end);
-
-  assert.equal(received.chunk, chunk);
-  assert.equal(received.error, error);
-  assert.equal(received.end, end);
-
-  for (const cleanup of cleanups) cleanup();
-  assert.equal(listeners.has("cloud-agent-stream-chunk"), false);
-  assert.equal(listeners.has("cloud-agent-stream-error"), false);
-  assert.equal(listeners.has("cloud-agent-stream-end"), false);
 });
 
 test("prepare-dictation forwards the input kind without the Electron event", () => {

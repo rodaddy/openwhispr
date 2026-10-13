@@ -168,3 +168,15 @@ test("drop is idempotent and silent when nothing is held", async () => {
 
   assert.deepEqual(events, []);
 });
+
+test("after a drop the next acquireClone opens fresh instead of reusing the master", async () => {
+  const { hold } = await makeHold();
+  const track = fakeTrack();
+  hold.adoptAndClone(fakeStream(track), "key");
+
+  hold.drop();
+
+  assert.equal(hold.acquireClone("key"), null);
+  assert.equal(track.stopped, 1);
+  assert.equal(track.clones, 1);
+});

@@ -23,16 +23,18 @@ export const LISTENING_ENTRANCE_TIMING = Object.freeze({
   // changes shape. It was 420ms when it also had to hide the native window
   // grow; BASE and RECORDING now share one box (windowConfig.js), so the
   // floating pill's hold is purely the design beat.
-  thinkingMs: 260,
+  // Fork: recording starts within a few ms of the press, so the pill has to
+  // read as listening just as fast. The beats are kept, only shortened.
+  thinkingMs: 40,
   // A recording that starts under the open assistant panel first hands the
   // footer from final actions back to the pill (actions retreat + pill
   // entrance — getAssistantFooterTransitionTimeline). The expansion must not
   // start until that handoff settles, or both animate the same control.
   assistantFooterThinkingMs: 420,
-  expansionMs: 300,
+  expansionMs: 120,
   // Hold the finished footprint briefly so the waveform reveal cannot be
   // perceived as part of the width animation.
-  waveformDelayMs: 100,
+  waveformDelayMs: 20,
 });
 
 // The pill's morph between the two VOICE_PILL_FOOTPRINT boxes. The cancel
@@ -93,18 +95,30 @@ export function resolveAssistantResponseReady({
   );
 }
 
+// Fork: the upstream choreography reached content ~1.5 s after the press and
+// streamed text at ~1.8 s. The same beats now land inside ~0.4 s so the panel
+// is effectively there when the user starts talking.
 export const LIVE_TRANSCRIPT_ENTRANCE_TIMING = Object.freeze({
-  encapsulateMs: 180,
-  encapsulateHoldMs: 140,
-  horizontalMs: 320,
-  controlsDelayMs: 70,
-  controlsRevealMs: 200,
-  contentDelayMs: 110,
-  measurementSettleMs: 220,
-  panelExpansionMs: 320,
-  contentRevealDelayMs: 80,
-  contentSettleMs: 280,
+  encapsulateMs: 40,
+  encapsulateHoldMs: 10,
+  horizontalMs: 120,
+  controlsDelayMs: 10,
+  controlsRevealMs: 60,
+  contentDelayMs: 10,
+  measurementSettleMs: 40,
+  panelExpansionMs: 120,
+  contentRevealDelayMs: 10,
+  contentSettleMs: 20,
 });
+
+// Fork: the panel appears in its final shape on the first frame after the
+// native window has been sized, instead of walking the staged entrance above.
+// The timeline stays exported for the staged path and its tests.
+export const LIVE_TRANSCRIPT_INSTANT_ENTRANCE = true;
+
+export function resolveLiveTranscriptStageDurationMs(stagedMs) {
+  return LIVE_TRANSCRIPT_INSTANT_ENTRANCE ? 0 : stagedMs;
+}
 
 export function getLiveTranscriptEntranceTimeline(timing = LIVE_TRANSCRIPT_ENTRANCE_TIMING) {
   const horizontalAtMs = timing.encapsulateMs + timing.encapsulateHoldMs;
@@ -173,8 +187,12 @@ export function resolveVoicePillDock({
 
 export function getListeningEntranceTimeline({
   afterAssistantFooterHandoff = false,
+  fromArming = false,
   timing = LISTENING_ENTRANCE_TIMING,
 } = {}) {
+  // #563: arming already showed the pressed, expanded listening pill, so the
+  // thinking hold and the expansion have nothing left to stage.
+  if (fromArming) return { expandAtMs: 0, settleAtMs: 0, waveformAtMs: 0 };
   const thinkingMs = afterAssistantFooterHandoff
     ? timing.assistantFooterThinkingMs
     : timing.thinkingMs;
@@ -190,8 +208,19 @@ export function getListeningEntranceTimeline({
  * Stage a recording entrance without delaying microphone capture. `idle` is
  * treated as the first thinking frame so a recording edge cannot paint the
  * final expanded waveform before the layout effect starts the timers.
+ * `isArming` (#563) is a dictation start still opening the mic: the pill takes
+ * the listening shape at the press, with still bars instead of a live
+ * waveform, so it neither reads as processing nor claims audio yet.
  */
-export function resolveListeningEntrancePresentation({ isRecording, phase }) {
+export function resolveListeningEntrancePresentation({ isRecording, isArming = false, phase }) {
+  if (!isRecording && isArming) {
+    return {
+      activeState: "arming",
+      collapseToLogo: false,
+      compactPill: true,
+      waveformVisible: true,
+    };
+  }
   if (!isRecording) {
     return {
       activeState: null,
@@ -257,6 +286,39 @@ export function resolveVoiceActivityPresentation({
   }
 
   return { activeState: null, compactPill: false, isAgentThinking: false };
+}
+
+// How long the pill holds the latency caption after a pasted take (#699).
+export const LATENCY_CAPTION_MS = 2500;
+
+/**
+ * The caption's flash phase. A pasted take queues the flash ("pending") and it
+ * starts ("showing") once the pill rests, so the hold is never spent behind a
+ * busy pill or a closing panel. A new recording or the setting going off drops
+ * a queued flash; any activity ends a running one.
+ */
+export function resolveLatencyFlashPhase({ phase, atRest, recording, settingOn }) {
+  if (phase === "pending") {
+    if (!settingOn || recording) return "idle";
+    return atRest ? "showing" : "pending";
+  }
+  if (phase === "showing") return settingOn && atRest ? "showing" : "idle";
+  return "idle";
+}
+
+/**
+ * The pill's latency caption: the last take over the last-10 average, shown
+ * in the waveform slot while the post-paste flash runs. It yields to any live
+ * pill activity and to an open panel (the live preview has its own footer
+ * readout). The average needs two takes to mean anything.
+ */
+export function resolveLatencyCaption({ settingOn, flashActive, readout, pillBusy, panelOpen }) {
+  if (!settingOn || !flashActive || pillBusy || panelOpen) return null;
+  if (typeof readout?.lastMs !== "number") return null;
+  return {
+    lastMs: readout.lastMs,
+    averageMs: readout.sampleCount >= 2 ? readout.averageMs : null,
+  };
 }
 
 /**

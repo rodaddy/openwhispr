@@ -13,6 +13,7 @@ const {
 const { getSafeTempDir } = require("./safeTempDir");
 const { createAbortError } = require("./abortError");
 const ParakeetWsServer = require("./parakeetWsServer");
+const { createIdleStopTimer, resolveIdleMs } = require("./idleStopTimer");
 const {
   getModelRuntime,
   getModelType,
@@ -32,8 +33,39 @@ const ONLINE_MAX_SEGMENT_SECONDS = 600;
 const SILENCE_RMS_THRESHOLD = 0.001;
 
 class ParakeetServerManager {
-  constructor() {
+  // The options exist for tests (fake timers); production constructs with none.
+  constructor({ idleMs, setTimeoutImpl, clearTimeoutImpl } = {}) {
     this.wsServer = new ParakeetWsServer();
+    // A loaded 0.6B model holds ~1.2 GB; unload it once nothing has used the
+    // server for a while. Every use path restarts it on demand.
+    this.idleMs = idleMs ?? resolveIdleMs(process.env.PARAKEET_IDLE_UNLOAD_SECONDS);
+    this.idleTimer = createIdleStopTimer({
+      idleMs: this.idleMs,
+      onIdle: () => this._stopForIdle(),
+      setTimeoutImpl,
+      clearTimeoutImpl,
+    });
+  }
+
+  // Stops the ws server directly: an idle unload is not the user turning the
+  // provider off, so it must never go through a stop that persists anything.
+  async _stopForIdle() {
+    debugLogger.debug("Parakeet server stopped after idle", { idleMs: this.idleMs });
+    // Tracked so new work can wait for it: wsServer.stop() keeps the server
+    // looking ready until its process is gone, and a start during that window
+    // would return early onto the dying process.
+    this.idleStop = Promise.resolve(this.wsServer.stop())
+      .catch(() => {})
+      .finally(() => {
+        this.idleStop = null;
+      });
+    await this.idleStop;
+  }
+
+  // Call only while holding the idle counter, so no new idle stop can begin
+  // once this one has settled.
+  async _idleStopSettled() {
+    if (this.idleStop) await this.idleStop;
   }
 
   getBinaryPath(runtime) {
@@ -119,6 +151,22 @@ class ParakeetServerManager {
 
     // An already-cancelled upload skips the ffmpeg conversion entirely.
     throwIfAborted();
+
+    this.idleTimer.begin();
+    try {
+      await this._idleStopSettled();
+      // A cancel during that wait must not reach the ffmpeg conversion either.
+      throwIfAborted();
+      return await this._transcribeWav(audioBuffer, { modelName, modelDir, language, signal });
+    } finally {
+      this.idleTimer.end();
+    }
+  }
+
+  async _transcribeWav(audioBuffer, { modelName, modelDir, language, signal }) {
+    const throwIfAborted = () => {
+      if (signal?.aborted) throw createAbortError("Parakeet transcription cancelled");
+    };
 
     const { wavBuffer, filesToCleanup } = await this._ensureWav(audioBuffer);
     try {
@@ -236,7 +284,11 @@ class ParakeetServerManager {
       return { success: false, reason: `Model "${modelName}" not downloaded` };
     }
 
+    // Held for the whole startup so a pending idle stop cannot kill the
+    // process being started; releasing it arms the idle timer.
+    this.idleTimer.begin();
     try {
+      await this._idleStopSettled();
       await this.wsServer.start(
         modelName,
         modelDir,
@@ -247,10 +299,14 @@ class ParakeetServerManager {
     } catch (error) {
       debugLogger.error("Failed to start parakeet WS server", { error: error.message });
       return { success: false, reason: error.message };
+    } finally {
+      this.idleTimer.end();
     }
   }
 
   async stopServer() {
+    this.idleTimer.cancel();
+    await this._idleStopSettled();
     await this.wsServer.stop();
   }
 
@@ -258,8 +314,51 @@ class ParakeetServerManager {
     return this.wsServer.getStatus();
   }
 
-  createOnlineStream(options) {
-    return this.wsServer.createOnlineStream(options);
+  // A stream counts as in use until it ends. Its end is only ever signalled
+  // three ways: the caller's abort(), the finish() promise settling, or
+  // onError (socket error / close before the server's "Done!").
+  createOnlineStream(options = {}) {
+    // Synchronous, so it cannot wait for an idle stop: callers start the
+    // server first (which does wait), and a stream never opens on one going down.
+    if (this.idleStop) throw new Error("parakeet-ws server is stopping");
+
+    let ended = false;
+    const end = () => {
+      if (ended) return;
+      ended = true;
+      this.idleTimer.end();
+    };
+
+    this.idleTimer.begin();
+    let stream;
+    try {
+      stream = this.wsServer.createOnlineStream({
+        ...options,
+        onError: (error) => {
+          end();
+          options.onError?.(error);
+        },
+      });
+    } catch (error) {
+      end();
+      throw error;
+    }
+
+    const { finish, abort } = stream;
+    stream.finish = (...args) => {
+      const finished = finish(...args);
+      // Not chained onto the returned promise: a rejection stays the caller's.
+      Promise.resolve(finished).then(end, end);
+      return finished;
+    };
+    stream.abort = (...args) => {
+      try {
+        return abort(...args);
+      } finally {
+        end();
+      }
+    };
+    return stream;
   }
 }
 

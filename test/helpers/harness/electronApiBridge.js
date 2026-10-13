@@ -56,6 +56,9 @@ function inertAnalyticsApi() {
 function createElectronApi(db, options = {}) {
   if (!db) throw new TypeError("createElectronApi requires a DatabaseManager");
   const cloud = options.cloud;
+  // Hub mode: { getUrl, getKeyState } from the main-process hub bridge. With
+  // it, refreshHubMode() reads a URL and a device key, as on a real Mac.
+  const hub = options.hub;
   // UI signals SyncService rebroadcasts through the main process
   // (space-revoked, note-relocated, …), recorded for assertions.
   const syncEvents = [];
@@ -70,6 +73,13 @@ function createElectronApi(db, options = {}) {
 
     // Auth
     authGetTokenState: async () => ({ token: AUTH_TOKEN, generation: AUTH_GENERATION }),
+
+    ...(hub
+      ? {
+          hubGetUrl: async () => hub.getUrl(),
+          hubGetDeviceKeyState: async () => hub.getKeyState(),
+        }
+      : {}),
 
     emitSyncEvent: async (name, payload) => {
       syncEvents.push({ name, payload });

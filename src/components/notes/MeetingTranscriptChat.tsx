@@ -1,7 +1,7 @@
 import { memo, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Check, Loader2, ShieldCheck, Sparkles, Users, X } from "lucide-react";
+import { Check, Flag, Loader2, ShieldCheck, Sparkles, Users, X } from "lucide-react";
 import { useStickToBottom } from "../../hooks/useStickToBottom";
 import { Popover, PopoverTrigger, PopoverContent } from "../ui/popover";
 import { Toggle } from "../ui/toggle";
@@ -61,6 +61,8 @@ const getEffectiveSpeakerKey = (
   segment: TranscriptSegment,
   speakerMappings?: Record<string, string>
 ): string => {
+  // A highlight card breaks the speaker run on both sides of it.
+  if (segment.source === "highlight") return `highlight:${segment.id}`;
   const name = resolveSegmentSpeakerName(segment, speakerMappings);
   if (name) return `name:${name.toLowerCase()}`;
   if (segment.speaker) return `id:${segment.speaker}`;
@@ -973,25 +975,44 @@ export function MeetingTranscriptChat({
                     transform: `translateY(${virtualItem.start}px)`,
                   }}
                 >
-                  <SegmentRow
-                    segment={segment}
-                    selfSide={selfSide}
-                    sameSpeaker={i > 0 && rowMeta[i - 1].key === key}
-                    isFirst={i === 0}
-                    isNewest={i === segments.length - 1}
-                    colorIdx={isSystemSpeaker ? (colorByKey.get(key) ?? 0) : 0}
-                    isSelected={selectedSegmentIds?.has(segment.id) ?? false}
-                    activeName={activeName}
-                    matchedProfile={activeName ? profilesByName.get(activeName) : undefined}
-                    speakerProfiles={speakerProfiles}
-                    participants={participants}
-                    onMapSpeaker={onMapSpeaker}
-                    onConfirmSuggestion={onConfirmSuggestion}
-                    onDismissSuggestion={onDismissSuggestion}
-                    onAttachSpeakerEmail={onAttachSpeakerEmail}
-                    onToggleSelect={onToggleSelect}
-                    t={t}
-                  />
+                  {segment.source === "highlight" ? (
+                    <div
+                      className="flex items-start gap-2 rounded-lg border-l-2 border-amber-500 bg-amber-500/10 px-3 py-1.5 text-xs text-foreground"
+                      data-segment-source="highlight"
+                    >
+                      <Flag
+                        size={12}
+                        className="mt-0.5 shrink-0 text-amber-500"
+                        aria-hidden="true"
+                      />
+                      <div className="min-w-0">
+                        <span className="mr-1.5 font-medium text-amber-600 dark:text-amber-400">
+                          {t("notes.highlight.label")}
+                        </span>
+                        <span className="whitespace-pre-wrap break-words">{segment.text}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <SegmentRow
+                      segment={segment}
+                      selfSide={selfSide}
+                      sameSpeaker={i > 0 && rowMeta[i - 1].key === key}
+                      isFirst={i === 0}
+                      isNewest={i === segments.length - 1}
+                      colorIdx={isSystemSpeaker ? (colorByKey.get(key) ?? 0) : 0}
+                      isSelected={selectedSegmentIds?.has(segment.id) ?? false}
+                      activeName={activeName}
+                      matchedProfile={activeName ? profilesByName.get(activeName) : undefined}
+                      speakerProfiles={speakerProfiles}
+                      participants={participants}
+                      onMapSpeaker={onMapSpeaker}
+                      onConfirmSuggestion={onConfirmSuggestion}
+                      onDismissSuggestion={onDismissSuggestion}
+                      onAttachSpeakerEmail={onAttachSpeakerEmail}
+                      onToggleSelect={onToggleSelect}
+                      t={t}
+                    />
+                  )}
                 </div>
               );
             })}

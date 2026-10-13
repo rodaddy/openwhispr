@@ -10,6 +10,7 @@ const originalLoad = Module._load;
 // scaffolding in test/helpers/retryTranscriptionHandler.test.js.
 const handlers = new Map();
 const onHandlers = new Map();
+const screenCaptureCalls = [];
 
 const electronStub = {
   app: {
@@ -70,6 +71,16 @@ Module._load = function loadWithMocks(request, parent, isMain) {
     if (request === "./windowBroadcast") {
       return { broadcastToWindows: () => {} };
     }
+    if (request === "./screenContextCapture") {
+      return {
+        getAccessStatus: () => "granted",
+        getAccessResult: () => ({ granted: true }),
+        captureActiveDisplay: async (bounds) => {
+          screenCaptureCalls.push(bounds);
+          return { mediaType: "image/jpeg", data: "captured" };
+        },
+      };
+    }
   }
   return originalLoad.call(this, request, parent, isMain);
 };
@@ -95,6 +106,10 @@ let target;
 function buildFakeThis() {
   target = {
     sessionId: "test-session",
+    textEditMonitor: {
+      lastTargetPid: 42,
+      getTargetWindowBounds: async () => ({ x: 10, y: 20, width: 30, height: 40 }),
+    },
   };
   return new Proxy(target, {
     get: (t, prop) => (prop in t ? t[prop] : anything()),
@@ -168,6 +183,26 @@ test.before(() => {
     onHandlers.get("dictation-audio-level-changed"),
     "dictation-audio-level-changed must be registered"
   );
+  assert.ok(handlers.get("capture-screen-context"), "capture-screen-context must be registered");
+});
+
+test("screen-context IPC captures inside the WindowManager protection guard", async () => {
+  screenCaptureCalls.length = 0;
+  const calls = [];
+  installWindowManager({
+    withScreenContextProtection: async (capture) => {
+      calls.push("protect");
+      const result = await capture();
+      calls.push("restore");
+      return result;
+    },
+  });
+
+  const result = await handlers.get("capture-screen-context")({ sender: {} });
+
+  assert.deepEqual(calls, ["protect", "restore"]);
+  assert.deepEqual(screenCaptureCalls, [{ x: 10, y: 20, width: 30, height: 40 }]);
+  assert.deepEqual(result, { mediaType: "image/jpeg", data: "captured" });
 });
 
 test.after(() => {

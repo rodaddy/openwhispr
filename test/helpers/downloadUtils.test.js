@@ -99,3 +99,63 @@ test("downloadFile waits for a cancelled write stream to close before removing i
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+async function withMockedDownloadUtils(response, run) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "downloadUtils-test-"));
+  const electronPath = require.resolve("electron");
+  const downloadUtilsPath = require.resolve("../../src/helpers/downloadUtils.js");
+  const originalElectronCache = require.cache[electronPath];
+  require.cache[electronPath] = { exports: createElectronMock(response) };
+  delete require.cache[downloadUtilsPath];
+  try {
+    await run(require(downloadUtilsPath), path.join(tempDir, "model.bin"));
+  } finally {
+    delete require.cache[downloadUtilsPath];
+    if (originalElectronCache) require.cache[electronPath] = originalElectronCache;
+    else delete require.cache[electronPath];
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+test("downloadFile with keepPartial leaves the received bytes in the temp file after a cancel", async () => {
+  const response = new PassThrough();
+  response.statusCode = 200;
+  response.headers = { "content-length": "10" };
+
+  await withMockedDownloadUtils(response, async ({ createDownloadSignal, downloadFile }, dest) => {
+    const { signal, abort } = createDownloadSignal();
+    const done = downloadFile("https://example.com/model.bin", dest, {
+      signal,
+      maxRetries: 0,
+      keepPartial: true,
+    });
+    done.catch(() => {});
+
+    response.write("12345");
+    // Only bytes already flushed to disk survive a cancel, so wait for them.
+    const flushed = () => fs.existsSync(`${dest}.tmp`) && fs.statSync(`${dest}.tmp`).size === 5;
+    for (let i = 0; i < 200 && !flushed(); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    abort();
+
+    await assert.rejects(done, { isAbort: true });
+    assert.equal(fs.readFileSync(`${dest}.tmp`, "utf8"), "12345");
+  });
+});
+
+test("downloadFile with keepPartial leaves an earlier partial in place when the server refuses", async () => {
+  const response = new PassThrough();
+  response.statusCode = 503;
+  response.headers = {};
+
+  await withMockedDownloadUtils(response, async ({ downloadFile }, dest) => {
+    fs.writeFileSync(`${dest}.tmp`, "12345");
+
+    await assert.rejects(
+      downloadFile("https://example.com/model.bin", dest, { maxRetries: 0, keepPartial: true }),
+      { statusCode: 503 }
+    );
+    assert.equal(fs.readFileSync(`${dest}.tmp`, "utf8"), "12345");
+  });
+});

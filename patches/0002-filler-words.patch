@@ -1,0 +1,680 @@
+From 5e1bcaea8b59a2e78b0b36257f4f2b1ecc3af26c Mon Sep 17 00:00:00 2001
+From: Rico Rojas <rickrojas@gmail.com>
+Date: Tue, 8 Sep 2026 15:59:46 -0400
+Subject: [PATCH] feat(dictation): remove filler words before cleanup or paste
+
+A toggle (default on) and an editable word list, the same shape Fluid
+Voice offers: um, uh, er, ah, eh, umm, uhh, err, ahh, ehh, hmm, hm, mm,
+mmm, erm, urm, ugh. Pure string work in the renderer right after the
+transcript arrives, so it costs nothing and the cleanup model never sees
+the fillers. Whisper large-v3-turbo drops most fillers on its own but
+not all (four clips re-run raw on 2026-09-08: three clean, one kept
+"But, uh, does it, um...").
+
+- fillerWords.js: whole-word, Unicode-aware, case-insensitive; absorbs
+  the commas and dashes around a filler, keeps a real sentence stop, and
+  re-capitalises the word that now opens a sentence
+- settingsStore/useSettings: removeFillerWords and fillerWords, persisted
+- SettingsPage AI Models: toggle, chips with remove, add field, reset
+- audioManager.processTranscriptionCore applies it before reasoning
+
+Claude-Session: https://claude.ai/code/session_015uYKeUK2xoKRQMj5gCikCq
+---
+ src/components/SettingsPage.tsx    |  97 +++++++++++++++++++++++++++-
+ src/helpers/audioManager.js        |  20 +++++-
+ src/helpers/fillerWords.js         | 100 +++++++++++++++++++++++++++++
+ src/hooks/useSettings.ts           |   6 ++
+ src/locales/de/translation.json    |   8 ++-
+ src/locales/en/translation.json    |   8 ++-
+ src/locales/es/translation.json    |   8 ++-
+ src/locales/fr/translation.json    |   8 ++-
+ src/locales/it/translation.json    |   8 ++-
+ src/locales/ja/translation.json    |   8 ++-
+ src/locales/pt/translation.json    |   8 ++-
+ src/locales/ru/translation.json    |   8 ++-
+ src/locales/zh-CN/translation.json |   8 ++-
+ src/locales/zh-TW/translation.json |   8 ++-
+ src/stores/settingsStore.ts        |  14 ++++
+ test/helpers/fillerWords.test.js   |  59 +++++++++++++++++
+ 16 files changed, 364 insertions(+), 12 deletions(-)
+ create mode 100644 src/helpers/fillerWords.js
+ create mode 100644 test/helpers/fillerWords.test.js
+
+diff --git a/src/components/SettingsPage.tsx b/src/components/SettingsPage.tsx
+index c1f523ca..948f936d 100644
+--- a/src/components/SettingsPage.tsx
++++ b/src/components/SettingsPage.tsx
+@@ -36,7 +36,9 @@ import {
+   Wand2,
+   Upload,
+   Languages,
++  X,
+ } from "lucide-react";
++import { DEFAULT_FILLER_WORDS } from "../helpers/fillerWords";
+ import { useAuth } from "../hooks/useAuth";
+ import { AUTH_URL, signOut } from "../lib/auth";
+ import { deleteAccount } from "../lib/accountDeletionRequest";
+@@ -823,6 +825,10 @@ function TranscriptionSection({
+ interface AiModelsSectionProps {
+   useCleanupModel: boolean;
+   setUseCleanupModel: (value: boolean) => void;
++  removeFillerWords: boolean;
++  setRemoveFillerWords: (value: boolean) => void;
++  fillerWords: string[];
++  setFillerWords: (words: string[]) => void;
+   toast: (opts: {
+     title: string;
+     description: string;
+@@ -861,8 +867,27 @@ function NoteFormattingSettings() {
+   );
+ }
+ 
+-function AiModelsSection({ useCleanupModel, setUseCleanupModel, toast }: AiModelsSectionProps) {
++function AiModelsSection({
++  useCleanupModel,
++  setUseCleanupModel,
++  removeFillerWords,
++  setRemoveFillerWords,
++  fillerWords,
++  setFillerWords,
++  toast,
++}: AiModelsSectionProps) {
+   const { t } = useTranslation();
++  const [newFillerWord, setNewFillerWord] = useState("");
++
++  const addFillerWord = () => {
++    const word = newFillerWord.trim().toLowerCase();
++    if (!word || fillerWords.includes(word)) {
++      setNewFillerWord("");
++      return;
++    }
++    setFillerWords([...fillerWords, word]);
++    setNewFillerWord("");
++  };
+ 
+   const handleCleanupModeChange = (mode: InferenceMode) => {
+     const toastKey = CLEANUP_MODE_TOAST_KEY[mode];
+@@ -876,6 +901,68 @@ function AiModelsSection({ useCleanupModel, setUseCleanupModel, toast }: AiModel
+ 
+   return (
+     <div className="space-y-4">
++      <SettingsPanel>
++        <SettingsPanelRow>
++          <SettingsRow
++            label={t("settingsPage.aiModels.removeFillerWords")}
++            description={t("settingsPage.aiModels.removeFillerWordsDescription")}
++          >
++            <Toggle checked={removeFillerWords} onChange={setRemoveFillerWords} />
++          </SettingsRow>
++        </SettingsPanelRow>
++        {removeFillerWords && (
++          <SettingsPanelRow className="border-t border-foreground/4 dark:border-white/3">
++            <div className="space-y-2">
++              <p className="text-xs font-medium text-foreground/60">
++                {t("settingsPage.aiModels.fillerWordsLabel")}
++              </p>
++              <div className="flex flex-wrap gap-1.5">
++                {fillerWords.map((word) => (
++                  <span
++                    key={word}
++                    className="group inline-flex items-center gap-1 rounded-md bg-foreground/5 dark:bg-white/5 px-2 py-1 text-xs text-foreground/60"
++                  >
++                    {word}
++                    <button
++                      type="button"
++                      onClick={() => setFillerWords(fillerWords.filter((w) => w !== word))}
++                      aria-label={t("dictionary.removeWord", { word })}
++                      className="text-foreground/25 hover:text-destructive/70 transition-colors"
++                    >
++                      <X size={11} strokeWidth={2} />
++                    </button>
++                  </span>
++                ))}
++              </div>
++              <div className="flex items-center gap-2">
++                <Input
++                  value={newFillerWord}
++                  onChange={(e) => setNewFillerWord(e.target.value)}
++                  onKeyDown={(e) => {
++                    if (e.key === "Enter") {
++                      e.preventDefault();
++                      addFillerWord();
++                    }
++                  }}
++                  placeholder={t("settingsPage.aiModels.fillerWordsPlaceholder")}
++                  className="h-7 text-xs flex-1"
++                />
++                <Button size="sm" onClick={addFillerWord} disabled={!newFillerWord.trim()}>
++                  {t("settingsPage.aiModels.fillerWordsAdd")}
++                </Button>
++                <Button
++                  size="sm"
++                  variant="ghost"
++                  onClick={() => setFillerWords([...DEFAULT_FILLER_WORDS])}
++                >
++                  {t("settingsPage.aiModels.fillerWordsReset")}
++                </Button>
++              </div>
++            </div>
++          </SettingsPanelRow>
++        )}
++      </SettingsPanel>
++
+       <SettingsPanel>
+         <SettingsPanelRow>
+           <SettingsRow
+@@ -1189,6 +1276,10 @@ export default function SettingsPage({
+     cloudTranscriptionModel,
+     cloudTranscriptionBaseUrl,
+     useCleanupModel,
++    removeFillerWords,
++    fillerWords,
++    setRemoveFillerWords,
++    setFillerWords,
+     dictationKey,
+     activationMode,
+     setActivationMode,
+@@ -4867,6 +4958,10 @@ EOF`,
+                   setUseCleanupModel={(value) => {
+                     updateCleanupSettings({ useCleanupModel: value });
+                   }}
++                  removeFillerWords={removeFillerWords}
++                  setRemoveFillerWords={setRemoveFillerWords}
++                  fillerWords={fillerWords}
++                  setFillerWords={setFillerWords}
+                   toast={toast}
+                 />
+                 <div className="border-t border-border/40 pt-6">
+diff --git a/src/helpers/audioManager.js b/src/helpers/audioManager.js
+index 9685d9af..23e7c17f 100644
+--- a/src/helpers/audioManager.js
++++ b/src/helpers/audioManager.js
+@@ -29,6 +29,7 @@ import { followsSystemDefaultMic } from "./micSelectionRecovery";
+ import { isCacheableMicrophoneResolution, resolvePreferredMicrophone } from "./microphoneSelection";
+ import { isStaleDeviceError } from "./staleMicDevice";
+ import { shouldSaveDiscardedRecording } from "./discardedRecording";
++import { DEFAULT_FILLER_WORDS, removeFillerWords } from "./fillerWords";
+ import {
+   ANALYTICS_COUNTER_VERSION,
+   countSpokenWords,
+@@ -2880,7 +2881,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
+   }
+ 
+   async processTranscriptionCore(text, source, wasCancelled = neverCancelled) {
+-    const normalizedText = typeof text === "string" ? text.trim() : "";
++    let normalizedText = typeof text === "string" ? text.trim() : "";
+ 
+     if (!normalizedText) {
+       logger.logReasoning("TRANSCRIPTION_EMPTY_SKIPPING_REASONING", {
+@@ -2889,6 +2890,23 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
+       });
+       return normalizedText;
+     }
++    // Filler words come out before anything else looks at the transcript: the
++    // cleanup model should never see them, and the no-cleanup path still gets
++    // them removed. Pure string work, so no model call and no added latency.
++    const fillerSettings = getSettings() || {};
++    if (fillerSettings.removeFillerWords) {
++      const withoutFillers = removeFillerWords(
++        normalizedText,
++        fillerSettings.fillerWords || DEFAULT_FILLER_WORDS
++      );
++      if (withoutFillers !== normalizedText) {
++        logger.logReasoning("FILLER_WORDS_REMOVED", {
++          removed: normalizedText.length - withoutFillers.length,
++        });
++        normalizedText = withoutFillers;
++      }
++    }
++
+     if (wasCancelled()) return normalizedText;
+ 
+     logger.logReasoning("TRANSCRIPTION_RECEIVED", {
+diff --git a/src/helpers/fillerWords.js b/src/helpers/fillerWords.js
+new file mode 100644
+index 00000000..ec901e82
+--- /dev/null
++++ b/src/helpers/fillerWords.js
+@@ -0,0 +1,100 @@
++// Filler-word removal. Runs on every transcript before the optional LLM cleanup
++// and before paste, so it must stay pure and cheap: no model call, no I/O.
++// ESM named exports, matching the other renderer-reachable helpers audioManager
++// already imports (dictationRouting.js, discardedRecording.js, localSpeechGate.js).
++// A `module.exports` here throws "module is not defined" under Vite/SSR, which is
++// how the renderer loads this file.
++
++export const DEFAULT_FILLER_WORDS = [
++  "um",
++  "uh",
++  "er",
++  "ah",
++  "eh",
++  "umm",
++  "uhh",
++  "err",
++  "ahh",
++  "ehh",
++  "hmm",
++  "hm",
++  "mm",
++  "mmm",
++  "erm",
++  "urm",
++  "ugh",
++];
++
++// Word characters, Unicode-aware: \b is ASCII-only and would split "über"
++// mid-word. A filler only counts when neither side is a letter, digit, or mark
++// — that is what keeps "summer" and "humm" intact. Both boundaries are
++// lookarounds rather than consumed characters, so a run of adjacent fillers
++// ("does it, um... uh work") matches as one unit instead of the first match
++// eating the boundary the second one needs.
++const WORD_CHAR = "\\p{L}\\p{N}\\p{M}";
++// Soft separators a filler drags along with it: commas and dashes on either
++// side, so "But, uh, does it" leaves no stray comma. Sentence punctuation is
++// handled separately below because it carries meaning the filler does not.
++const SOFT_CHARS = ",\\-\\u2013\\u2014";
++// Sentence-ending punctuation that may trail a filler ("hmm?", "um...").
++const END_CHARS = ".;:!?\\u2026";
++
++function escapeForRegex(word) {
++  return word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
++}
++
++// Trimmed, lowercased, de-duplicated; empty and non-string entries dropped.
++function normalizeWords(words) {
++  if (!Array.isArray(words)) return [];
++  const seen = new Set();
++  for (const word of words) {
++    if (typeof word !== "string") continue;
++    const trimmed = word.trim().toLowerCase();
++    if (trimmed) seen.add(trimmed);
++  }
++  return [...seen];
++}
++
++export function removeFillerWords(text, words = DEFAULT_FILLER_WORDS) {
++  if (typeof text !== "string" || text.length === 0) return text;
++
++  const list = normalizeWords(words);
++  if (list.length === 0) return text;
++
++  const alternation = list.map(escapeForRegex).join("|");
++  // One filler plus the soft separators and spaces that trail it.
++  const unit = `(?<![${WORD_CHAR}])(?:${alternation})(?![${WORD_CHAR}])[${SOFT_CHARS}\\s]*`;
++  // Groups: 1 = soft separators leading INTO the run (absorbed), 2 = the run,
++  // 3 = sentence punctuation trailing the run, 4 = space after that.
++  const pattern = new RegExp(`([${SOFT_CHARS}\\s]*)((?:${unit})+)([${END_CHARS}]*)(\\s*)`, "giu");
++
++  let removedAtStart = false;
++  const stripped = text.replace(pattern, (match, lead, run, end, tail, offset) => {
++    const before = text.slice(0, offset + lead.length).trimEnd();
++    if (before.length === 0) removedAtStart = true;
++    // The filler opened the text or a sentence: the break already exists, so
++    // the filler goes with everything attached to it ("Okay. Um, so" -> "Okay. So").
++    const atSentenceStart = before.length === 0 || /[.;:!?\u2026]$/u.test(before);
++    if (atSentenceStart) return " ";
++    // Mid-sentence: a real stop after the filler belongs to the words before it
++    // ("wide, hmm?" -> "wide?"); a hesitation ellipsis does not.
++    const kept = end.replace(/\u2026|\.{2,}/gu, "");
++    return kept ? kept + " " : " ";
++  });
++  if (stripped === text) return text;
++
++  const out = stripped
++    .replace(/[^\S\r\n]{2,}/g, " ")
++    .replace(/[^\S\r\n]+([,.;:!?…])/g, "$1")
++    .trim();
++
++  if (!out) return out;
++
++  // Re-capitalise a word that now opens the text (only when a filler was
++  // removed from the front) or follows a sentence stop.
++  const capitalised = out.replace(
++    /([.!?\u2026]\s+)(\p{Ll})/gu,
++    (m, sep, c) => sep + c.toUpperCase()
++  );
++  return removedAtStart ? capitalised.replace(/^(\p{Ll})/u, (c) => c.toUpperCase()) : capitalised;
++}
+diff --git a/src/hooks/useSettings.ts b/src/hooks/useSettings.ts
+index 9fe74d36..e38fd18d 100644
+--- a/src/hooks/useSettings.ts
++++ b/src/hooks/useSettings.ts
+@@ -42,6 +42,8 @@ export interface TranscriptionSettings {
+ export interface CleanupSettings {
+   autoGenerateNoteTitle: boolean;
+   useCleanupModel: boolean;
++  removeFillerWords: boolean;
++  fillerWords: string[];
+   useDictationAgent: boolean;
+   cleanupModel: string;
+   cleanupProvider: string;
+@@ -286,6 +288,8 @@ function useSettingsInternal() {
+     autoGenerateNoteTitle: store.autoGenerateNoteTitle,
+     setAutoGenerateNoteTitle: store.setAutoGenerateNoteTitle,
+     useCleanupModel: store.useCleanupModel,
++    removeFillerWords: store.removeFillerWords,
++    fillerWords: store.fillerWords,
+     useDictationAgent: store.useDictationAgent,
+     cleanupModel: store.cleanupModel,
+     cleanupProvider: store.cleanupProvider,
+@@ -329,6 +333,8 @@ function useSettingsInternal() {
+     setCustomDictionary: store.setCustomDictionary,
+     updateCustomDictionary: store.updateCustomDictionary,
+     setUseCleanupModel: store.setUseCleanupModel,
++    setRemoveFillerWords: store.setRemoveFillerWords,
++    setFillerWords: store.setFillerWords,
+     setUseDictationAgent: store.setUseDictationAgent,
+     setCleanupModel: store.setCleanupModel,
+     setCleanupProvider: store.setCleanupProvider,
+diff --git a/src/locales/de/translation.json b/src/locales/de/translation.json
+index 41d54a6a..955a75d3 100644
+--- a/src/locales/de/translation.json
++++ b/src/locales/de/translation.json
+@@ -2083,7 +2083,13 @@
+         "availableTitle": "Einrichtung der Organisation verfügbar",
+         "availableDescription": "{{provider}} ohne Verwaltung von Anmeldedaten nutzen.",
+         "useManaged": "Verwaltet nutzen"
+-      }
++      },
++      "removeFillerWords": "Remove filler words",
++      "removeFillerWordsDescription": "Automatically remove filler sounds like um, uh, er from transcriptions",
++      "fillerWordsLabel": "Filler words to remove:",
++      "fillerWordsAdd": "Add",
++      "fillerWordsReset": "Reset",
++      "fillerWordsPlaceholder": "Add word"
+     },
+     "developer": {
+       "clearCache": "Cache leeren",
+diff --git a/src/locales/en/translation.json b/src/locales/en/translation.json
+index 34b2bde8..b07e0689 100644
+--- a/src/locales/en/translation.json
++++ b/src/locales/en/translation.json
+@@ -2083,7 +2083,13 @@
+         "availableTitle": "Organization setup available",
+         "availableDescription": "Use {{provider}} without managing credentials.",
+         "useManaged": "Use managed"
+-      }
++      },
++      "removeFillerWords": "Remove filler words",
++      "removeFillerWordsDescription": "Automatically remove filler sounds like um, uh, er from transcriptions",
++      "fillerWordsLabel": "Filler words to remove:",
++      "fillerWordsAdd": "Add",
++      "fillerWordsReset": "Reset",
++      "fillerWordsPlaceholder": "Add word"
+     },
+     "developer": {
+       "clearCache": "Clear Cache",
+diff --git a/src/locales/es/translation.json b/src/locales/es/translation.json
+index e912da89..81d74e4f 100644
+--- a/src/locales/es/translation.json
++++ b/src/locales/es/translation.json
+@@ -1842,7 +1842,13 @@
+         "availableTitle": "Configuración de la organización disponible",
+         "availableDescription": "Usa {{provider}} sin gestionar credenciales.",
+         "useManaged": "Usar gestionado"
+-      }
++      },
++      "removeFillerWords": "Remove filler words",
++      "removeFillerWordsDescription": "Automatically remove filler sounds like um, uh, er from transcriptions",
++      "fillerWordsLabel": "Filler words to remove:",
++      "fillerWordsAdd": "Add",
++      "fillerWordsReset": "Reset",
++      "fillerWordsPlaceholder": "Add word"
+     },
+     "developer": {
+       "clearCache": "Borrar caché",
+diff --git a/src/locales/fr/translation.json b/src/locales/fr/translation.json
+index 325d7f69..69fb4494 100644
+--- a/src/locales/fr/translation.json
++++ b/src/locales/fr/translation.json
+@@ -2083,7 +2083,13 @@
+         "availableTitle": "Configuration de l'organisation disponible",
+         "availableDescription": "Utilisez {{provider}} sans gérer d'identifiants.",
+         "useManaged": "Utiliser la version gérée"
+-      }
++      },
++      "removeFillerWords": "Remove filler words",
++      "removeFillerWordsDescription": "Automatically remove filler sounds like um, uh, er from transcriptions",
++      "fillerWordsLabel": "Filler words to remove:",
++      "fillerWordsAdd": "Add",
++      "fillerWordsReset": "Reset",
++      "fillerWordsPlaceholder": "Add word"
+     },
+     "developer": {
+       "clearCache": "Vider le cache",
+diff --git a/src/locales/it/translation.json b/src/locales/it/translation.json
+index 1ef3aa30..803e9966 100644
+--- a/src/locales/it/translation.json
++++ b/src/locales/it/translation.json
+@@ -1794,7 +1794,13 @@
+         "availableTitle": "Configurazione dell'organizzazione disponibile",
+         "availableDescription": "Usa {{provider}} senza gestire credenziali.",
+         "useManaged": "Usa la versione gestita"
+-      }
++      },
++      "removeFillerWords": "Remove filler words",
++      "removeFillerWordsDescription": "Automatically remove filler sounds like um, uh, er from transcriptions",
++      "fillerWordsLabel": "Filler words to remove:",
++      "fillerWordsAdd": "Add",
++      "fillerWordsReset": "Reset",
++      "fillerWordsPlaceholder": "Add word"
+     },
+     "developer": {
+       "clearCache": "Svuota cache",
+diff --git a/src/locales/ja/translation.json b/src/locales/ja/translation.json
+index 349f13b6..c09c3ec7 100644
+--- a/src/locales/ja/translation.json
++++ b/src/locales/ja/translation.json
+@@ -1794,7 +1794,13 @@
+         "availableTitle": "組織の設定が利用できます",
+         "availableDescription": "認証情報を管理せずに {{provider}} を使用できます。",
+         "useManaged": "マネージドを使用"
+-      }
++      },
++      "removeFillerWords": "Remove filler words",
++      "removeFillerWordsDescription": "Automatically remove filler sounds like um, uh, er from transcriptions",
++      "fillerWordsLabel": "Filler words to remove:",
++      "fillerWordsAdd": "Add",
++      "fillerWordsReset": "Reset",
++      "fillerWordsPlaceholder": "Add word"
+     },
+     "developer": {
+       "clearCache": "キャッシュをクリア",
+diff --git a/src/locales/pt/translation.json b/src/locales/pt/translation.json
+index c7130642..affa3ea6 100644
+--- a/src/locales/pt/translation.json
++++ b/src/locales/pt/translation.json
+@@ -1773,7 +1773,13 @@
+         "availableTitle": "Configuração da organização disponível",
+         "availableDescription": "Use {{provider}} sem gerenciar credenciais.",
+         "useManaged": "Usar gerenciado"
+-      }
++      },
++      "removeFillerWords": "Remove filler words",
++      "removeFillerWordsDescription": "Automatically remove filler sounds like um, uh, er from transcriptions",
++      "fillerWordsLabel": "Filler words to remove:",
++      "fillerWordsAdd": "Add",
++      "fillerWordsReset": "Reset",
++      "fillerWordsPlaceholder": "Add word"
+     },
+     "developer": {
+       "clearCache": "Limpar cache",
+diff --git a/src/locales/ru/translation.json b/src/locales/ru/translation.json
+index 9326320c..fc7e48bd 100644
+--- a/src/locales/ru/translation.json
++++ b/src/locales/ru/translation.json
+@@ -1798,7 +1798,13 @@
+         "availableTitle": "Доступна настройка организации",
+         "availableDescription": "Используйте {{provider}} без управления учётными данными.",
+         "useManaged": "Использовать управляемый"
+-      }
++      },
++      "removeFillerWords": "Remove filler words",
++      "removeFillerWordsDescription": "Automatically remove filler sounds like um, uh, er from transcriptions",
++      "fillerWordsLabel": "Filler words to remove:",
++      "fillerWordsAdd": "Add",
++      "fillerWordsReset": "Reset",
++      "fillerWordsPlaceholder": "Add word"
+     },
+     "developer": {
+       "clearCache": "Очистить кеш",
+diff --git a/src/locales/zh-CN/translation.json b/src/locales/zh-CN/translation.json
+index 32cd4bdd..aa51a081 100644
+--- a/src/locales/zh-CN/translation.json
++++ b/src/locales/zh-CN/translation.json
+@@ -1794,7 +1794,13 @@
+         "availableTitle": "可使用组织配置",
+         "availableDescription": "使用 {{provider}}，无需管理凭据。",
+         "useManaged": "使用托管配置"
+-      }
++      },
++      "removeFillerWords": "Remove filler words",
++      "removeFillerWordsDescription": "Automatically remove filler sounds like um, uh, er from transcriptions",
++      "fillerWordsLabel": "Filler words to remove:",
++      "fillerWordsAdd": "Add",
++      "fillerWordsReset": "Reset",
++      "fillerWordsPlaceholder": "Add word"
+     },
+     "developer": {
+       "clearCache": "清除缓存",
+diff --git a/src/locales/zh-TW/translation.json b/src/locales/zh-TW/translation.json
+index 9b0354ac..6d8eb3e3 100644
+--- a/src/locales/zh-TW/translation.json
++++ b/src/locales/zh-TW/translation.json
+@@ -1794,7 +1794,13 @@
+         "availableTitle": "可使用組織設定",
+         "availableDescription": "使用 {{provider}}，無需管理憑證。",
+         "useManaged": "使用託管設定"
+-      }
++      },
++      "removeFillerWords": "Remove filler words",
++      "removeFillerWordsDescription": "Automatically remove filler sounds like um, uh, er from transcriptions",
++      "fillerWordsLabel": "Filler words to remove:",
++      "fillerWordsAdd": "Add",
++      "fillerWordsReset": "Reset",
++      "fillerWordsPlaceholder": "Add word"
+     },
+     "developer": {
+       "clearCache": "清除快取",
+diff --git a/src/stores/settingsStore.ts b/src/stores/settingsStore.ts
+index a122aadf..221095f3 100644
+--- a/src/stores/settingsStore.ts
++++ b/src/stores/settingsStore.ts
+@@ -3,6 +3,7 @@ import { API_ENDPOINTS } from "../config/constants";
+ import i18n, { normalizeUiLanguage } from "../i18n";
+ import { ensureAgentNameInDictionary } from "../utils/agentName";
+ import { chooseDictionaryStartupAction } from "../helpers/dictionaryStartup";
++import { DEFAULT_FILLER_WORDS } from "../helpers/fillerWords";
+ import logger from "../utils/logger";
+ import whisperVadConstants from "../constants/whisperVad.json";
+ import type {
+@@ -330,6 +331,7 @@ const BOOLEAN_SETTINGS = new Set([
+ 
+ const ARRAY_SETTINGS = new Set([
+   "customDictionary",
++  "fillerWords",
+   "snippets",
+   "gcalAccounts",
+   "mcalAccounts",
+@@ -883,6 +885,8 @@ export interface SettingsState
+   setAssemblyAiStreaming: (value: boolean) => void;
+   setAutoGenerateNoteTitle: (value: boolean) => void;
+   setUseCleanupModel: (value: boolean) => void;
++  setRemoveFillerWords: (value: boolean) => void;
++  setFillerWords: (words: string[]) => void;
+   setUseDictationAgent: (value: boolean) => void;
+   setCleanupModel: (value: string) => void;
+   setCleanupProvider: (value: string) => void;
+@@ -1295,6 +1299,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
+ 
+   autoGenerateNoteTitle: readBoolean("autoGenerateNoteTitle", true),
+   useCleanupModel: readBoolean("useCleanupModel", true),
++  removeFillerWords: readBoolean("removeFillerWords", true),
++  fillerWords: readStringArray("fillerWords", DEFAULT_FILLER_WORDS),
+   useDictationAgent: readBoolean("useDictationAgent", true),
+   cleanupModel: readString("cleanupModel", ""),
+   cleanupProvider: readString("cleanupProvider", "openai"),
+@@ -1826,6 +1832,14 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
+   setAssemblyAiStreaming: createBooleanSetter("assemblyAiStreaming"),
+   setAutoGenerateNoteTitle: createBooleanSetter("autoGenerateNoteTitle"),
+   setUseCleanupModel: createBooleanSetter("useCleanupModel"),
++  setRemoveFillerWords: createBooleanSetter("removeFillerWords"),
++
++  // Replaces the whole list, like setCustomDictionary: the settings UI always
++  // hands over the full set it is showing.
++  setFillerWords: (words: string[]) => {
++    if (isBrowser) localStorage.setItem("fillerWords", JSON.stringify(words));
++    set({ fillerWords: words });
++  },
+   setUseDictationAgent: createBooleanSetter("useDictationAgent"),
+   setCleanupProvider: createStringSetter("cleanupProvider"),
+   setCleanupModel: createStringSetter("cleanupModel"),
+diff --git a/test/helpers/fillerWords.test.js b/test/helpers/fillerWords.test.js
+new file mode 100644
+index 00000000..25b2fdd0
+--- /dev/null
++++ b/test/helpers/fillerWords.test.js
+@@ -0,0 +1,59 @@
++const test = require("node:test");
++const assert = require("node:assert/strict");
++
++const load = () => import("../../src/helpers/fillerWords.js");
++
++test("strips fillers with their surrounding punctuation mid-sentence", async () => {
++  const { removeFillerWords } = await load();
++  assert.equal(removeFillerWords("But, uh, does it, um... work"), "But does it work");
++});
++
++test("capitalises the next word when the leading filler is removed", async () => {
++  const { removeFillerWords } = await load();
++  assert.equal(removeFillerWords("Um, hello."), "Hello.");
++});
++
++test("matches fillers regardless of case", async () => {
++  const { removeFillerWords } = await load();
++  assert.equal(removeFillerWords("UH, Ok Um yes"), "Ok yes");
++});
++
++test("never removes a filler that is part of another word", async () => {
++  const { removeFillerWords } = await load();
++  assert.equal(removeFillerWords("summer humm ahead"), "summer humm ahead");
++});
++
++test("honours a custom word list", async () => {
++  const { removeFillerWords } = await load();
++  assert.equal(removeFillerWords("like, basically it works", ["like", "basically"]), "It works");
++  // Words outside the custom list survive.
++  assert.equal(removeFillerWords("um like it", ["like"]), "um it");
++});
++
++test("returns the input unchanged when the list is empty", async () => {
++  const { removeFillerWords } = await load();
++  assert.equal(removeFillerWords("um, hello"), "Hello");
++  assert.equal(removeFillerWords("um, hello", []), "um, hello");
++});
++
++test("exposes the default filler list", async () => {
++  const { DEFAULT_FILLER_WORDS } = await load();
++  assert.ok(Array.isArray(DEFAULT_FILLER_WORDS));
++  assert.ok(DEFAULT_FILLER_WORDS.includes("um"));
++  assert.ok(DEFAULT_FILLER_WORDS.includes("hmm"));
++});
++
++test("keeps the sentence stop before a filler and re-capitalises after it", async () => {
++  const { removeFillerWords } = await load();
++  assert.equal(
++    removeFillerWords("That sucks. Uh Fluid Voice used to take those out."),
++    "That sucks. Fluid Voice used to take those out."
++  );
++  assert.equal(removeFillerWords("Okay. Um, so the plan."), "Okay. So the plan.");
++});
++
++test("a real stop after a mid-sentence filler stays with the words before it", async () => {
++  const { removeFillerWords } = await load();
++  assert.equal(removeFillerWords("It is wide, hmm?"), "It is wide?");
++  assert.equal(removeFillerWords("does it, um... work"), "does it work");
++});
+-- 
+2.55.0
+

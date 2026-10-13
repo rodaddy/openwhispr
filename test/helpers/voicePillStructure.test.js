@@ -58,6 +58,40 @@ test("thinking and recording keep the same persistent glow and pill roots", asyn
   assert.equal((recording.match(/rounded-full bg-current/g) || []).length, expectedBars);
 });
 
+test("recording shows readable held or latched state without changing the pill footprint", async () => {
+  const footprint = await pillFootprints();
+  const held = await renderPill("recording", true, "right", { activationState: "held" });
+  const latched = await renderPill("recording", true, "right", { activationState: "latched" });
+  const idle = await renderPill("idle", false, "right", { activationState: "idle" });
+
+  assert.match(held, />Held</);
+  assert.match(held, /aria-label="Recording, Held"/);
+  assert.match(latched, />Latched</);
+  assert.match(latched, /aria-label="Recording, Latched"/);
+  assert.match(
+    latched,
+    /absolute inset-x-0 bottom-0 flex h-\[9px\] items-center justify-center text-\[9px\] font-medium leading-\[9px\][^>]*data-dictation-activation-state="latched"/
+  );
+  assert.match(latched, /absolute inset-x-0 top-0[^>]*h-3\.5 opacity-100/);
+  assert.match(held, footprint.recording);
+  assert.match(latched, footprint.recording);
+  assert.doesNotMatch(idle, /data-dictation-activation-state/);
+});
+
+test("a resting compact pill shows the two caption lines in the recording footprint", async () => {
+  const footprint = await pillFootprints();
+  const captioned = await renderPill("idle", true, "right", {
+    caption: { top: "532 ms", bottom: "avg 610" },
+  });
+  const recording = await renderPill("recording", true, "right", {
+    caption: { top: "532 ms", bottom: "avg 610" },
+  });
+
+  assert.match(captioned, /data-dictation-latency-caption[^>]*>.*>532 ms<.*>avg 610</);
+  assert.match(captioned, footprint.recording);
+  assert.doesNotMatch(recording, /data-dictation-latency-caption/);
+});
+
 test("one Signal glow serves both identities: blue processing, purple agent", async () => {
   const styles = readDictationStyles();
   const agentThinking = await renderPill("thinking", false, "right", { agentMode: true });
@@ -308,4 +342,22 @@ test("the voice identity performs an actual SVG geometry morph", async () => {
   assert.ok(midpoint.sparkOpacity > 0);
   assert.equal(agent.agentOpacity, 1);
   assert.equal(agent.constructionOpacity, 0);
+});
+
+test("#563: the arming pill wears the listening shape with still bars, no live waveform", async () => {
+  const arming = await renderPill("arming", true);
+  const recording = await renderPill("recording", true);
+  const footprints = await pillFootprints();
+  assert.match(arming, footprints.recording);
+  // Same chrome as listening, none of processing's dimmed text or spinner pulse.
+  assert.match(arming, /border-border-hover bg-surface-1 text-foreground"/);
+  assert.doesNotMatch(arming, /text-foreground\/70/);
+  assert.doesNotMatch(arming, /data-active="true"/);
+  // The resting bars show (pulsing); the live waveform stays hidden.
+  assert.match(
+    arming,
+    /flex items-center justify-center gap-0\.75 animate-pulse[^"]*" style="opacity:1"/
+  );
+  assert.match(arming, /absolute inset-x-0 top-0[^"]*opacity-0/);
+  assert.doesNotMatch(recording, /animate-pulse/);
 });

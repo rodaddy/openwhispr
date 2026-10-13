@@ -14,6 +14,12 @@
 // sides are updated).
 
 export const RETIRED_DEFAULT_PROMPT_HASHES = new Set([
+  //  2843ch second Skippy default (distilled persona, before the [sigh]/[laughter] sound tags)
+  "8321f220252a62374d41d2a95e65f368dbab770c39796624e42bf25bf712a339",
+  //  8270ch first Skippy default (verbatim skippy-calibrated.md + voice contract)
+  "ef42ab295d4e269fb9593410d3ef444793dd9e97f9167f70c9b7016b7f0762f0",
+  //   224ch pre-Skippy registry.ts DEFAULT_CHAT_AGENT_PROMPT ("You are a helpful voice assistant")
+  "ca35b88c4f8a0e1fd0b2b6efea1b066c70b772e6a55033e0fca731b2e74fbf06",
   //    65ch 28ac9b59 ReasoningService.ts DEFAULT_PROMPTS.regular (+24 more)
   "79abaafa51ba1fe06614d5392d6879f458b3ffc1f9e727528d6a9c896c530365",
   //   165ch 28ac9b59 ReasoningService.ts DEFAULT_PROMPTS.agent (+24 more)
@@ -116,7 +122,10 @@ export const CURRENT_DEFAULT_PROMPT_HASHES = {
   "zh-TW/cleanupPrompt": "9b586c6141f09263fdf9d06973b9bb9579fc325b2b6f906a0a7804f9418824be",
   "zh-TW/fullPrompt": "9312644f8de56d874e0de9e18d610a3ed6afd0ca1b31411f02d021e012fee601",
   "zh-TW/translatePrompt": "6b1c867216603f9741d13b8c564fcf6d484c817e69e2c7d6fe2de83118ed862e",
-  chatAgent: "ca35b88c4f8a0e1fd0b2b6efea1b066c70b772e6a55033e0fca731b2e74fbf06",
+  chatAgent: "766aa49cc9003ae3c0281164e0236b025d9812084b1a094c85ab310c4bad9cd0",
+  // First grill default; built from the question bank's rules section, so a
+  // bank re-sync that changes the rules retires this hash.
+  grill: "9c309fd26f82fc217dbb41939c3d955e153b853b25d4b9a886073a8a2f7433f6",
 };
 
 export async function hashPromptText(text) {

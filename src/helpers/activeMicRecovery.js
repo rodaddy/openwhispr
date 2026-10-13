@@ -31,6 +31,9 @@ export class ActiveMicRecoveryController {
     acquire,
     onRecovered,
     onStatusChange,
+    onActiveLoss,
+    isActiveAvailable,
+    availabilityPollMs = 2000,
     debounceMs = DEFAULT_DEBOUNCE_MS,
     muteGraceMs = DEFAULT_MUTE_GRACE_MS,
     retryMs = DEFAULT_RETRY_MS,
@@ -39,6 +42,9 @@ export class ActiveMicRecoveryController {
     this.acquire = acquire;
     this.onRecovered = onRecovered;
     this.onStatusChange = onStatusChange;
+    this.onActiveLoss = onActiveLoss;
+    this.isActiveAvailable = isActiveAvailable;
+    this.availabilityPollMs = availabilityPollMs;
     this.debounceMs = debounceMs;
     this.muteGraceMs = muteGraceMs;
     this.retryMs = retryMs;
@@ -52,13 +58,16 @@ export class ActiveMicRecoveryController {
     this.debounceTimer = null;
     this.muteTimer = null;
     this.retryTimer = null;
+    this.availabilityTimer = null;
+    this.availabilityPromise = null;
+    this.activeLossReported = false;
     this.started = false;
     this.onDeviceChange = () => this.scheduleEvaluation();
-    this.onTrackEnded = () => this.recover("ended");
+    this.onTrackEnded = () => this.handleLoss("ended");
     this.onTrackMute = () => {
       clearTimeout(this.muteTimer);
       this.muteTimer = setTimeout(() => {
-        if (this.track?.muted) this.recover("muted");
+        if (this.track?.muted) this.handleLoss("muted");
       }, this.muteGraceMs);
     };
     this.onTrackUnmute = () => clearTimeout(this.muteTimer);
@@ -75,6 +84,7 @@ export class ActiveMicRecoveryController {
     this.started = true;
     this.generation += 1;
     this.followDefault = followDefault;
+    this.activeLossReported = false;
     this.mediaDevices?.addEventListener?.("devicechange", this.onDeviceChange);
     this.attachStream(stream);
     await this.refreshInputs();
@@ -84,10 +94,11 @@ export class ActiveMicRecoveryController {
     const alive = this.track && this.track.readyState !== "ended";
     this.setStatus(alive ? "active" : "unavailable");
     if (!alive) {
-      this.recover("start");
+      this.handleLoss("start");
     } else if (this.track.muted) {
       this.onTrackMute();
     }
+    this.scheduleAvailabilityCheck();
   }
 
   attachStream(stream) {
@@ -128,14 +139,58 @@ export class ActiveMicRecoveryController {
     const previous = this.inputs;
     const current = await this.refreshInputs();
     if (!this.started || !current) {
-      if (this.track?.readyState === "ended") this.recover("devicechange-ended");
+      if (this.track?.readyState === "ended") this.handleLoss("devicechange-ended");
       return;
     }
 
     const defaultChanged = previous.defaultKey !== current.defaultKey;
     const activeMissing = !activeTrackIsAvailable(this.track, current);
-    if ((this.followDefault && defaultChanged) || activeMissing || this.status === "unavailable") {
+    if (activeMissing) {
+      this.handleLoss("devicechange");
+    } else if ((this.followDefault && defaultChanged) || this.status === "unavailable") {
       this.recover("devicechange");
+    }
+  }
+
+  handleLoss(reason) {
+    if (!this.onActiveLoss) return this.recover(reason);
+    if (!this.started || this.activeLossReported) return Promise.resolve(false);
+    this.activeLossReported = true;
+    this.setStatus("unavailable");
+    return Promise.resolve()
+      .then(() => this.onActiveLoss(reason))
+      .then(
+        () => true,
+        () => false
+      );
+  }
+
+  scheduleAvailabilityCheck() {
+    clearTimeout(this.availabilityTimer);
+    this.availabilityTimer = null;
+    if (!this.started || !this.isActiveAvailable || this.activeLossReported) return;
+    this.availabilityTimer = setTimeout(() => {
+      this.availabilityTimer = null;
+      void this.evaluateAvailability();
+    }, this.availabilityPollMs);
+  }
+
+  async evaluateAvailability() {
+    if (!this.started || !this.isActiveAvailable || this.availabilityPromise) return;
+    const generation = this.generation;
+    const check = Promise.resolve().then(() => this.isActiveAvailable(this.track));
+    this.availabilityPromise = check;
+    try {
+      const available = await check;
+      if (!this.started || generation !== this.generation) return;
+      if (available === false) {
+        await this.handleLoss("availability");
+      }
+    } catch {
+      // Unknown hardware state cannot prove the active microphone was lost.
+    } finally {
+      if (this.availabilityPromise === check) this.availabilityPromise = null;
+      if (this.started && generation === this.generation) this.scheduleAvailabilityCheck();
     }
   }
 
@@ -144,7 +199,10 @@ export class ActiveMicRecoveryController {
     if (this.recoveryPromise) return this.recoveryPromise;
 
     clearTimeout(this.retryTimer);
+    clearTimeout(this.availabilityTimer);
     this.retryTimer = null;
+    this.availabilityTimer = null;
+    this.availabilityPromise = null;
     const generation = this.generation;
     const oldStream = this.stream;
     this.setStatus("reconnecting");
@@ -202,8 +260,11 @@ export class ActiveMicRecoveryController {
     this.detachTrack();
     clearTimeout(this.debounceTimer);
     clearTimeout(this.retryTimer);
+    clearTimeout(this.availabilityTimer);
     this.debounceTimer = null;
     this.retryTimer = null;
+    this.availabilityTimer = null;
+    this.availabilityPromise = null;
     this.recoveryPromise = null;
     this.stream = null;
     this.setStatus("inactive");

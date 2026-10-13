@@ -1,6 +1,14 @@
 // Chromium picks the display backend before JS runs, so appendSwitch is too
 // late — the flag has to come from a relaunch.
 const { XWAYLAND_FLAG, shouldForceXWayland } = require("./src/helpers/xwayland");
+const {
+  usesKeyRelease,
+  resolveDictationPress,
+  resolveDictationRelease,
+  resolveHoldStartDelayMs,
+  resolveHeldDurationMs,
+  shouldReplayPendingPress,
+} = require("./src/helpers/activationMode");
 
 if (shouldForceXWayland(process.argv)) {
   const { spawn } = require("child_process");
@@ -20,10 +28,10 @@ const {
   ipcMain,
   net,
   session,
+  shell,
   systemPreferences,
 } = require("electron");
 const path = require("path");
-const http = require("http");
 const tls = require("tls");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
@@ -48,7 +56,6 @@ const DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL = {
   production: "openwhispr",
 };
 const BASE_WINDOWS_APP_ID = "com.gizmolabs.openwhispr";
-const DEFAULT_AUTH_BRIDGE_PORT = 5199;
 
 function isElectronBinaryExec() {
   const execPath = (process.execPath || "").toLowerCase();
@@ -81,23 +88,30 @@ function resolveAppChannel() {
 const APP_CHANNEL = resolveAppChannel();
 process.env.OPENWHISPR_CHANNEL = APP_CHANNEL;
 
-function configureChannelUserDataPath() {
-  if (APP_CHANNEL === "production") {
-    return;
-  }
-
-  const isolatedPath = path.join(app.getPath("appData"), `OpenWhispr-${APP_CHANNEL}`);
-  app.setPath("userData", isolatedPath);
-}
-
-configureChannelUserDataPath();
+// Resolve where this channel's store lives (#257) before anything reads
+// userData. A pointer to a missing or foreign data folder blocks boot until the
+// dialog in whenReady resolves it; see src/helpers/dataRootBootstrap.js.
+const dataRootBootstrap = require("./src/helpers/dataRootBootstrap");
+const DEFAULT_USER_DATA_PATH = dataRootBootstrap.channelDefaultUserData(
+  app.getPath("appData"),
+  APP_CHANNEL
+);
+const resolveBootDataRoot = () =>
+  dataRootBootstrap.resolveBootDataRoot({
+    defaultUserData: DEFAULT_USER_DATA_PATH,
+    channel: APP_CHANNEL,
+    hasUserDataDirSwitch: app.commandLine.hasSwitch("user-data-dir"),
+    envDataDir: process.env.OPENWHISPR_DATA_DIR,
+  });
+const bootDataRoot = resolveBootDataRoot();
+const { dotenvPath: userDataDotenvPath } = dataRootBootstrap.applyBootDataRoot(app, bootDataRoot);
 
 // Load userData .env (contains DICTATION_KEY, API keys, etc.) early — before
 // hotkey registration, which needs DICTATION_KEY before the renderer loads.
-require("dotenv").config({
-  path: path.join(app.getPath("userData"), ".env"),
-  override: false,
-});
+// Skipped while boot is blocked: no store is trusted yet.
+if (userDataDotenvPath) {
+  require("dotenv").config({ path: userDataDotenvPath, override: false });
+}
 
 // Chromium's Windows-only occlusion tracker misclassifies the always-on-top
 // transparent pill as occluded, throttling its renderer and jittering animations.
@@ -242,10 +256,16 @@ if (!gotSingleInstanceLock) {
 
 const isLiveWindow = (window) => window && !window.isDestroyed();
 
-// Ensure macOS menus use the proper casing for the app name
-if (process.platform === "darwin" && app.getName() !== "OpenWhispr") {
-  app.setName("OpenWhispr");
+// Ensure macOS menus use the branded app name.
+if (process.platform === "darwin" && app.getName() !== "rTech Whisper") {
+  app.setName("rTech Whisper");
 }
+app.setAboutPanelOptions({
+  applicationName: "rTech Whisper",
+  credits: "Based on OpenWhispr",
+  copyright: "Copyright (c) 2024 OpenWhispr Team",
+  authors: ["rTech", "OpenWhispr Team"],
+});
 
 // Add global error handling for uncaught exceptions
 process.on("uncaughtException", (error) => {
@@ -266,6 +286,7 @@ process.on("unhandledRejection", (reason, promise) => {
 const EnvironmentManager = require("./src/helpers/environment");
 const WindowManager = require("./src/helpers/windowManager");
 const DatabaseManager = require("./src/helpers/database");
+const { normalizeHubUrl } = require("./src/helpers/hubSync");
 const ClipboardManager = require("./src/helpers/clipboard");
 const WhisperManager = require("./src/helpers/whisper");
 const ParakeetManager = require("./src/helpers/parakeet");
@@ -274,6 +295,10 @@ const TrayManager = require("./src/helpers/tray");
 const dockManager = require("./src/helpers/dockManager");
 const autoStart = require("./src/helpers/autoStart");
 const IPCHandlers = require("./src/helpers/ipcHandlers");
+const {
+  createPasteLastCallback,
+  isPasteLastHotkeyDispatchable,
+} = require("./src/helpers/pasteLastTranscript");
 const CliBridge = require("./src/helpers/cliBridge");
 const UpdateManager = require("./src/updater");
 const GlobeKeyManager = require("./src/helpers/globeKeyManager");
@@ -290,6 +315,7 @@ const GoogleCalendarManager = require("./src/helpers/googleCalendarManager");
 const MicrosoftCalendarManager = require("./src/helpers/microsoftCalendarManager");
 const AppleCalendarManager = require("./src/helpers/appleCalendarManager");
 const CalendarReminderScheduler = require("./src/helpers/calendarReminderScheduler");
+const { createGrillStartChannel } = require("./src/helpers/grillStartChannel");
 const MeetingProcessDetector = require("./src/helpers/meetingProcessDetector");
 const AudioActivityDetector = require("./src/helpers/audioActivityDetector");
 const {
@@ -302,10 +328,12 @@ const WindowsLoopbackAudioManager = require("./src/helpers/windowsLoopbackAudioM
 const MeetingAecManager = require("./src/helpers/meetingAecManager");
 const MeetingDetectionEngine = require("./src/helpers/meetingDetectionEngine");
 const { applyOpenWhisprOriginHeader } = require("./src/helpers/sessionHeaders");
+const { installPermissionHandlers } = require("./src/helpers/permissionHandlers");
 const { i18nMain, changeLanguage } = require("./src/helpers/i18nMain");
 const { ensureYdotool } = require("./src/helpers/ensureYdotool");
 const sidecarRegistry = require("./src/helpers/sidecarRegistry");
 const { reapStaleSidecars } = require("./src/helpers/sidecarReaper");
+const { startupErrorMessage } = require("./src/helpers/startupError");
 
 // Manager instances - initialized after app.whenReady()
 let debugLogger = null;
@@ -339,28 +367,11 @@ let qdrantManager = null;
 let ipcHandlers = null;
 let cliBridge = null;
 let globeKeyAlertShown = false;
-let authBridgeServer = null;
 let pendingNoteCloudId = null;
 let pendingNoteRetryTimer = null;
 let pendingNoteRetryCount = 0;
 const WHISPER_WAKE_REWARM_DELAY_MS = 3000;
 let wakeRewarmTimer = null;
-
-function parseAuthBridgePort() {
-  const raw = (process.env.OPENWHISPR_AUTH_BRIDGE_PORT || "").trim();
-  if (!raw) return DEFAULT_AUTH_BRIDGE_PORT;
-
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-    return DEFAULT_AUTH_BRIDGE_PORT;
-  }
-
-  return parsed;
-}
-
-const AUTH_BRIDGE_HOST = "127.0.0.1";
-const AUTH_BRIDGE_PORT = parseAuthBridgePort();
-const AUTH_BRIDGE_PATH = "/oauth/callback";
 
 // Set up PATH for production builds to find system tools (whisper.cpp, ffmpeg)
 function setupProductionPath() {
@@ -431,16 +442,9 @@ function initializeCoreManagers() {
   windowManager = new WindowManager();
   hotkeyManager = windowManager.hotkeyManager;
   databaseManager = new DatabaseManager();
-  // Restore the last validated account scope before any window, IPC handler,
-  // or meeting flow can read or create notes. Offline launches keep the
-  // account's data visible; a stale or rotated credential fails the hash
-  // check and restores nothing.
-  const accountScopeBinding = require("./src/helpers/accountScopeBinding");
-  const bootAccountId = accountScopeBinding.resolveBootAccountScope({
-    token: require("./src/helpers/tokenStore").get(),
-    binding: accountScopeBinding.read(),
-  });
-  if (bootAccountId) databaseManager.setActiveAccountId(bootAccountId);
+  // Local-only runtime stays device-owned. Database reads retain compatibility
+  // with legacy account-scoped rows without restoring a remote identity.
+  databaseManager.setActiveAccountId(null);
   clipboardManager = new ClipboardManager();
   whisperManager = new WhisperManager();
   if (process.platform !== "darwin") {
@@ -503,7 +507,8 @@ function initializeCoreManagers() {
       )
     ),
     windowManager,
-    databaseManager
+    databaseManager,
+    { grillStartChannel: createGrillStartChannel({ ipcMain }) }
   );
   windowManager.meetingDetectionEngine = meetingDetectionEngine;
   calendarReminderScheduler.meetingDetectionEngine = meetingDetectionEngine;
@@ -555,6 +560,19 @@ function initializeCoreManagers() {
     getTrayManager: () => trayManager,
     oauthProtocolRegistered: protocolRegistered,
     oauthProtocol: OAUTH_PROTOCOL,
+    defaultUserData: DEFAULT_USER_DATA_PATH,
+    dataRootKind: bootDataRoot.kind,
+  });
+  require("./src/helpers/dataFolderMove").registerDataFolderIpc({
+    ipcMain,
+    dialog,
+    shell,
+    app,
+    resolution: bootDataRoot,
+    defaultUserData: DEFAULT_USER_DATA_PATH,
+    getCacheRoot: () => require("./src/helpers/modelDirUtils").getCacheRoot(),
+    channel: APP_CHANNEL,
+    t: (key, options) => i18nMain.t(key, options),
   });
 }
 
@@ -568,6 +586,7 @@ function registerSidecars() {
   sidecarRegistry.register("llama", () => modelManager.stopServer());
   const onnxWorkerClient = require("./src/helpers/onnxWorkerClient");
   sidecarRegistry.register("onnx", () => onnxWorkerClient.stop());
+  sidecarRegistry.register("omnivoice", () => ipcHandlers?.stopLocalSpeech?.());
 }
 
 // Phase 2: Non-critical setup after windows are visible
@@ -581,6 +600,7 @@ function initializeDeferredManagers() {
   });
   clipboardManager.preWarmAccessibility();
   trayManager = new TrayManager();
+  ipcHandlers.attachTrayManager(trayManager);
   globeKeyManager = new GlobeKeyManager({
     // Lets the listener put the user's macOS Globe action back after a crash.
     preferenceStatePath: path.join(app.getPath("userData"), "globe-preference-state.json"),
@@ -623,44 +643,9 @@ app.on("open-url", (event, url) => {
   event.preventDefault();
   if (!url.startsWith(`${OAUTH_PROTOCOL}://`)) return;
 
-  if (url.includes("upgrade-success")) {
-    handleUpgradeDeepLink();
-    return;
-  }
-
   if (isNoteDeepLink(url)) {
     void handleNoteDeepLink(url);
-    return;
   }
-
-  if (isInvitationDeepLink(url)) {
-    handleInvitationDeepLink(url);
-    return;
-  }
-
-  void handleOAuthDeepLink(url);
-
-  if (windowManager && isLiveWindow(windowManager.controlPanelWindow)) {
-    windowManager.controlPanelWindow.show();
-    windowManager.controlPanelWindow.focus();
-    dockManager.setControlPanelVisible(true);
-  }
-});
-
-function isInvitationDeepLink(url) {
-  return url.slice(`${OAUTH_PROTOCOL}://`.length).startsWith("invitations/");
-}
-
-// Deep links can arrive before windowManager exists (cold start) or before the
-// renderer has mounted its listener. The token is stashed here and the renderer
-// pulls it via `get-pending-invitation-token` on mount; the push below is a
-// best-effort fast path for an already-running app.
-let pendingInvitationDeepLinkToken = null;
-
-ipcMain.handle("get-pending-invitation-token", () => {
-  const token = pendingInvitationDeepLinkToken;
-  pendingInvitationDeepLinkToken = null;
-  return token;
 });
 
 function isNoteDeepLink(url) {
@@ -736,247 +721,6 @@ async function handleNoteDeepLink(deepLinkUrl) {
   await flushPendingNoteDeepLink();
 }
 
-function handleInvitationDeepLink(deepLinkUrl) {
-  try {
-    const match = deepLinkUrl.match(/invitations\/([^/?#]+)/);
-    const token = match?.[1];
-    if (!token) return;
-    pendingInvitationDeepLinkToken = token;
-    if (!windowManager) return;
-    if (isLiveWindow(windowManager.controlPanelWindow)) {
-      windowManager.controlPanelWindow.show();
-      windowManager.controlPanelWindow.focus();
-      dockManager.setControlPanelVisible(true);
-      // Best-effort fast path — the get-pending-invitation-token pull is the reliable path.
-      windowManager.controlPanelWindow.webContents.send("workspace-invitation-token", token);
-    } else {
-      windowManager.createControlPanelWindow();
-    }
-  } catch (error) {
-    console.error("Invitation deep link parse failed:", error);
-  }
-}
-
-function resolveAuthUrl() {
-  const fs = require("fs");
-  const envPath = path.join(__dirname, "src", "dist", "runtime-env.json");
-  let runtimeEnv = {};
-  try {
-    if (fs.existsSync(envPath)) runtimeEnv = JSON.parse(fs.readFileSync(envPath, "utf8"));
-  } catch {}
-  return (
-    process.env.AUTH_URL ||
-    process.env.VITE_AUTH_URL ||
-    runtimeEnv.VITE_AUTH_URL ||
-    "https://auth.openwhispr.com"
-  );
-}
-
-function getOauthCookieName() {
-  return process.env.NODE_ENV === "production"
-    ? "__Secure-openwhispr.session_token"
-    : "openwhispr.session_token";
-}
-
-// Older website builds send the signed cookie value as `?token=`; trade it
-// for the raw session.token the bearer plugin expects.
-async function exchangeSignedTokenForRawBearer(signedToken) {
-  try {
-    const res = await net.fetch(`${resolveAuthUrl()}/api/auth/get-session`, {
-      headers: { Cookie: `${getOauthCookieName()}=${signedToken}` },
-      signal: AbortSignal.timeout(5000),
-      useSessionCookies: false,
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data?.session?.token || null;
-  } catch (err) {
-    if (debugLogger) {
-      debugLogger.warn("Signed-token bearer exchange failed (non-fatal)", {
-        error: err?.message,
-      });
-    }
-    return null;
-  }
-}
-
-// One-time bridge for users upgrading from a build that injected the session
-// cookie into Electron's jar: exchange the existing cookie for a raw bearer
-// token, store it, and remove the cookie. Non-fatal — failures fall through
-// to the normal sign-in flow.
-async function migrateCookieToBearerToken() {
-  const tokenStore = require("./src/helpers/tokenStore");
-  if (tokenStore.get()) return;
-
-  const cookieName = getOauthCookieName();
-  const authUrl = resolveAuthUrl();
-
-  try {
-    const cookies = await session.defaultSession.cookies.get({ url: authUrl, name: cookieName });
-    if (!cookies.length) return;
-
-    const rawToken = await exchangeSignedTokenForRawBearer(cookies[0].value);
-    if (!rawToken) return;
-
-    tokenStore.set(rawToken);
-    await session.defaultSession.cookies.remove(authUrl, cookieName);
-    if (debugLogger) debugLogger.debug("Migrated cookie to bearer token");
-  } catch (err) {
-    if (debugLogger) {
-      debugLogger.warn("Cookie→bearer token migration failed (non-fatal)", {
-        error: err?.message,
-      });
-    }
-  }
-}
-
-// Persist the bearer token and reload the control panel so the renderer's
-// authClient sends `Authorization: Bearer <token>` on its next request.
-async function applySessionTokenAndRefresh(token) {
-  if (!token) return;
-  if (!isLiveWindow(windowManager?.controlPanelWindow)) return;
-
-  const tokenStore = require("./src/helpers/tokenStore");
-  tokenStore.set(token);
-
-  const appUrl = DevServerManager.getAppUrl(true);
-  if (appUrl) {
-    windowManager.controlPanelWindow.loadURL(appUrl);
-  } else {
-    const fileInfo = DevServerManager.getAppFilePath(true);
-    if (fileInfo) {
-      windowManager.controlPanelWindow.loadFile(fileInfo.path, { query: fileInfo.query });
-    }
-  }
-
-  if (debugLogger) {
-    debugLogger.debug("Applied bearer token and reloaded control panel", {
-      appChannel: APP_CHANNEL,
-      oauthProtocol: OAUTH_PROTOCOL,
-    });
-  }
-  windowManager.controlPanelWindow.show();
-  windowManager.controlPanelWindow.focus();
-  dockManager.setControlPanelVisible(true);
-}
-
-async function handleOAuthDeepLink(deepLinkUrl) {
-  try {
-    const parsed = new URL(deepLinkUrl);
-    const bearerToken = parsed.searchParams.get("bearer_token");
-    if (bearerToken) {
-      void applySessionTokenAndRefresh(bearerToken);
-      return;
-    }
-    const signedToken = parsed.searchParams.get("token");
-    if (!signedToken) return;
-    const rawToken = await exchangeSignedTokenForRawBearer(signedToken);
-    if (rawToken) void applySessionTokenAndRefresh(rawToken);
-  } catch (err) {
-    if (debugLogger) debugLogger.error("Failed to handle OAuth deep link:", err);
-  }
-}
-
-function handleUpgradeDeepLink() {
-  if (isLiveWindow(windowManager?.controlPanelWindow)) {
-    windowManager.controlPanelWindow.webContents.executeJavaScript(
-      'window.dispatchEvent(new Event("upgrade-success"))'
-    );
-    windowManager.controlPanelWindow.show();
-    windowManager.controlPanelWindow.focus();
-    dockManager.setControlPanelVisible(true);
-  }
-}
-
-function parseJsonBody(req) {
-  return new Promise((resolve, reject) => {
-    let raw = "";
-    req.on("data", (chunk) => {
-      raw += chunk;
-      if (raw.length > 32 * 1024) {
-        reject(new Error("Request body too large"));
-        req.destroy();
-      }
-    });
-    req.on("end", () => {
-      if (!raw) return resolve({});
-      try {
-        resolve(JSON.parse(raw));
-      } catch {
-        reject(new Error("Invalid JSON payload"));
-      }
-    });
-    req.on("error", reject);
-  });
-}
-
-function writeCorsHeaders(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-}
-
-function startAuthBridgeServer() {
-  if (APP_CHANNEL !== "development" || authBridgeServer) {
-    return;
-  }
-
-  authBridgeServer = http.createServer(async (req, res) => {
-    writeCorsHeaders(res);
-    if (req.method === "OPTIONS") {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-
-    const requestUrl = new URL(req.url || "/", `http://${AUTH_BRIDGE_HOST}:${AUTH_BRIDGE_PORT}`);
-    if (requestUrl.pathname !== AUTH_BRIDGE_PATH) {
-      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-      res.end("Not found");
-      return;
-    }
-
-    let token = requestUrl.searchParams.get("bearer_token") || requestUrl.searchParams.get("token");
-    if (!token && req.method === "POST") {
-      try {
-        const body = await parseJsonBody(req);
-        token = body?.bearer_token || body?.token || null;
-      } catch (error) {
-        res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
-        res.end(error.message || "Invalid request");
-        return;
-      }
-    }
-
-    if (!token) {
-      res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
-      res.end("Missing token");
-      return;
-    }
-
-    void applySessionTokenAndRefresh(token);
-
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(
-      "<html><body><h3>OpenWhispr sign-in complete.</h3><p>You can close this tab.</p></body></html>"
-    );
-  });
-
-  authBridgeServer.on("error", (error) => {
-    if (debugLogger) {
-      debugLogger.error("OAuth auth bridge server failed:", error);
-    }
-  });
-
-  authBridgeServer.listen(AUTH_BRIDGE_PORT, AUTH_BRIDGE_HOST, () => {
-    if (debugLogger) {
-      debugLogger.debug("OAuth auth bridge server started", {
-        url: `http://${AUTH_BRIDGE_HOST}:${AUTH_BRIDGE_PORT}${AUTH_BRIDGE_PATH}`,
-      });
-    }
-  });
-}
-
 // Main application startup
 async function startApp() {
   // Await so a stale sidecar is confirmed dead before new ones can spawn and
@@ -986,21 +730,30 @@ async function startApp() {
   // Phase 1: Core managers + IPC handlers before windows
   initializeCoreManagers();
   await environmentManager.init();
+  // Before any window can start a sync pass (rtech-whisper#126): a hub switch
+  // relaunches the app, so this is where the local cloud ids move to the
+  // current hub. A failure leaves the ids as they were.
+  try {
+    databaseManager.swapHubIds(normalizeHubUrl(environmentManager.getHubUrl()) || "");
+  } catch (error) {
+    debugLogger.error("Hub id swap failed", { error: error.message }, "sync");
+  }
   // After any upgrade the GPU gets one fresh attempt: clear the remembered
   // failure before the whisper pre-warm below resolves its GPU backend.
   resetWhisperGpuFailureOnUpgrade(environmentManager);
   registerSidecars();
-  startAuthBridgeServer();
+
+  // Grill sessions the social-media-pipeline has not accepted yet get another
+  // try once startup settles; failures stay on the note for the next save.
+  setTimeout(() => {
+    ipcHandlers?.pipelineConnector?.retryPending().catch(() => {});
+  }, 10000);
 
   cliBridge = new CliBridge(ipcHandlers);
   cliBridge.start().catch((err) => {
     debugLogger.error("CLI bridge failed to start", { error: err.message });
     cliBridge = null;
   });
-
-  await migrateCookieToBearerToken();
-
-  applyOpenWhisprOriginHeader(session.defaultSession);
 
   await windowManager.setActivationModeCache(environmentManager.getActivationMode());
   windowManager.setFloatingIconAutoHide(environmentManager.getFloatingIconAutoHide());
@@ -1075,15 +828,6 @@ async function startApp() {
   if (initialProtocolUrl && isNoteDeepLink(initialProtocolUrl)) {
     await handleNoteDeepLink(initialProtocolUrl);
   } else {
-    if (initialProtocolUrl && process.platform !== "darwin") {
-      if (initialProtocolUrl.includes("upgrade-success")) {
-        handleUpgradeDeepLink();
-      } else if (isInvitationDeepLink(initialProtocolUrl)) {
-        handleInvitationDeepLink(initialProtocolUrl);
-      } else {
-        void handleOAuthDeepLink(initialProtocolUrl);
-      }
-    }
     await flushPendingNoteDeepLink();
   }
 
@@ -1128,6 +872,44 @@ async function startApp() {
       debugLogger.warn(
         "Failed to restore translation hotkey",
         { hotkey: savedTranslationKey },
+        "hotkey"
+      );
+    }
+  }
+
+  // Set up the paste-last hotkey (#634): no default, pastes the last dictation
+  // again at the caret, as it was spoken. It passes no paste options, so it
+  // cannot press Return, format for an app or bring another app forward. It
+  // does nothing while a hotkey is being captured or a dictation is being
+  // taken or processed.
+  const pasteLastHotkeyCallback = createPasteLastCallback({
+    isBusy: () =>
+      hotkeyManager.isInListeningMode() ||
+      windowManager.isDictationTakeActive() ||
+      windowManager.isDictationProcessing(),
+    getText: () => ipcHandlers?.getLastDictationText?.() ?? null,
+    pasteText: (text, options) => clipboardManager.pasteText(text, options),
+    log: (message, meta = {}) => debugLogger.debug(message, meta, "hotkey"),
+  });
+  windowManager._pasteLastHotkeyCallback = pasteLastHotkeyCallback;
+
+  const savedPasteLastKey = environmentManager.getPasteLastKey?.() || "";
+  if (savedPasteLastKey) {
+    // A stored key this slot cannot fire is not registered.
+    const result = isPasteLastHotkeyDispatchable(
+      savedPasteLastKey,
+      require("./src/helpers/hotkeyManager")
+    )
+      ? await hotkeyManager.registerSlot(
+          "pasteLastTranscript",
+          savedPasteLastKey,
+          pasteLastHotkeyCallback
+        )
+      : { success: false };
+    if (!result.success) {
+      debugLogger.warn(
+        "Failed to restore paste-last hotkey",
+        { hotkey: savedPasteLastKey },
         "hotkey"
       );
     }
@@ -1314,6 +1096,46 @@ async function startApp() {
     const MIN_HOLD_DURATION_MS = 150;
     const POST_STOP_COOLDOWN_MS = 300;
 
+    // Hybrid records from the press itself (no hold delay); push keeps the
+    // delay that filters accidental taps.
+    const scheduleHoldStart = (activationMode, start) => {
+      const delayMs = resolveHoldStartDelayMs(activationMode, MIN_HOLD_DURATION_MS);
+      if (delayMs > 0) setTimeout(start, delayMs);
+      else start();
+    };
+
+    // A press that lands while the previous transcript is still processing
+    // (transcribe + paste, roughly a second) used to be dropped silently, so
+    // the user pressed again and the second press flipped the state they
+    // expected. Park it and replay it when processing ends.
+    let pendingPress = null;
+    const deferPressWhileProcessing = (source, replay) => {
+      pendingPress = { source, pressedAt: Date.now(), released: false, replay };
+      debugLogger?.debug(`[${source}] Press deferred — dictation processing`);
+    };
+    const markPendingPressReleased = (source) => {
+      if (pendingPress?.source === source) pendingPress.released = true;
+    };
+    windowManager.onDictationProcessingEnded = () => {
+      const pending = pendingPress;
+      pendingPress = null;
+      if (!pending) return;
+      const mode = windowManager.getActivationMode();
+      const ageMs = Date.now() - pending.pressedAt;
+      const replay = shouldReplayPendingPress({
+        mode,
+        pressedAt: pending.pressedAt,
+        now: Date.now(),
+        released: pending.released,
+      });
+      debugLogger?.debug(`[${pending.source}] Deferred press ${replay ? "replayed" : "expired"}`, {
+        mode,
+        ageMs,
+        released: pending.released,
+      });
+      if (replay) pending.replay();
+    };
+
     globeKeyManager.on("globe-down", async () => {
       const currentHotkey = hotkeyManager.getCurrentHotkey && hotkeyManager.getCurrentHotkey();
       const mainWindowLive = isLiveWindow(windowManager.mainWindow);
@@ -1331,30 +1153,52 @@ async function startApp() {
       // Handle dictation if Globe/Fn is one of the dictation hotkeys
       const dictationUsesGlobe = hotkeyManager.getSlotHotkeys("dictation").some(isGlobeLikeHotkey);
       if (dictationUsesGlobe) {
+        // Begins the press state machine for push/hybrid. `ignoreCooldown` is
+        // for a replayed press: its stop-cooldown already elapsed while it waited.
+        const beginGlobeHold = ({ ignoreCooldown = false } = {}) => {
+          const activationMode = windowManager.getActivationMode();
+          const now = Date.now();
+          if (!ignoreCooldown && now - globeLastStopTime < POST_STOP_COOLDOWN_MS) {
+            debugLogger?.debug("[Globe] Ignored — cooldown active");
+            return;
+          }
+          windowManager.showDictationPanel();
+          windowManager.sendPrepareDictation();
+          const pressTime = now;
+          globeKeyDownTime = pressTime;
+          globeKeyIsRecording = false;
+          scheduleHoldStart(activationMode, () => {
+            if (globeKeyDownTime === pressTime && !globeKeyIsRecording) {
+              globeKeyIsRecording = true;
+              debugLogger?.debug("[Globe] Starting dictation (push hold)");
+              windowManager.sendStartDictation({ activationState: "held" });
+            }
+          });
+        };
         if (mainWindowLive && windowManager.isDictationProcessing()) {
-          debugLogger?.debug("[Globe] Ignored — dictation processing");
+          if (usesKeyRelease(windowManager.getActivationMode())) {
+            deferPressWhileProcessing("Globe", () => beginGlobeHold({ ignoreCooldown: true }));
+          } else {
+            deferPressWhileProcessing("Globe", () => windowManager.sendToggleDictation());
+          }
         } else if (mainWindowLive) {
           // Capture target app PID BEFORE showing the overlay
           if (textEditMonitor) textEditMonitor.captureTargetPid();
           const activationMode = windowManager.getActivationMode();
-          if (activationMode === "push") {
-            const now = Date.now();
-            if (now - globeLastStopTime < POST_STOP_COOLDOWN_MS) {
-              debugLogger?.debug("[Globe] Ignored — cooldown active");
-              return;
-            }
-            windowManager.showDictationPanel();
-            windowManager.sendPrepareDictation();
-            const pressTime = now;
-            globeKeyDownTime = pressTime;
-            globeKeyIsRecording = false;
-            setTimeout(async () => {
-              if (globeKeyDownTime === pressTime && !globeKeyIsRecording) {
-                globeKeyIsRecording = true;
-                debugLogger?.debug("[Globe] Starting dictation (push hold)");
-                windowManager.sendStartDictation();
-              }
-            }, MIN_HOLD_DURATION_MS);
+          const activeForMs = windowManager.dictationActiveForMs();
+          const pressAction = resolveDictationPress({
+            mode: activationMode,
+            isRecording: windowManager.isDictationTakeActive(),
+            activeForMs,
+          });
+          if (pressAction === "ignore") {
+            debugLogger?.debug("[Globe] Stop tap ignored — too soon after start", { activeForMs });
+          } else if (pressAction === "stop") {
+            debugLogger?.debug("[Globe] Stopping latched dictation (hybrid tap)");
+            globeLastStopTime = Date.now();
+            windowManager.sendStopDictation();
+          } else if (pressAction === "hold") {
+            beginGlobeHold();
           } else {
             windowManager.sendToggleDictation();
           }
@@ -1391,22 +1235,26 @@ async function startApp() {
 
       if (hotkeyManager.getSlotHotkeys("dictation").some(isGlobeLikeHotkey)) {
         const activationMode = windowManager.getActivationMode();
-        if (activationMode === "push") {
+        if (usesKeyRelease(activationMode)) {
           if (globeKeyDownTime === 0 && !globeKeyIsRecording) {
-            // The press was ignored (dictation was processing); releasing it
-            // must not cancel preparation or hide the thinking pill.
+            // The press was deferred (dictation was processing), or it was the
+            // hybrid stop tap; releasing it must not cancel preparation or
+            // hide the thinking pill.
+            markPendingPressReleased("Globe");
             debugLogger?.debug("[Globe] Release without a registered press — ignored");
           } else {
+            const heldMs = Date.now() - globeKeyDownTime;
+            const wasRecording = globeKeyIsRecording;
             globeKeyDownTime = 0;
+            globeKeyIsRecording = false;
             globeLastStopTime = Date.now();
-            if (globeKeyIsRecording) {
-              globeKeyIsRecording = false;
-              debugLogger?.debug("[Globe] Stopping dictation (push release)");
-              windowManager.sendStopDictation();
-            } else {
-              windowManager.sendCancelDictationPreparation();
-              windowManager.hideDictationPanel();
-            }
+            const action = resolveDictationRelease({
+              mode: activationMode,
+              heldMs,
+              isRecording: wasRecording,
+            });
+            debugLogger?.debug("[Globe] Release", { action, heldMs, wasRecording });
+            windowManager.applyDictationRelease(action, wasRecording);
           }
         }
       }
@@ -1445,11 +1293,12 @@ async function startApp() {
 
     // Right-side single modifier handling (e.g., RightOption as hotkey)
     let rightModDownTime = 0;
+    let rightModDownEventTime = undefined;
     let rightModIsRecording = false;
     let rightModLastStopTime = 0;
     let rightModActiveKey = null;
 
-    globeKeyManager.on("right-modifier-down", async (modifier) => {
+    globeKeyManager.on("right-modifier-down", async (modifier, eventTimeMs) => {
       // Check voice agent slot for right-modifier
       if (hotkeyManager.slotHasHotkey("voiceAgent", modifier)) {
         windowManager.sendToggleVoiceAgent();
@@ -1460,52 +1309,99 @@ async function startApp() {
 
       if (!hotkeyManager.slotHasHotkey("dictation", modifier)) return;
       if (!isLiveWindow(windowManager.mainWindow)) return;
-      if (windowManager.isDictationProcessing()) return;
 
-      const activationMode = windowManager.getActivationMode();
-      if (textEditMonitor) textEditMonitor.captureTargetPid();
-      if (activationMode === "push") {
+      const beginRightModHold = ({ ignoreCooldown = false } = {}) => {
+        const activationMode = windowManager.getActivationMode();
         if (rightModActiveKey && rightModActiveKey !== modifier) return;
         const now = Date.now();
-        if (now - rightModLastStopTime < POST_STOP_COOLDOWN_MS) return;
+        if (!ignoreCooldown && now - rightModLastStopTime < POST_STOP_COOLDOWN_MS) {
+          debugLogger?.debug("[RightMod] Ignored — cooldown active");
+          return;
+        }
         windowManager.showDictationPanel();
         windowManager.sendPrepareDictation();
         const pressTime = now;
         rightModActiveKey = modifier;
         rightModDownTime = pressTime;
+        rightModDownEventTime = eventTimeMs;
         rightModIsRecording = false;
-        setTimeout(() => {
+        scheduleHoldStart(activationMode, () => {
           if (rightModDownTime === pressTime && !rightModIsRecording) {
             rightModIsRecording = true;
-            windowManager.sendStartDictation();
+            debugLogger?.debug("[RightMod] Starting dictation", {
+              sincePressMs: Date.now() - pressTime,
+            });
+            windowManager.sendStartDictation({ activationState: "held" });
           }
-        }, MIN_HOLD_DURATION_MS);
+        });
+      };
+
+      if (windowManager.isDictationProcessing()) {
+        if (usesKeyRelease(windowManager.getActivationMode())) {
+          deferPressWhileProcessing("RightMod", () => beginRightModHold({ ignoreCooldown: true }));
+        } else {
+          deferPressWhileProcessing("RightMod", () => windowManager.sendToggleDictation());
+        }
+        return;
+      }
+
+      const activationMode = windowManager.getActivationMode();
+      debugLogger?.debug("[RightMod] Press received", {
+        modifier,
+        activationMode,
+        recording: windowManager.isDictationRecording(),
+      });
+      if (textEditMonitor) textEditMonitor.captureTargetPid();
+      const activeForMs = windowManager.dictationActiveForMs();
+      const pressAction = resolveDictationPress({
+        mode: activationMode,
+        isRecording: windowManager.isDictationTakeActive(),
+        activeForMs,
+      });
+      if (pressAction === "ignore") {
+        debugLogger?.debug("[RightMod] Stop tap ignored — too soon after start", { activeForMs });
+      } else if (pressAction === "stop") {
+        rightModLastStopTime = Date.now();
+        windowManager.sendStopDictation();
+      } else if (pressAction === "hold") {
+        beginRightModHold();
       } else {
         windowManager.sendToggleDictation();
       }
     });
 
-    globeKeyManager.on("right-modifier-up", async (modifier) => {
+    globeKeyManager.on("right-modifier-up", async (modifier, eventTimeMs) => {
       if (hotkeyManager.slotHasHotkey("dictation", modifier)) {
         if (!isLiveWindow(windowManager.mainWindow)) return;
 
         const activationMode = windowManager.getActivationMode();
-        if (activationMode === "push" && (!rightModActiveKey || rightModActiveKey === modifier)) {
+        if (
+          usesKeyRelease(activationMode) &&
+          (!rightModActiveKey || rightModActiveKey === modifier)
+        ) {
           if (rightModDownTime === 0 && !rightModIsRecording) {
-            // The press was ignored (dictation was processing); releasing it
+            // The press was deferred (dictation was processing); releasing it
             // must not cancel preparation or hide the thinking pill.
+            markPendingPressReleased("RightMod");
             debugLogger?.debug("[RightMod] Release without a registered press — ignored");
           } else {
+            const releaseTime = Date.now();
+            const heldMs = resolveHeldDurationMs({
+              pressedEventTimeMs: rightModDownEventTime,
+              releasedEventTimeMs: eventTimeMs,
+              pressedAtMs: rightModDownTime,
+              releasedAtMs: releaseTime,
+            });
+            const wasRecording = rightModIsRecording;
             rightModActiveKey = null;
             rightModDownTime = 0;
+            rightModDownEventTime = undefined;
+            rightModIsRecording = false;
             rightModLastStopTime = Date.now();
-            if (rightModIsRecording) {
-              rightModIsRecording = false;
-              windowManager.sendStopDictation();
-            } else {
-              windowManager.sendCancelDictationPreparation();
-              windowManager.hideDictationPanel();
-            }
+            windowManager.applyDictationRelease(
+              resolveDictationRelease({ mode: activationMode, heldMs, isRecording: wasRecording }),
+              wasRecording
+            );
           }
         }
       }
@@ -1548,27 +1444,55 @@ async function startApp() {
 
       if (!hotkeyManager.slotHasHotkey("dictation", button)) return;
       if (!isLiveWindow(windowManager.mainWindow)) return;
-      if (windowManager.isDictationProcessing()) return;
 
-      const activationMode = windowManager.getActivationMode();
-      if (textEditMonitor) textEditMonitor.captureTargetPid();
-
-      if (activationMode === "push") {
+      const beginMouseButtonHold = ({ ignoreCooldown = false } = {}) => {
+        const activationMode = windowManager.getActivationMode();
         if (mouseButtonActiveButton && mouseButtonActiveButton !== button) return;
         const now = Date.now();
-        if (now - mouseButtonLastStopTime < POST_STOP_COOLDOWN_MS) return;
+        if (!ignoreCooldown && now - mouseButtonLastStopTime < POST_STOP_COOLDOWN_MS) return;
         windowManager.showDictationPanel();
         windowManager.sendPrepareDictation();
         const pressTime = now;
         mouseButtonActiveButton = button;
         mouseButtonDownTime = pressTime;
         mouseButtonIsRecording = false;
-        setTimeout(() => {
+        scheduleHoldStart(activationMode, () => {
           if (mouseButtonDownTime === pressTime && !mouseButtonIsRecording) {
             mouseButtonIsRecording = true;
-            windowManager.sendStartDictation();
+            windowManager.sendStartDictation({ activationState: "held" });
           }
-        }, MIN_HOLD_DURATION_MS);
+        });
+      };
+
+      if (windowManager.isDictationProcessing()) {
+        if (usesKeyRelease(windowManager.getActivationMode())) {
+          deferPressWhileProcessing("MouseButton", () =>
+            beginMouseButtonHold({ ignoreCooldown: true })
+          );
+        } else {
+          deferPressWhileProcessing("MouseButton", () => windowManager.sendToggleDictation());
+        }
+        return;
+      }
+
+      const activationMode = windowManager.getActivationMode();
+      if (textEditMonitor) textEditMonitor.captureTargetPid();
+
+      const activeForMs = windowManager.dictationActiveForMs();
+      const pressAction = resolveDictationPress({
+        mode: activationMode,
+        isRecording: windowManager.isDictationTakeActive(),
+        activeForMs,
+      });
+      if (pressAction === "ignore") {
+        debugLogger?.debug("[MouseButton] Stop tap ignored — too soon after start", {
+          activeForMs,
+        });
+      } else if (pressAction === "stop") {
+        mouseButtonLastStopTime = Date.now();
+        windowManager.sendStopDictation();
+      } else if (pressAction === "hold") {
+        beginMouseButtonHold();
       } else {
         windowManager.sendToggleDictation();
       }
@@ -1583,24 +1507,25 @@ async function startApp() {
 
       const activationMode = windowManager.getActivationMode();
       if (
-        activationMode === "push" &&
+        usesKeyRelease(activationMode) &&
         (!mouseButtonActiveButton || mouseButtonActiveButton === button)
       ) {
         if (mouseButtonDownTime === 0 && !mouseButtonIsRecording) {
-          // The press was ignored (dictation was processing); releasing it
+          // The press was deferred (dictation was processing); releasing it
           // must not cancel preparation or hide the thinking pill.
+          markPendingPressReleased("MouseButton");
           debugLogger?.debug("[MouseButton] Release without a registered press — ignored");
         } else {
+          const heldMs = Date.now() - mouseButtonDownTime;
+          const wasRecording = mouseButtonIsRecording;
           mouseButtonActiveButton = null;
           mouseButtonDownTime = 0;
+          mouseButtonIsRecording = false;
           mouseButtonLastStopTime = Date.now();
-          if (mouseButtonIsRecording) {
-            mouseButtonIsRecording = false;
-            windowManager.sendStopDictation();
-          } else {
-            windowManager.sendCancelDictationPreparation();
-            windowManager.hideDictationPanel();
-          }
+          windowManager.applyDictationRelease(
+            resolveDictationRelease({ mode: activationMode, heldMs, isRecording: wasRecording }),
+            wasRecording
+          );
         }
       }
     });
@@ -1608,6 +1533,7 @@ async function startApp() {
     syncMacNativeHotkeyConfiguration();
     globeKeyManager.start();
     hotkeyManager.on("hotkey-loaded", syncMacNativeHotkeyConfiguration);
+    clipboardManager?.setResidentPaste?.(() => globeKeyManager.pasteViaListener());
 
     ipcMain.on("hotkey-listening-mode-changed", (_event, enabled) => {
       if (enabled) {
@@ -1649,6 +1575,7 @@ async function startApp() {
       globeKeyIsRecording = false;
       globeLastStopTime = 0;
       rightModDownTime = 0;
+      rightModDownEventTime = undefined;
       rightModIsRecording = false;
       rightModLastStopTime = 0;
       mouseButtonDownTime = 0;
@@ -1672,7 +1599,7 @@ async function startApp() {
     const dispatchNativeKeyDown = (key) => {
       if (hotkeyManager.slotHasHotkey("dictation", key)) {
         if (!isLiveWindow(windowManager.mainWindow)) return;
-        if (windowManager.getActivationMode() === "push") {
+        if (usesKeyRelease(windowManager.getActivationMode())) {
           windowManager.startWindowsPushToTalk(key);
         } else {
           windowManager.sendToggleDictation();
@@ -1697,7 +1624,7 @@ async function startApp() {
         windowManager.handleWindowsPushKeyUp(key);
       } else if (
         isLiveWindow(windowManager.mainWindow) &&
-        windowManager.getActivationMode() === "push"
+        usesKeyRelease(windowManager.getActivationMode())
       ) {
         windowManager.handleWindowsPushKeyUp(key);
       }
@@ -1788,60 +1715,98 @@ if (gotSingleInstanceLock) {
       windowManager.createMainWindow();
     }
 
-    // Check for OAuth protocol URL in command line arguments (Windows/Linux)
+    // Preserve local note links; account and billing deep links are unsupported.
     const url = commandLine.find((arg) => arg.startsWith(`${OAUTH_PROTOCOL}://`));
-    if (url) {
-      if (url.includes("upgrade-success")) {
-        handleUpgradeDeepLink();
-      } else if (isNoteDeepLink(url)) {
-        await handleNoteDeepLink(url);
-      } else if (isInvitationDeepLink(url)) {
-        handleInvitationDeepLink(url);
-      } else {
-        void handleOAuthDeepLink(url);
-      }
+    if (url && isNoteDeepLink(url)) {
+      await handleNoteDeepLink(url);
     }
   });
 
   app
     .whenReady()
     .then(() => {
+      // Electron grants every permission to every origin until a session has
+      // handlers. Installed first thing after ready, ahead of every window
+      // (the boot gate below can open the data-folder move window): only the
+      // app's own pages keep their permissions (#638). The dev server origin
+      // counts under the same condition that picks loadURL over loadFile.
+      installPermissionHandlers(session.defaultSession, {
+        devServerUrl:
+          process.env.NODE_ENV === "development" ? DevServerManager.DEV_SERVER_URL : undefined,
+        // The logger only exists once the core managers are up; false makes
+        // the handler report the same denial again once it does.
+        log: (message) => {
+          if (!debugLogger) return false;
+          debugLogger.debug(message, undefined, "permissions");
+        },
+      });
+
       // On Linux, --enable-transparent-visuals requires a short delay before creating
       // windows to allow the compositor to set up the ARGB visual correctly.
       // Without this delay, transparent windows flicker on both X11 and Wayland.
       const delay = process.platform === "linux" ? 300 : 0;
       return new Promise((resolve) => setTimeout(resolve, delay));
     })
-    .then(() => {
-      if (process.platform === "win32") {
-        session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
-          // Only the loopback audio track is used; the video source is
-          // discarded by the renderer, so skip thumbnail generation.
-          desktopCapturer
-            .getSources({ types: ["screen"], thumbnailSize: { width: 0, height: 0 } })
-            .then((sources) => {
-              if (sources.length > 0) {
-                callback({ video: sources[0], audio: "loopback" });
-              } else {
-                callback(null);
-              }
-            })
-            .catch((error) => {
-              console.error("Display media request failed:", error);
-              callback(null);
+    .then(() =>
+      dataRootBootstrap.runBootGate({
+        resolution: bootDataRoot,
+        runBlocked: () => {
+          if (!process.env.UI_LANGUAGE) changeLanguage(app.getLocale());
+          if (process.platform === "darwin") app.focus({ steal: true });
+          dataRootBootstrap.runBlockedBootDialog({
+            resolution: bootDataRoot,
+            channel: APP_CHANNEL,
+            resolveAgain: resolveBootDataRoot,
+            dialog,
+            app,
+            t: (key, options) => i18nMain.t(key, options),
+          });
+        },
+        runMove: () => runDataFolderMove(bootDataRoot),
+        // Never leave a windowless process holding the boot-limbo lock.
+        onBlockedError: (error) => {
+          console.error("Data folder dialog failed:", error);
+          try {
+            dialog.showErrorBox(
+              i18nMain.t("startup.error.title"),
+              i18nMain.t("startup.error.message", { error: error.message })
+            );
+          } finally {
+            app.exit(1);
+          }
+        },
+        start: () => {
+          if (process.platform === "win32") {
+            session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+              // Only the loopback audio track is used; the video source is
+              // discarded by the renderer, so skip thumbnail generation.
+              desktopCapturer
+                .getSources({ types: ["screen"], thumbnailSize: { width: 0, height: 0 } })
+                .then((sources) => {
+                  if (sources.length > 0) {
+                    callback({ video: sources[0], audio: "loopback" });
+                  } else {
+                    callback(null);
+                  }
+                })
+                .catch((error) => {
+                  console.error("Display media request failed:", error);
+                  callback(null);
+                });
             });
-        });
-      }
+          }
 
-      startApp().catch((error) => {
-        console.error("Failed to start app:", error);
-        dialog.showErrorBox(
-          i18nMain.t("startup.error.title"),
-          i18nMain.t("startup.error.message", { error: error.message })
-        );
-        app.exit(1);
-      });
-    });
+          startApp().catch((error) => {
+            console.error("Failed to start app:", error);
+            dialog.showErrorBox(
+              i18nMain.t("startup.error.title"),
+              startupErrorMessage(error, (key, options) => i18nMain.t(key, options))
+            );
+            app.exit(1);
+          });
+        },
+      })
+    );
 
   app.on("window-all-closed", () => {
     // Don't quit on macOS when all windows are closed
@@ -1910,16 +1875,50 @@ if (gotSingleInstanceLock) {
   });
 }
 
+// Pending Settings > Move (#257): copy with a small progress window, then
+// relaunch onto the new folder, or onto the old one after a failure dialog.
+async function runDataFolderMove(resolution) {
+  if (!process.env.UI_LANGUAGE) changeLanguage(app.getLocale());
+  const progress = new BrowserWindow({
+    width: 420,
+    height: 120,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    closable: false,
+    title: i18nMain.t("dataFolderDialog.title"),
+    webPreferences: { sandbox: true, contextIsolation: true },
+  });
+  const message = i18nMain.t("dataFolderMove.progress").replace(/[<&]/g, "");
+  progress.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(
+      `<body style="font:13px system-ui;padding:24px;margin:0">${message}</body>`
+    )}`
+  );
+  const result = await require("./src/helpers/dataFolderMove").runPendingMove({
+    defaultUserData: resolution.defaultUserData,
+    from: resolution.from,
+    channel: APP_CHANNEL,
+  });
+  progress.destroy();
+  if (!result.ok) {
+    dialog.showMessageBoxSync({
+      type: "error",
+      title: i18nMain.t("dataFolderDialog.title"),
+      message: i18nMain.t("dataFolderMove.failed"),
+      detail: result.reason,
+    });
+  }
+  app.relaunch();
+  app.exit(0);
+}
+
 function performSyncTeardown() {
   if (wakeRewarmTimer) {
     clearTimeout(wakeRewarmTimer);
     wakeRewarmTimer = null;
   }
   clearPendingNoteDeepLink();
-  if (authBridgeServer) {
-    authBridgeServer.close();
-    authBridgeServer = null;
-  }
   if (cliBridge) {
     cliBridge.stop().catch(() => {});
     cliBridge = null;

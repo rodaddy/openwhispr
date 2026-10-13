@@ -8,6 +8,10 @@ export const PREPARED_MAX_AGE_MS = 10000;
 // dictate. The stream is still reusable; only the buffered chunks are not.
 export const PRE_ROLL_MAX_AGE_MS = 2000;
 
+// A prepared capture younger than this starts recording on the constraints it
+// was prepared with instead of re-resolving the system default mic (#563).
+export const PREPARED_CONSTRAINTS_FRESH_MS = 3000;
+
 export const discardPreRoll = (prepared) => {
   const recorder = prepared?.recorder;
   if (recorder) {

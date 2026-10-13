@@ -44,12 +44,31 @@ export function httpError(message: string, status: number): Error & { status: nu
   return Object.assign(new Error(message), { status });
 }
 
-// Specific retry strategy for API calls
-export function createApiRetryStrategy() {
+const LLM_TIMEOUT_CODE = "LLM_TIMEOUT";
+
+export function llmTimeoutError(seconds: number): Error & { code: string } {
+  return Object.assign(new Error(`Request timed out after ${seconds}s`), {
+    code: LLM_TIMEOUT_CODE,
+  });
+}
+
+function isTimeoutError(error: any): boolean {
+  return error?.code === LLM_TIMEOUT_CODE || error?.name === "APIConnectionTimeoutError";
+}
+
+// Specific retry strategy for API calls. A long call (minutes-long timeoutSeconds)
+// must not multiply its wait: it never retries a timeout, and retries other faults
+// only while they fail fast (within the first quarter of the timeout).
+export function createApiRetryStrategy({ timeoutSeconds }: { timeoutSeconds?: number } = {}) {
+  const startedAt = Date.now();
+  const retryWindowMs = timeoutSeconds ? (timeoutSeconds * 1000) / 4 : Infinity;
   return {
     shouldRetry: (error: any) => {
-      // No HTTP status means the request never got an answer (network drop, timeout).
       const status = error?.status ?? error?.response?.status;
+      if (timeoutSeconds && (isTimeoutError(error) || status === 408)) return false;
+      if (Date.now() - startedAt >= retryWindowMs) return false;
+
+      // No HTTP status means the request never got an answer (network drop, timeout).
       if (typeof status !== "number") return true;
 
       // Most 4xx are deterministic rejections. 408 is a request timeout and 429 is

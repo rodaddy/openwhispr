@@ -278,7 +278,8 @@ guard let monitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, h
     let keyCode = event.keyCode
     for (code, flag, name) in rightModifiers {
         if keyCode == code {
-            emit(flags.contains(flag) ? "RIGHT_MOD_DOWN:\(name)" : "RIGHT_MOD_UP:\(name)")
+            let eventTimeMs = Int64((event.timestamp * 1000).rounded())
+            emit(flags.contains(flag) ? "RIGHT_MOD_DOWN:\(name):\(eventTimeMs)" : "RIGHT_MOD_UP:\(name):\(eventTimeMs)")
             break
         }
     }
@@ -345,12 +346,35 @@ stdinSource.setEventHandler {
     while let newline = stdinBuffer.firstIndex(of: UInt8(ascii: "\n")) {
         let line = Data(stdinBuffer[..<newline])
         stdinBuffer.removeSubrange(...newline)
-        if let config = try? JSONDecoder().decode(ListenerConfig.self, from: line) {
+        if line == Data("PASTE".utf8) {
+            postPasteKeystroke()
+        } else if let config = try? JSONDecoder().decode(ListenerConfig.self, from: line) {
             applyConfiguration(config)
         } else {
             emitWarning("Ignored malformed configuration line")
         }
     }
+}
+
+// Posts ⌘V from this resident process. A freshly spawned helper pays ~400 ms
+// per paste just to come up and connect to the window server; this process is
+// already connected, so the keystroke lands in a few ms.
+func postPasteKeystroke() {
+    guard AXIsProcessTrusted() else {
+        emit("PASTE_FAILED:untrusted")
+        return
+    }
+    guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: true),
+          let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: false) else {
+        emit("PASTE_FAILED:event")
+        return
+    }
+    keyDown.flags = .maskCommand
+    keyUp.flags = .maskCommand
+    keyDown.post(tap: .cgSessionEventTap)
+    usleep(8000)
+    keyUp.post(tap: .cgSessionEventTap)
+    emit("PASTE_OK")
 }
 stdinSource.resume()
 

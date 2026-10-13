@@ -1,14 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useAuth } from "../../hooks/useAuth";
 import { useSettings } from "../../hooks/useSettings";
-import { useSettingsStore } from "../../stores/settingsStore";
-import { getBaseLanguageCode } from "../../utils/languageSupport";
-import {
-  transcribeFile,
-  getTranscriptionApiKey,
-  type FileTranscriptionConfig,
-} from "../../services/fileTranscription";
+import { transcribeFile } from "../../services/fileTranscription";
+import { useTranscriptionConfig } from "./useTranscriptionConfig";
 import { analyserRms } from "../../utils/audioLevel";
+import { resolvePreferredMicrophone } from "../../helpers/microphoneSelection";
 
 export type VoiceDraftStatus = "idle" | "recording" | "transcribing";
 
@@ -23,25 +18,8 @@ interface UseVoiceDraftOptions {
  * handed back for the caller to place into the input.
  */
 export function useVoiceDraft({ onTranscript, onError }: UseVoiceDraftOptions) {
-  const { isSignedIn } = useAuth();
   const settings = useSettings();
-  const {
-    useLocalWhisper,
-    whisperModel,
-    localTranscriptionProvider,
-    parakeetModel,
-    cohereModel,
-    cloudTranscriptionMode,
-    cloudTranscriptionProvider,
-    cloudTranscriptionBaseUrl,
-    cloudTranscriptionModel,
-    preferredLanguage,
-    transcriptionMode,
-    remoteTranscriptionUrl,
-    remoteTranscriptionModel,
-  } = settings;
-  const cortiEnvironment = useSettingsStore((s) => s.cortiEnvironment);
-  const cortiTenant = useSettingsStore((s) => s.cortiTenant);
+  const buildConfig = useTranscriptionConfig();
 
   const [status, setStatus] = useState<VoiceDraftStatus>("idle");
   const [elapsed, setElapsed] = useState(0);
@@ -54,28 +32,8 @@ export function useVoiceDraft({ onTranscript, onError }: UseVoiceDraftOptions) {
   const chunksRef = useRef<Blob[]>([]);
   const discardRef = useRef(false);
 
-  const buildConfig = (): FileTranscriptionConfig => ({
-    useLocalWhisper,
-    localTranscriptionProvider: localTranscriptionProvider as string,
-    whisperModel,
-    parakeetModel,
-    cohereModel,
-    isOpenWhisprCloud: isSignedIn && cloudTranscriptionMode === "openwhispr" && !useLocalWhisper,
-    getApiKey: () => getTranscriptionApiKey(cloudTranscriptionProvider as string, settings),
-    cloudTranscriptionProvider: cloudTranscriptionProvider as string,
-    cloudTranscriptionBaseUrl: cloudTranscriptionBaseUrl || "",
-    cloudTranscriptionModel,
-    // Empty = auto-detect; the resolver supplies a default where one is required.
-    language: getBaseLanguageCode(preferredLanguage) || "",
-    cortiEnvironment,
-    cortiTenant,
-    transcriptionMode,
-    remoteTranscriptionUrl,
-    remoteTranscriptionModel,
-  });
-
   // Latest-value refs so the recorder's onstop (bound at start time) uses
-  // current settings and callbacks.
+  // current callbacks; buildConfig always reads current settings.
   const buildConfigRef = useRef(buildConfig);
   buildConfigRef.current = buildConfig;
   const onTranscriptRef = useRef(onTranscript);
@@ -139,7 +97,15 @@ export function useVoiceDraft({ onTranscript, onError }: UseVoiceDraftOptions) {
   const start = useCallback(async () => {
     if (recorderRef.current) return;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const resolution = await resolvePreferredMicrophone({ settings });
+      if (resolution.mode === "automatic" && !resolution.device) {
+        throw new Error("No available microphone matched the automatic selection policy");
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: resolution.device?.deviceId
+          ? { deviceId: { exact: resolution.device.deviceId } }
+          : true,
+      });
       const context = new AudioContext();
       const source = context.createMediaStreamSource(stream);
       const analyser = context.createAnalyser();
@@ -170,7 +136,7 @@ export function useVoiceDraft({ onTranscript, onError }: UseVoiceDraftOptions) {
       teardownCapture();
       onErrorRef.current(error instanceof Error ? error.message : String(error));
     }
-  }, [finishRecording, teardownCapture]);
+  }, [finishRecording, settings, teardownCapture]);
 
   const stop = useCallback(() => {
     recorderRef.current?.stop();

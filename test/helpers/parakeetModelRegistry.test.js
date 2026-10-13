@@ -95,3 +95,17 @@ test("sherpa provider check covers nvidia and cohere only", () => {
   assert.ok(isSherpaLocalProvider("cohere"));
   assert.ok(!isSherpaLocalProvider("whisper"));
 });
+
+test("every local transcription model carries a RAM estimate and where it comes from", () => {
+  const entries = [
+    ...Object.entries(modelData.parakeetModels),
+    ...Object.entries(modelData.whisperModels),
+  ];
+
+  for (const [modelId, model] of entries) {
+    assert.ok(Number.isInteger(model.ramEstimateMb), `${modelId} ramEstimateMb is an integer`);
+    assert.ok(model.ramEstimateMb >= model.sizeMb, `${modelId} ramEstimateMb covers its disk size`);
+    assert.equal(typeof model.ramEstimateBasis, "string", `${modelId} ramEstimateBasis`);
+    assert.ok(model.ramEstimateBasis.trim().length > 0, `${modelId} ramEstimateBasis is not empty`);
+  }
+});

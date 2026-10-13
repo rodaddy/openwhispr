@@ -1,6 +1,8 @@
 // Pure decision logic for sync passes, kept out of SyncService so the
 // node --test suite can cover it (the cloudSyncGuards.js precedent, #1290).
 
+import { normalizeTimestamp } from "../helpers/cloudSyncGuards.js";
+
 export interface SyncConsent {
   /** Backup of everything the user has NOT explicitly shared. */
   backup: boolean;
@@ -145,6 +147,27 @@ export function resolvePullCursorAdvance(pass: {
     return { advanceCursor: true, advanceTeamCursor: !pass.teamOnly };
   }
   return { advanceCursor: !pass.teamOnly, advanceTeamCursor: false };
+}
+
+// The delta cursor lookback L (protocol section 8). The hub stamps a row
+// before its write commits, and a delta without since_id serves only
+// `updated_at > since`, so a row stamped at or below a stored cursor that
+// commits after the pass read past it would never be served again (a
+// transcription never changes, so it would be lost for good). Every stored
+// delta cursor, for every kind, is therefore the pass-start clock minus L.
+// The hub rolls back a write still uncommitted 20 s after its first stamp
+// (the stamp budget), so a row is visible within 30 s of its stamp (the
+// visibility bound), which leaves 30 s of L for clock skew. Rows inside the
+// window are served again, so a re-pull of an unchanged row must change
+// nothing.
+export const DELTA_CURSOR_LOOKBACK_MS = 60_000;
+
+// The cursor to store for a pass: `stamp` minus L, truncated to the
+// millisecond (Date.parse drops sub-millisecond digits; it never rounds up).
+export function lookbackCursor(stamp: string): string {
+  const ms = Date.parse(normalizeTimestamp(stamp));
+  if (!Number.isFinite(ms)) throw new RangeError(`unparseable cursor stamp: ${stamp}`);
+  return new Date(ms - DELTA_CURSOR_LOOKBACK_MS).toISOString();
 }
 
 // Why a space was purged locally: "deleted" covers the delete race the guard

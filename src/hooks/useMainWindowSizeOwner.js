@@ -1,6 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSettingsStore } from "../stores/settingsStore";
-import { createPillVisibilityHandoff } from "../utils/pillVisibilityHandoff";
+import {
+  createPillVisibilityHandoff,
+  shouldHideAfterHandoff,
+} from "../utils/pillVisibilityHandoff";
 import { SIZE_RANK, resolveMainWindowSizeKey } from "../utils/windowSizeLadder";
 
 // The pill container fades with App.jsx's `transition-opacity duration-150`;
@@ -29,10 +32,17 @@ export function useMainWindowSizeOwner({
   liveTranscriptOpen,
   liveTranscriptMounted,
   liveTranscriptOpenRef,
+  isTakeLive = false,
 }) {
   const [handoffActive, setHandoffActive] = useState(false);
   const actionCountRef = useRef(dictationErrorActionCount);
   const handoffRef = useRef(null);
+  // A take that starts over the error card owns the pill: the handoff must
+  // not hide the window under it (#549).
+  const takeLiveRef = useRef(isTakeLive);
+  useLayoutEffect(() => {
+    takeLiveRef.current = isTakeLive;
+  }, [isTakeLive]);
   // Same masking for the panel-return shrink: snapping the native window from
   // panel bounds back to the pill box paints one compositor frame of the old
   // texture inside the new bounds, which blanks the just-settled pill. Fade
@@ -43,7 +53,11 @@ export function useMainWindowSizeOwner({
   useEffect(() => {
     const handoff = createPillVisibilityHandoff({
       onSuppressedChange: setHandoffActive,
-      shouldAutoHide: () => useSettingsStore.getState().floatingIconAutoHide,
+      shouldAutoHide: () =>
+        shouldHideAfterHandoff({
+          autoHide: useSettingsStore.getState().floatingIconAutoHide,
+          takeLive: takeLiveRef.current,
+        }),
       hideWindow: () => window.electronAPI?.hideWindow?.(),
     });
     handoffRef.current = handoff;

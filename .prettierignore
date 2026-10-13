@@ -4,3 +4,6 @@ build
 src/dist
 *.min.js
 package-lock.json
+# Verbatim copy and generated module; scripts/sync-grill-bank.mjs owns both.
+src/config/grill/question-bank.md
+src/config/grill/questionBankText.ts

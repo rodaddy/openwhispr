@@ -299,6 +299,8 @@ test("a cloud tombstone hard-deletes the local note", async (t) => {
   });
 
   // Tombstones only travel on the delta page, so the cursor must already exist.
+  // This version stored it, so the one-time upgrade rewind does not apply.
+  localStorageStub.setItem("sync.cursorVersion", "2");
   localStorageStub.setItem("lastSyncedAt.notes", "2026-07-01T00:00:00.000Z");
   await cloud.request({ method: "DELETE", path: "/api/notes/delete", body: { id: cloudRow.id } });
   const mark = cloud.log.length;

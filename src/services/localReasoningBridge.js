@@ -40,6 +40,7 @@ class LocalReasoningService {
         systemPrompt: config.systemPrompt || "",
         disableThinking: config.disableThinking !== false,
         requireCompleteOutput: config.requireCompleteOutput,
+        timeoutMs: config.timeoutSeconds ? config.timeoutSeconds * 1000 : undefined,
       };
 
       debugLogger.logReasoning("LOCAL_BRIDGE_INFERENCE", {

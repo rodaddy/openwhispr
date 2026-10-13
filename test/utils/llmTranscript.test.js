@@ -19,9 +19,17 @@ const attendee = (email, displayName, self = false) => ({
 
 test("mic segments carry the note owner's label", async () => {
   const { resolveLlmSpeakerLabel } = await load();
-  assert.equal(resolveLlmSpeakerLabel({ source: "mic", text: "hi" }, {}, "Gabriel Stein", t), "Gabriel Stein");
   assert.equal(
-    resolveLlmSpeakerLabel({ source: "system", speaker: "you", text: "hi" }, {}, "Gabriel Stein", t),
+    resolveLlmSpeakerLabel({ source: "mic", text: "hi" }, {}, "Gabriel Stein", t),
+    "Gabriel Stein"
+  );
+  assert.equal(
+    resolveLlmSpeakerLabel(
+      { source: "system", speaker: "you", text: "hi" },
+      {},
+      "Gabriel Stein",
+      t
+    ),
     "Gabriel Stein"
   );
 });
@@ -37,7 +45,12 @@ test("system segments resolve name → mapping → Speaker N → Them", async ()
   };
   assert.equal(resolveLlmSpeakerLabel(locked, { speaker_0: "Wrong" }, "You", t), "Michael");
   assert.equal(
-    resolveLlmSpeakerLabel({ source: "system", speaker: "speaker_1", text: "hi" }, { speaker_1: "Sean" }, "You", t),
+    resolveLlmSpeakerLabel(
+      { source: "system", speaker: "speaker_1", text: "hi" },
+      { speaker_1: "Sean" },
+      "You",
+      t
+    ),
     "Sean"
   );
   assert.equal(
@@ -82,7 +95,10 @@ test("buildMeetingContext names the owner and invited participants", async () =>
 
 test("buildMeetingContext omits what it does not know", async () => {
   const { buildMeetingContext } = await load();
-  assert.equal(buildMeetingContext({ selfName: null, selfEmail: null, participants: [] }, "You"), "");
+  assert.equal(
+    buildMeetingContext({ selfName: null, selfEmail: null, participants: [] }, "You"),
+    ""
+  );
   assert.equal(
     buildMeetingContext(
       { selfName: null, selfEmail: null, participants: [attendee("a@b.com", "Ada")] },
@@ -114,4 +130,22 @@ test("collectKnownPeople merges owner, participants, mappings, and named segment
     { name: "Priya", email: null },
     { name: "Ada", email: null },
   ]);
+});
+
+test("buildLlmTranscript marks highlights with the owner and clock time", async () => {
+  const { buildLlmTranscript } = await load();
+  const at = new Date(2026, 9, 13, 12, 31, 5).getTime();
+  const segments = [
+    { source: "system", speaker: "speaker_0", text: "Budget is due Friday" },
+    { source: "highlight", speaker: "you", text: "this part is important", timestamp: at },
+    { source: "highlight", speaker: "you", text: "no time known" },
+  ];
+  assert.equal(
+    buildLlmTranscript(segments, { speaker_0: "Michael" }, "Rico", t),
+    [
+      "Michael: Budget is due Friday",
+      "[HIGHLIGHT by Rico @ 12:31] this part is important",
+      "[HIGHLIGHT by Rico] no time known",
+    ].join("\n")
+  );
 });

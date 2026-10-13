@@ -5,7 +5,490 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+**Versioning (Rico, 2026-09-29):** rTech Whisper has its own version number,
+starting at 2.0.0. It is built on OpenWhispr 1.10.1 (upstream is at 1.10.2) and
+no longer follows upstream's numbers. Small fixes and small features raise the
+patch (2.0.1); the minor (2.1.0) is for bigger changes; the major for a new
+product line. The old `1.10.1-rtech.N` builds were pre-release
+suffixes that sort below upstream 1.10.1; they end at `rtech.8`, which was
+never installed.
+
 ## [Unreleased]
+
+## [2.1.1] - 2026-10-11
+
+### Added
+
+- Insights: each dictation's latency is stored on this device, and the
+  Insights page shows the median of the last 7 days, with a line per model
+  when more than one was used
+  (#701, #699).
+
+### Changed
+
+- Dictation: with "Show dictation latency" on, the dictation pill shows the
+  last latency and the average of the last 10 for 2.5 s after a paste, and
+  the live preview panel shows the same figures at its bottom. This replaces
+  the latency toast
+  (#705, #699).
+
+## [2.1.0] - 2026-10-11
+
+The minor number rises because this release carries the VoiceStudio adoption
+work (epic #663) and the GoHighLevel connector.
+
+### Added
+
+- Dictation: on macOS a pasted dictation is formatted for the app it lands in.
+  On by default, with a toggle and per-app overrides in Settings. In a
+  terminal the first word is lowercased only when it is a known command
+  (#647, #657, #675, #687, #629, #646).
+- Dictation: guarded auto-submit. After a paste into a terminal the app can
+  press Return. Off by default, with a minimum word count; terminals are
+  matched by exact bundle id, and a withheld Return shows a toast saying the
+  text is still on the line
+  (#659, #667, #670, #679, #634, #658).
+- Dictation: a paste-last hotkey pastes the last dictation again, without
+  Return (#670, #634).
+- Dictation: an optional toast shows the time from releasing the hotkey to the
+  paste. Off by default (#673, #639).
+- Skippy's voice: choose where it runs, Hub, Local or Auto. The hub stays the
+  default; Auto tries the hub first and falls back to this computer
+  (#660, #666, #630).
+- Skippy's voice: an on-device OmniVoice engine, kept open as a sidecar and
+  compiled into the mac build. A Settings button downloads the voice weights,
+  and an interrupted download resumes where it stopped
+  (#644, #654, #656, #662, #676, #685, #686, #693, #630, #636).
+- Skippy's voice: sound tags such as a sigh or a laugh, and a pinned render
+  (seed, steps, language) on the direct call to the voice server
+  (#671, #635).
+- Voice setup: the dialog transcribes the reference clip. A clip up to 20 s is
+  used whole, and a longer one is cut to its best 15 s window. A voice can be
+  exported and imported as one bundle file
+  (#669, #674, #678, #632, #641).
+- Models: local model rows show an estimated RAM figure
+  (#672, #637).
+- CRM: a GoHighLevel connector replaces the old CRM connector. A note files as
+  one GoHighLevel note, the sync dialog picks a contact and an opportunity,
+  and the AI tools sync to opportunities
+  (#614, #538).
+- Database: the app snapshots the database once per app version before it
+  migrates, and a failed migration names the snapshot taken before it
+  (#652, #665, #633).
+
+### Changed
+
+- Parakeet: the local server stops after 10 idle minutes and restarts on the
+  next use (#648, #680, #640, #653).
+- Security: Chromium permissions are granted to the app's own pages only
+  (#651, #638).
+- Releases: the mac build makes only the DMG and prunes old builds after it
+  publishes, and the release watcher copies only the DMG
+  (#592, #593, #594, #544).
+
+### Fixed
+
+- Onboarding: the assistant-hotkey step can be skipped, and a step's content
+  scrolls when it does not fit
+  (#689, #661).
+- Dictation: the macOS terminal check matches whole app names, and a sentence
+  that ends inside quotes counts as an end
+  (#664, #690, #645, #646).
+- Local voice engine: the next engine process waits for the retired one to
+  exit, a stopped engine stays stopped, and a failed transcript write leaves
+  no staged file
+  (#677, #681, #688, #655).
+- Build scripts: downloads have a size cap, restart cleanly on a mismatched
+  range, and the engine build takes a lock
+  (#684, #642).
+
+## [2.0.24] - 2026-10-07
+
+### Fixed
+
+- Dictation hotkey: a press made while the previous take is still finishing
+  now starts the next take once that take is done, instead of being dropped;
+  a start the app still drops is logged
+  (#588, #549).
+
+### Added
+
+- Dev tooling: the speech-to-text A/B replay runner, which re-transcribes a
+  seeded, duration-stratified sample of saved dictation clips through one or
+  more models and reports WER and latency, with atomic WAV conversion and gold
+  candidates drawn from the sample
+  (#580, #584, #550).
+
+## [2.0.23] - 2026-10-07
+
+### Fixed
+
+- Dictation pill: a take that starts while the "We didn't catch that" card is
+  up keeps its pill on screen; with auto-hide on, the card's dismissal used to
+  hide the window mid-take, so the hotkey looked dead
+  (#586, #549).
+- Dictation hotkey: in hybrid mode, a tap while the mic is still starting no
+  longer starts the take a second time; within 400 ms of the press it is
+  ignored, after that it stops the take
+  (#586, #549).
+
+## [2.0.22] - 2026-10-07
+
+### Fixed
+
+- Dictation hotkey: in hybrid mode, a stop tap within 400 ms of the start no
+  longer ends the take, so a double tap or a bouncy press keeps recording.
+  Applies to the right modifier, Globe, mouse-button and registered-hotkey
+  triggers (#582, #549).
+- Dev tooling: the speech-to-text A/B scorer no longer splits a word at an
+  acute accent, backtick, oxia or fullwidth-grave apostrophe
+  (#577, #572).
+
+## [2.0.21] - 2026-10-07
+
+### Fixed
+
+- Dictation hotkey: a failed or cancelled take resets dictation and drops the
+  held mic and prepared capture, so the next press starts fresh instead of
+  wedging until a restart (#552, #553, #549).
+- The last word is no longer cut off: recording keeps going 400 ms after the
+  trigger is released, and a press during that tail waits for it instead of
+  being dropped (#571, #564).
+- Dependencies: all 20 npm audit advisories cleared (#555, #548).
+- Releases: the release watcher runs from its own folder on the build Mac, and
+  the release server keeps only the newest 3 releases' assets (#543, #545, #480).
+
+### Changed
+
+- Dictation starts faster: a capture prepared a moment earlier starts without
+  re-resolving the system default mic, and on macOS the mic opens before the
+  frame wait (#568, #563).
+- The listening pill arms at the press and shows the waveform as soon as
+  recording starts (#569, #563).
+- Paste waits 15 ms instead of 120 ms when the target app is confirmed
+  frontmost (#567, #565).
+- At idle the tray no longer spawns the mic helper every 2 s: Lark status is
+  cached for 30 s and the helper path is resolved once
+  (#570, #565).
+- CI: PRs run only the affected tests and main runs the full suite; test
+  selection follows renames and glob-named tests (#560, #566, #551).
+
+### Added
+
+- Dev tooling: a word-error-rate and latency scoring module for the
+  speech-to-text A/B harness (#559, #550).
+
+## [2.0.20] - 2026-10-02
+
+### Added
+
+- Data folder: move the data back to the default folder. The model cache
+  stays on the drive (#535, #257).
+- Corrections: a train-a-word take stops by itself once you stop speaking;
+  Stop still works (#536, #533).
+- Releases: tagged builds are copied to a shared drive by a watcher on
+  the build Mac (#534, #480).
+
+### Changed
+
+- Erase all data first zips the data folder, and any old copy a move left
+  behind, into the Trash, then deletes them. If the backup fails, nothing is
+  erased and the app restarts (#535, #540, #257, #539).
+- Recording fragments and other temp files live under the chosen data folder
+  (#535, #257).
+
+## [2.0.19] - 2026-10-01
+
+### Added
+
+- Corrections: train a word. Type the word, say it 3 or 4 times, review the
+  takes, and save (#509, #485, #484, #94).
+
+### Changed
+
+- Auto-learn is off by default, and is switched off once on existing installs
+  (#483, #94).
+- Corrections no longer feed misheard words to the speech engine
+  (#508, #94).
+
+### Removed
+
+- The old browser web recorder (#481, #476, #105, #477).
+
+## [2.0.18] - 2026-10-01
+
+### Changed
+
+- Dictionary: the second tab is now called Corrections
+  (#455, #451).
+
+### Fixed
+
+- Data folder: the startup dialog no longer says moving the data folder is
+  unavailable (#458, #257).
+- Hub switch: things you delete while on one hub now also disappear from the
+  other hub after you switch back to it
+  (#454, #293).
+- Grill: a dictation meant for another app no longer becomes a grill answer
+  (#456, #80).
+
+## [2.0.17] - 2026-09-30
+
+### Added
+
+- Integrations: a Sync now button on each connected calendar. It re-reads
+  the calendars and events right away and shows the provider's error if
+  the sync fails (#434, #433).
+
+### Changed
+
+- Grilling is now its own section inside Settings (To grill, voices,
+  questions); the sidebar entry added in 2.0.13 is gone
+  (#432, #431).
+
+## [2.0.16] - 2026-09-30
+
+### Fixed
+
+- Google Calendar now signs in through rTech Whisper's own Google app, so
+  any Google account can grant calendar
+  access with a normal consent screen. Reconnect each Google account once
+  after updating (#429, #428).
+
+## [2.0.15] - 2026-09-30
+
+### Added
+
+- Brain dumps: a new sidebar section. Process sorts each dump from the
+  phone into a note (filed in its best folder), a "To grill" topic, or an
+  Apple Reminders to-do, then shows what went where with Undo
+  (#394,
+  #395, #327).
+- Brain dump roundups: a summary note at 9:30 AM and 11 PM (times
+  editable), which never sorts or files anything
+  (#396, #327).
+
+## [2.0.14] - 2026-09-30
+
+### Added
+
+- Grilling: a "To grill" list. Topics you add (and, soon, brain dumps) are
+  asked first in the next grill, and marked done only once the grill asked them
+  (#358, #327).
+- Apple Reminders bridge for brain-dump to-dos; not wired to any button yet
+  (#356, #327).
+
+### Fixed
+
+- A calendar account whose sign-in expired now says "Needs to be reconnected"
+  with a Reconnect button, and notifies once, instead of failing silently while
+  meeting reminders ran on stale times
+  (#357, #355, #353).
+
+## [2.0.13] - 2026-09-30
+
+### Added
+
+- Grilling has its own section in the sidebar; the grill voices and question
+  bank moved there out of Settings
+  (#324, #323).
+- Settings > Data folder: Remove old copy deletes the copy left behind after a
+  move, keeping the files the app still reads there
+  (#328, #325).
+- Debug logs are capped: files older than 7 days go, and the oldest go while
+  the total is over 200 MB; a new file starts each day. Settings shows the log
+  size with a Clear button
+  (#326, #258).
+
+### Fixed
+
+- A hub note with no title now reaches the Mac as "Untitled Note" instead of
+  failing on every sync
+  (#322, #320).
+
+## [2.0.12] - 2026-09-30
+
+### Added
+
+- Settings > Data folder: Move… copies the app's data and model cache to a
+  folder you pick, checks the copy, and restarts on it. The old folder is kept
+  for you to remove (#259,
+  #295, #257).
+
+### Fixed
+
+- Switching sync hubs restarts the app and keeps each hub's ids and sync
+  position, so going back to a hub does not duplicate notes
+  (#294, #126).
+- Hub URLs must use https; http is allowed only for localhost
+  (#255, #144).
+
+## [2.0.11] - 2026-09-30
+
+### Fixed
+
+- When the device key state cannot be read, Settings now says "Key state
+  unavailable" and keeps Clear key available, instead of claiming the key is
+  saved (#250, #253).
+- A hub rejection (401) stays shown after a Clear key that fails, instead of
+  disappearing (#250, #253).
+- Two devices that add the same dictionary word now keep the same copy
+  (#250, #253).
+
+## [2.0.10] - 2026-09-30
+
+### Fixed
+
+- Hub key state: when Clear key fails, Settings now keeps showing the key
+  that is still on disk instead of saying it was removed, and Clear key stays
+  available when the key state cannot be read
+  (#227, #231).
+- Sync no longer permanently misses a row written on another device during a
+  sync pass: every delta cursor now looks back 60 seconds, a one-time rewind
+  covers cursors saved by older versions, and a re-sent dictionary or snippet
+  row can no longer delete a recreated snippet, flip a word between two cloud
+  rows, or overwrite a pending local edit
+  (#232, #242, #248).
+
+## [2.0.9] - 2026-09-30
+
+### Fixed
+
+- Hub key-state simplification (#217): a 401 records the rejection at arrival,
+  and a same-generation success clears it.
+- Settings load and URL fixes (#200, #201).
+- Clear-key fixes (#214, #221).
+- Fake-hub validation (#204, #222).
+- Test fixes (#202, #208, #215).
+
+## [2.0.8] - 2026-09-30
+
+### Fixed
+
+- Settings and hub key-state review P3s (#195: #148, #149, #155, #167, #175,
+  #176, #177, #187, #188, #191).
+- Test harness and test review P3s (#196: #164, #165, #178, #185, #192; tests
+  only, no product change).
+- The transcription quarantine (#141) is still open; its skip design is parked.
+
+## [2.0.7] - 2026-09-30
+
+### Fixed
+
+- Review findings from the hub-mode batch (#147: #125, #129, #130, #131, #132,
+  #133, #134, #135, #136, #139, #140), with follow-up fixes from the review
+  rounds (#166, #182, #190).
+- Hub voice: a 2xx reply that is not JSON or times out mid-read falls back
+  instead of raising; the Whisper prompt is capped at 1000 UTF-16 units and an
+  oversized synthesis body is refused before sending.
+- A hub 401 backs ambient sync off for 10 minutes and the settings page says
+  the device key was rejected.
+- Hub mode no longer probes spaces or syncs agent conversations, so an empty
+  spaces list cannot purge local team spaces.
+- The hub URL and device-key fields no longer save stale or failed drafts, and
+  a failed grill mark write rolls back correctly.
+- Deleting a note deletes its grill marks.
+- The transcription quarantine (#141) was split out of this release and is
+  still open.
+
+## [2.0.6] - 2026-09-29
+
+### Added
+
+- Hub mode: chats and transcriptions sync through a self-hosted hub with a
+  device key.
+- Voice goes to the hub first, with an away-from-home fallback chain when the
+  hub is out of reach.
+- Grill marks: tag each question good, weak, or retire on a saved session, with
+  mark counts and tagging in the question editor.
+
+### Changed
+
+- Transcriptions sync pages with since_id.
+
+### Removed
+
+- The Safari iPhone web app is retired.
+- Unreachable upstream-cloud helpers are removed.
+
+### Fixed
+
+- Fixes from the hub-mode review swarm.
+- The native-database test suites run instead of being skipped.
+
+## [2.0.5] - 2026-09-29
+
+### Added
+
+- Grill sessions have their own list: a Chats | Grills switch in the chat
+  list. New grills are marked as grills; existing "Life Story ch …" and
+  "Grill YYYY-MM-DD" chats are moved over once.
+
+### Changed
+
+- Deleting a chat removes it and its messages for good on an install that is
+  not signed in and has never synced; chats already deleted that way are
+  cleared at the next launch. Signed-in and synced installs keep the tombstone
+  so sync can retire the server copy.
+- Auto-learn never adds ordinary English words, swearing, or garbage tokens
+  to the dictionary.
+- The repository moved to its own name, rtech-whisper (2026-09-29); in-app
+  links and docs point at the new path.
+
+## [2.0.4] - 2026-09-29
+
+### Fixed
+
+- Spoken emoji take short names: "shrug emoji", "upside down emoji",
+  "facepalm emoji". Everyday names map to the everyday emoji (heart ❤️,
+  crying 😢, laughing 😂, party 🥳), person emoji default to the man variant
+  (🤷‍♂️) unless you say person or woman, and a misheard name ("scrug") still
+  finds the closest one. Sentences that merely mention emoji stay as spoken.
+
+## [2.0.3] - 2026-09-29
+
+### Added
+
+- Say "<name> emoji" to type the emoji: "upside down smiley emoji" prints 🙃.
+
+### Fixed
+
+- Silence no longer turns into repeated sentences or invented words: the
+  recording is trimmed to the speech before it goes to Whisper, and a sentence
+  repeated back to back is kept once.
+
+## [2.0.2] - 2026-09-29
+
+### Changed
+
+- Signed with Rico's Developer ID and notarized by Apple, so the app opens on
+  any Mac without an "unidentified developer" warning.
+- Each build ships a dmg (drag to Applications) next to the zip.
+
+## [2.0.1] - 2026-09-29
+
+### Added
+
+- Edit or remove a grill turn, and go Back to script.
+
+### Changed
+
+- Builds run on a dedicated build Mac.
+
+## [2.0.0] - 2026-09-29
+
+First release under rTech Whisper's own version number.
+
+### Added
+
+- Grill question store, editor in Settings, and a closing feedback question.
+- Note sharing on rTech's own share service, with the Share button restored.
+- Discard grill: throw a grill session away with nothing saved.
+
+### Fixed
+
+- Dictation no longer transcribes the assistant's own speech (barge-in stops it).
+- The live preview no longer shows "Thank you." on silence, and silence phrases are never pasted.
 
 ## [1.10.0] - Unreleased
 

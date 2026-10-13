@@ -4,7 +4,7 @@
       "sectionTitle": "Langue",
       "sectionDescription": "Configurez séparément la langue de l'interface et de la transcription",
       "uiLabel": "Langue de l'interface",
-      "uiDescription": "Choisissez la langue utilisée dans l'interface OpenWhispr",
+      "uiDescription": "Choisissez la langue utilisée dans l'interface rTech Whisper",
       "transcriptionLabel": "Langue de transcription",
       "transcriptionDescription": "Choisissez la langue que vous parlez pour une transcription plus précise",
       "chineseScriptLabel": "Écriture chinoise (dictée)",
@@ -55,21 +55,61 @@
         "title": "Identifier et étiqueter les intervenants",
         "description": "Lorsque désactivé, les transcriptions affichent « Vous » et « Autres »"
       }
+    },
+    "grillQuestions": {
+      "title": "Grill questions",
+      "description": "The questions a grill asks. Edit the text, reorder, retire, or add your own; changes apply to the next grill.",
+      "standard": "Daily questions",
+      "dayTemplates": "Day question templates",
+      "chapters": "Life Story chapters",
+      "questionLabel": "Question text",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "retire": "Retire",
+      "restore": "Restore",
+      "history": "History",
+      "noHistory": "No changes yet",
+      "historyEntry": "{{date}} · {{field}}: {{from}} -> {{to}}",
+      "source": "Source: {{source}}",
+      "add": "Add question",
+      "addPlaceholder": "New question",
+      "flow": "Flow",
+      "maxDayQuestions": "Day questions per daily grill",
+      "maxFeedQuestions": "Feed questions per daily grill",
+      "tag": "Tag (vote)",
+      "tagLabel": "Tag this question with a vote",
+      "tagHint": "A tag is a vote on the question. It does not retire it; Retire acts now.",
+      "tagMarks": {
+        "good": "Good",
+        "weak": "Weak",
+        "retire": "Retire vote"
+      },
+      "markCounts": "Votes: {{good}} good · {{weak}} weak · {{retire}} retire",
+      "retireHint": "Retire now: takes the question out of rotation immediately"
     }
   },
   "tray": {
+    "microphone": {
+      "input": "Input: {{device}}",
+      "inputUnknown": "Input Device",
+      "automatic": "Automatic",
+      "resumeAutomatic": "Resume Automatic",
+      "systemDefault": "System Default",
+      "builtIn": "Built-in",
+      "unavailable": "Microphones unavailable"
+    },
     "toggleDictation": {
       "show": "Afficher le panneau de dictée",
       "hide": "Masquer le panneau de dictée"
     },
     "openControlPanel": "Ouvrir le panneau de contrôle",
     "hideControlPanel": "Masquer le panneau de contrôle",
-    "quit": "Quitter OpenWhispr",
-    "tooltip": "OpenWhispr - Dictée vocale"
+    "quit": "Quitter rTech Whisper",
+    "tooltip": "rTech Whisper - Dictée vocale"
   },
   "menu": {
-    "appLabel": "OpenWhispr",
-    "quit": "Quitter OpenWhispr",
+    "appLabel": "rTech Whisper",
+    "quit": "Quitter rTech Whisper",
     "speech": "Parole",
     "settings": "Réglages…",
     "help": "Aide",
@@ -87,8 +127,8 @@
       "message": "Impossible d'ouvrir le lien dans votre navigateur :\n{{url}}\n\nErreur : {{error}}"
     },
     "loadFailure": {
-      "title": "Échec du chargement d'OpenWhispr",
-      "message": "OpenWhispr n'a pas pu charger son interface.",
+      "title": "Échec du chargement d'rTech Whisper",
+      "message": "rTech Whisper n'a pas pu charger son interface.",
       "detail": {
         "window": "Fenêtre : {{windowName}}",
         "error": "Erreur {{errorCode}} : {{errorDescription}}",
@@ -99,18 +139,41 @@
   },
   "startup": {
     "error": {
-      "title": "Erreur de démarrage OpenWhispr",
-      "message": "Échec du démarrage de l'application :\n\n{{error}}\n\nVeuillez signaler ce problème."
+      "title": "Erreur de démarrage rTech Whisper",
+      "message": "Échec du démarrage de l'application :\n\n{{error}}\n\nVeuillez signaler ce problème.",
+      "messageWithBackup": "Échec du démarrage de l'application :\n\n{{error}}\n\nUne copie de votre base de données, réalisée au premier démarrage de cette version de l'application, se trouve ici :\n{{backupPath}}\n\nElle ne contient rien de ce qui a été enregistré depuis. Rien n'a été restauré automatiquement.\n\nVeuillez signaler ce problème."
     },
     "globeHotkey": {
       "title": "Raccourci Globe indisponible",
-      "message": "OpenWhispr n'a pas pu activer la touche Globe.",
+      "message": "rTech Whisper n'a pas pu activer la touche Globe.",
       "details": {
         "unknown": "Erreur inconnue lors du démarrage de l'écouteur Globe.",
         "fallback": "Le raccourci Globe restera désactivé ; les raccourcis actuels continueront de fonctionner.",
         "devHint": "Exécutez `npm run compile:globe` puis reconstruisez l'application pour régénérer le binaire.",
-        "reinstallHint": "Réinstallez OpenWhispr ou contactez le support si le problème persiste."
+        "reinstallHint": "Réinstallez rTech Whisper ou contactez le support si le problème persiste."
       }
+    }
+  },
+  "dataFolderDialog": {
+    "title": "Dossier de données rTech Whisper",
+    "reason": {
+      "missing": "Le dossier de données est introuvable. Le disque est-il connecté ?",
+      "notWritable": "Le dossier de données existe, mais il est impossible d'y écrire.",
+      "noMarker": "Le dossier de données est vide. Les données ont-elles été déplacées ou effacées ? rTech Whisper n'y créera pas de nouveau stockage.",
+      "mismatch": "Le dossier de données contient un stockage rTech Whisper différent de celui utilisé par cette application.",
+      "pointerCorrupt": "Le réglage du dossier de données est illisible."
+    },
+    "folderDetail": "Dossier de données : {{path}}",
+    "retry": "Réessayer",
+    "choose": "Choisir un dossier…",
+    "quit": "Quitter",
+    "chooseTitle": "Choisissez un dossier de données rTech Whisper existant",
+    "refused": {
+      "missing": "Ce dossier est introuvable.",
+      "notWritable": "Impossible d'écrire dans ce dossier.",
+      "noMarker": "Ce dossier ne contient aucune donnée rTech Whisper. Pour déplacer vos données vers un nouveau dossier, lancez l'application et utilisez Paramètres > Système > Dossier de données.",
+      "channelMismatch": "Ce dossier contient des données de la version {{channel}} et ne peut pas être utilisé ici.",
+      "writeFailed": "Impossible d’enregistrer ce dossier comme dossier de données : {{error}}"
     }
   },
   "hotkey": {
@@ -118,6 +181,7 @@
       "callbackRequired": "Une fonction callback est requise pour configurer le raccourci",
       "globeOnlyMac": "La touche Globe est disponible uniquement sur macOS.",
       "fnCombinationUnsupported": "La touche Globe/Fn ne peut être utilisée que seule.",
+      "pasteLastOrdinaryOnly": "Coller la dernière dictée nécessite une combinaison de touches ordinaire.",
       "mouseButtonOnlyMac": "Les raccourcis avec les boutons de la souris ne sont actuellement pris en charge que sur macOS.",
       "alreadyRegistered": "\"{{hotkey}}\" est déjà enregistré par une autre application.",
       "osReserved": "\"{{hotkey}}\" peut être réservé par votre environnement de bureau.",
@@ -171,6 +235,7 @@
     "download": "Télécharger",
     "cancel": "Annuler",
     "recommended": "Recommandé",
+    "ramEstimate": "environ {{ram}} de RAM",
     "active": "Actif",
     "managedByOrg": "Géré par votre organisation",
     "freeAccountRequired": "Compte gratuit requis",
@@ -204,12 +269,13 @@
     "policyTranscriptionRestricted": "La transcription est restreinte par votre organisation.",
     "managedConfigLoading": "Vérification de la configuration gérée de votre organisation en cours. Réessayez dans un instant.",
     "managedConfigUnavailable": "L'accès d'entreprise géré est indisponible. Reconnectez-vous ou contactez votre administrateur.",
-    "managedPolicyConflict": "L'accès géré est bloqué par la politique de votre espace de travail. Contactez votre administrateur."
+    "managedPolicyConflict": "L'accès géré est bloqué par la politique de votre espace de travail. Contactez votre administrateur.",
+    "hybrid": "Both"
   },
   "onboarding": {
     "rehaul": {
       "permissions": {
-        "title": "Configurez OpenWhispr en 3 minutes",
+        "title": "Configurez rTech Whisper en 3 minutes",
         "microphoneDescription": "Transforme la voix en texte.",
         "accessibilityDescription": "Colle le texte dans votre application active.",
         "systemAudioTitle": "Audio Système",
@@ -222,7 +288,7 @@
         "title": "Quelles langues parlez-vous ?",
         "titleLineOne": "Quelles langues",
         "titleLineTwo": "parlez-vous ?",
-        "description": "Sélectionnez toutes les langues concernées. Cela aide OpenWhispr à reconnaître plus précisément les changements de langue."
+        "description": "Sélectionnez toutes les langues concernées. Cela aide rTech Whisper à reconnaître plus précisément les changements de langue."
       },
       "dictationHotkey": {
         "title": "Configurez votre raccourci clavier",
@@ -231,10 +297,10 @@
         "description": "Choisissez un raccourci clavier pour démarrer et arrêter la dictée depuis n’importe où."
       },
       "assistantHotkey": {
-        "title": "Configurer OpenWhispr Assistant",
+        "title": "Configurer rTech Whisper Assistant",
         "titleLineOne": "Configurez",
-        "titleLineTwo": "OpenWhispr Assistant",
-        "description": "Formulez une demande et OpenWhispr Assistant rédige le résultat pour vous."
+        "titleLineTwo": "rTech Whisper Assistant",
+        "description": "Formulez une demande et rTech Whisper Assistant rédige le résultat pour vous."
       },
       "hotkey": {
         "capture": "Appuyez sur les touches que vous souhaitez utiliser",
@@ -246,16 +312,16 @@
         "title": "Essayez votre première dictée",
         "titleLineOne": "Essayez votre",
         "titleLineTwo": "première dictée",
-        "description": "Appuyez sur {{hotkey}} et parlez. OpenWhispr transformera votre voix en texte.",
-        "founder": "Bonjour, je suis Gabe, fondateur d’OpenWhispr",
+        "description": "Appuyez sur {{hotkey}} et parlez. rTech Whisper transformera votre voix en texte.",
+        "founder": "Bonjour, je suis Gabe, fondateur d’rTech Whisper",
         "prompt": "Essayez de dire : « Je teste la dictée pour la première fois. »",
         "placeholder": "Votre dictée apparaîtra ici…"
       },
       "assistantDemo": {
-        "title": "Découvrez OpenWhispr Assistant",
+        "title": "Découvrez rTech Whisper Assistant",
         "titleLineOne": "Découvrez",
-        "titleLineTwo": "OpenWhispr Assistant",
-        "description": "Formulez une demande et OpenWhispr Assistant rédige le résultat pour vous.",
+        "titleLineTwo": "rTech Whisper Assistant",
+        "description": "Formulez une demande et rTech Whisper Assistant rédige le résultat pour vous.",
         "senderName": "Eren Lauren",
         "senderEmail": "eren32@gmail.com",
         "recipientLabel": "à John Doe",
@@ -270,13 +336,13 @@
         "typing": "Saisie en cours…"
       },
       "notes": {
-        "title": "Enregistrez vos réunions sans bot avec OpenWhispr Notes",
+        "title": "Enregistrez vos réunions sans bot avec rTech Whisper Notes",
         "titleLineOne": "Enregistrez vos réunions sans bot",
-        "titleLineTwoPrefix": "avec OpenWhispr",
+        "titleLineTwoPrefix": "avec rTech Whisper",
         "titleLineTwoBrand": "Notes",
-        "description": "OpenWhispr transforme votre conversation en notes claires. Aucun bot de réunion ne rejoint votre appel.",
+        "description": "rTech Whisper transforme votre conversation en notes claires. Aucun bot de réunion ne rejoint votre appel.",
         "hero": {
-          "description": "Enregistrez votre réunion et laissez OpenWhispr transformer la conversation en notes claires et organisées.",
+          "description": "Enregistrez votre réunion et laissez rTech Whisper transformer la conversation en notes claires et organisées.",
           "chat": "Discutez avec vos notes de réunion",
           "transcript": "Consultez la transcription complète",
           "speakers": "Voyez qui a dit quoi"
@@ -292,9 +358,9 @@
         }
       },
       "setupChoice": {
-        "title": "Choisissez votre configuration OpenWhispr",
+        "title": "Choisissez votre configuration rTech Whisper",
         "titleLineOne": "Choisissez votre",
-        "titleLineTwo": "configuration OpenWhispr",
+        "titleLineTwo": "configuration rTech Whisper",
         "description": "Choisissez l’option qui correspond à votre façon de travailler.",
         "unavailable": {
           "title": "Aucune option de configuration disponible",
@@ -451,14 +517,14 @@
       "accessibilityTitle": "Accessibilité",
       "accessibilityDescription": "Saisit le texte final directement dans l'application où vous êtes : documents, e-mail, chat.",
       "testAndGrant": "Tester et autoriser",
-      "requiredForApp": "Nécessaire pour le bon fonctionnement d'OpenWhispr",
+      "requiredForApp": "Nécessaire pour le bon fonctionnement d'rTech Whisper",
       "microphoneRequired": "Accès microphone requis",
       "openSystemSettings": "Ouvrir les Réglages Système",
       "systemAudioTitle": "Audio Système",
       "systemAudioDescription": "Permet à l'enregistreur de réunion d'entendre vos interlocuteurs : réunions, cours, podcasts. Activable plus tard dans les Réglages.",
       "optional": "Facultatif",
       "recommended": "Recommandé",
-      "accessibilityTroubleshooting": "Dans Réglages Système → Accessibilité, désactivez le bouton d'OpenWhispr puis réactivez-le. Si OpenWhispr n'apparaît pas du tout dans la liste, cliquez sur + et ajoutez-le depuis le dossier Applications. Toujours bloqué ? Écrivez à support@openwhispr.com."
+      "accessibilityTroubleshooting": "Dans Réglages Système → Accessibilité, désactivez le bouton d'rTech Whisper puis réactivez-le. Si rTech Whisper n'apparaît pas du tout dans la liste, cliquez sur + et ajoutez-le depuis le dossier Applications. Toujours bloqué ? Écrivez à support@openwhispr.com."
     },
     "transcription": {
       "title": "Configuration de la transcription",
@@ -475,7 +541,8 @@
       "test": "Test",
       "hotkeyToStartStop": "{{hotkey}} pour démarrer/arrêter",
       "holdHotkey": "Maintenir {{hotkey}}",
-      "textareaPlaceholder": "Cliquez ici puis utilisez votre raccourci pour dicter..."
+      "textareaPlaceholder": "Cliquez ici puis utilisez votre raccourci pour dicter...",
+      "hybridDescription": "Tap to keep it on, hold to talk"
     },
     "voiceAgent": {
       "title": "Configuration de l'assistant vocal",
@@ -500,12 +567,12 @@
       "continue": "Continuer quand même"
     },
     "useCase": {
-      "title": "Comment utiliserez-vous OpenWhispr ?",
+      "title": "Comment utiliserez-vous rTech Whisper ?",
       "titleLineOne": "Comment utiliserez-vous",
-      "titleLineTwo": "OpenWhispr ?",
+      "titleLineTwo": "rTech Whisper ?",
       "description": "Choisissez tout ce qui s'applique. Nous adapterons votre configuration.",
       "noteLabel": "Autre chose à nous dire ?",
-      "notePlaceholder": "Dites-nous comment vous comptez utiliser OpenWhispr (facultatif)",
+      "notePlaceholder": "Dites-nous comment vous comptez utiliser rTech Whisper (facultatif)",
       "proceedToSetup": "Continuer la configuration",
       "options": {
         "dictation": {
@@ -538,7 +605,7 @@
     "meeting": {
       "title": "Notes de réunion",
       "description": "Capturez et résumez vos réunions",
-      "autoDetect": "OpenWhispr détecte automatiquement quand vous êtes en réunion et vous propose de démarrer des notes — rien n'est enregistré sans vous.",
+      "autoDetect": "rTech Whisper détecte automatiquement quand vous êtes en réunion et vous propose de démarrer des notes — rien n'est enregistré sans vous.",
       "hotkeyLabel": "Raccourci réunion",
       "hotkeyHint": "Facultatif — appuyez dessus pendant une réunion pour démarrer une note instantanément."
     },
@@ -591,7 +658,7 @@
   "controlPanel": {
     "updateRequiredByOrg": {
       "title": "Mise à jour requise",
-      "description": "Votre organisation exige OpenWhispr {{version}} ou une version plus récente. Veuillez mettre à jour l'application."
+      "description": "Votre organisation exige rTech Whisper {{version}} ou une version plus récente. Veuillez mettre à jour l'application."
     },
     "update": {
       "readyTitle": "Mise à jour prête à installer",
@@ -599,7 +666,7 @@
       "problemTitle": "Problème pendant la mise à jour",
       "problemDescription": "Nous n'avons pas pu terminer la mise à jour. Réessayez plus tard.",
       "installTitle": "Installer la mise à jour",
-      "installDescription": "OpenWhispr va redémarrer pour appliquer la mise à jour. Le travail en cours sera sauvegardé.",
+      "installDescription": "rTech Whisper va redémarrer pour appliquer la mise à jour. Le travail en cours sera sauvegardé.",
       "couldNotInstallTitle": "Impossible d'installer la mise à jour",
       "couldNotInstallDescription": "Une erreur est survenue. Veuillez réessayer.",
       "couldNotDownloadTitle": "Impossible de télécharger la mise à jour",
@@ -614,7 +681,7 @@
     },
     "accessibilityMissing": {
       "title": "Autorisations d'accessibilité nécessaires",
-      "description": "Nous avons détecté qu'OpenWhispr a besoin des autorisations d'accessibilité pour fonctionner correctement. Veuillez les activer ci-dessous."
+      "description": "Nous avons détecté qu'rTech Whisper a besoin des autorisations d'accessibilité pour fonctionner correctement. Veuillez les activer ci-dessous."
     },
     "billing": {
       "pastDueTitle": "Nous n'avons pas pu traiter votre paiement",
@@ -793,7 +860,7 @@
           "modelNotFound": "AWS Bedrock n’a pas trouvé le modèle sélectionné dans la région {{region}}. Vérifiez l’ID du modèle et sa disponibilité dans cette région.",
           "configurationRejected": "AWS Bedrock a refusé la configuration du modèle pour la région {{region}}. Vérifiez l’ID du modèle, le profil d’inférence et la région.",
           "notConfigured": "AWS Bedrock n’est pas configuré correctement. Vérifiez la région et les identifiants AWS.",
-          "serviceUnavailable": "AWS Bedrock est temporairement indisponible en raison d’une forte demande. Il s’agit d’un problème du service AWS, et non d’une panne d’OpenWhispr. Réessayez dans quelques minutes.",
+          "serviceUnavailable": "AWS Bedrock est temporairement indisponible en raison d’une forte demande. Il s’agit d’un problème du service AWS, et non d’une panne d’rTech Whisper. Réessayez dans quelques minutes.",
           "throttled": "AWS Bedrock limite temporairement les requêtes car il en reçoit trop. Patientez un instant et réessayez. Si le problème persiste, demandez à votre administrateur AWS de vérifier l’utilisation et les quotas Bedrock.",
           "timeout": "AWS Bedrock n’a pas répondu à temps. Réessayez. Si le problème persiste, vérifiez votre connexion Internet et l’état du service AWS Bedrock.",
           "network": "AWS Bedrock est inaccessible. Vérifiez votre connexion Internet et réessayez.",
@@ -917,14 +984,23 @@
         "failedTitle": "Échec de la traduction",
         "failedDescription": "Le texte original a été collé. Vous pouvez réessayer depuis l'Historique."
       },
+      "autoSubmit": {
+        "withheldTitle": "Collé sans Retour",
+        "withheldDescription": "Le texte est sur la ligne de commande et n'a pas été envoyé. Appuyez sur Retour, ou effacez la ligne avant la prochaine dictée."
+      },
       "selectionEditing": {
         "notAppliedTitle": "Modification de la sélection non appliquée",
         "changed": "Le texte sélectionné ou l’application cible a changé pendant le traitement. Rien n’a été remplacé.",
         "expired": "La modification a expiré. Sélectionnez de nouveau le texte et réessayez.",
-        "pasteFailed": "OpenWhispr a généré la modification, mais n’a pas pu remplacer le texte sélectionné.",
-        "unavailable": "OpenWhispr n’a pas pu lire la sélection en toute sécurité. Vérifiez les autorisations d’accessibilité ou d’automatisation.",
+        "pasteFailed": "rTech Whisper a généré la modification, mais n’a pas pu remplacer le texte sélectionné.",
+        "unavailable": "rTech Whisper n’a pas pu lire la sélection en toute sécurité. Vérifiez les autorisations d’accessibilité ou d’automatisation.",
         "tooLarge": "La sélection est trop grande. Sélectionnez au maximum 6 000 caractères.",
         "reasoningFailed": "L’IA n’a pas pu terminer la modification. Le texte d’origine n’a pas été modifié."
+      },
+      "meetingHighlight": {
+        "savedTitle": "Point clé enregistré",
+        "failedTitle": "Point clé non enregistré",
+        "failedDescription": "L'enregistrement de la réunion était terminé, le point clé n'a donc pas pu être ajouté à la note."
       }
     },
     "clipboard": {
@@ -997,7 +1073,7 @@
       "micErrors": {
         "accessFailed": "L'accès au microphone a échoué. Veuillez réessayer.",
         "noMicrophones": "Aucun micro détecté. Connectez ou sélectionnez un micro dans {{settingsPath}}.",
-        "permissionDenied": "Autorisation refusée. Ouvrez {{privacyPath}} et autorisez OpenWhispr.",
+        "permissionDenied": "Autorisation refusée. Ouvrez {{privacyPath}} et autorisez rTech Whisper.",
         "couldNotStart": "Impossible de démarrer le micro sélectionné. Choisissez une entrée dans {{settingsPath}} puis relancez le test.",
         "noActiveInput": "Aucune entrée audio active trouvée. Choisissez un micro dans {{settingsPath}}.",
         "unknown": "Accès au micro échoué : {{error}}. Choisissez un autre appareil et réessayez.",
@@ -1026,8 +1102,8 @@
         "accessibilityNeeded": "Accordez les permissions d'accessibilité dans les paramètres système pour activer le collage automatique.",
         "windowsReady": "Windows ne demande pas de permissions spéciales pour le collage automatique. Tout est prêt !",
         "linuxReadyWithMethod": "Le collage automatique est disponible via {{method}}. Tout est prêt !",
-        "waylandClipboardMode": "Le collage automatique n'est pas disponible dans cette session Wayland. OpenWhispr copiera le texte dans le presse-papiers et vous pourrez coller avec Ctrl+V.",
-        "optionalPasteTool": "Pour le collage automatique, installez {{tool}} :\n\n{{installCmd}}{{waylandNote}}\n\nSans cela, vous pouvez quand même utiliser OpenWhispr : le texte sera copié dans le presse-papiers et vous pourrez coller avec Ctrl+V."
+        "waylandClipboardMode": "Le collage automatique n'est pas disponible dans cette session Wayland. rTech Whisper copiera le texte dans le presse-papiers et vous pourrez coller avec Ctrl+V.",
+        "optionalPasteTool": "Pour le collage automatique, installez {{tool}} :\n\n{{installCmd}}{{waylandNote}}\n\nSans cela, vous pouvez quand même utiliser rTech Whisper : le texte sera copié dans le presse-papiers et vous pourrez coller avec Ctrl+V."
       },
       "alerts": {
         "accessibilityNeeded": "Permissions d'accessibilité requises ! Veuillez les accorder dans les paramètres système."
@@ -1040,7 +1116,7 @@
         "defaultPasteTool": "xdotool",
         "xdotoolXwayland": "xdotool (apps XWayland)"
       },
-      "accessibilityTestText": "Test d'accessibilité OpenWhispr",
+      "accessibilityTestText": "Test d'accessibilité rTech Whisper",
       "warning": {
         "messages": {
           "macos": "Vérifiez les réglages Son pour choisir votre périphérique d'entrée",
@@ -1115,7 +1191,7 @@
       "emailRequired": "Saisissez votre e-mail professionnel pour utiliser le SSO.",
       "failed": "Échec de l’authentification unique. Veuillez réessayer.",
       "companySignInTitle": "Utiliser la connexion de votre entreprise",
-      "requiredDescription": "{{domain}} exige le SSO pour OpenWhispr.",
+      "requiredDescription": "{{domain}} exige le SSO pour rTech Whisper.",
       "availableDescription": "Votre compte {{domain}} est prêt pour le SSO de l'entreprise.",
       "useEmailInstead": "Utiliser plutôt l'e-mail et le mot de passe"
     },
@@ -1127,7 +1203,7 @@
       "protocolUnavailable": "Connexion par navigateur indisponible — réenregistrez le protocole openwhispr:// dans les paramètres Applications par défaut du système."
     },
     "welcomeSubtitle": "Utilisez votre voix pour tout",
-    "welcomeTitle": "Bienvenue sur OpenWhispr",
+    "welcomeTitle": "Bienvenue sur rTech Whisper",
     "sessionExpired": "Session expirée. Veuillez relancer le processus d'inscription."
   },
   "calendar": {
@@ -1168,7 +1244,7 @@
     "systemAudioRequired": "L'autorisation Audio Système est nécessaire pour capturer l'audio des autres participants.",
     "openSettings": "Ouvrir les Réglages Système",
     "connectCalendar": "Connectez votre calendrier",
-    "connectCalendarDescription": "Consultez vos réunions et rejoignez-les sans quitter OpenWhispr.",
+    "connectCalendarDescription": "Consultez vos réunions et rejoignez-les sans quitter rTech Whisper.",
     "connectCalendarButton": "Connecter le calendrier"
   },
   "cleanupPrompt": "Correction",
@@ -1180,6 +1256,12 @@
       "label": "Mode débogage"
     },
     "description": "Capturez des journaux détaillés pour diagnostiquer les problèmes",
+    "logFiles": {
+      "clear": "Effacer",
+      "empty": "Aucun fichier journal",
+      "label": "Fichiers journaux",
+      "usage": "{{count}} fichiers, {{size}}"
+    },
     "openLogsFolder": "Ouvrir le dossier des journaux",
     "performanceNote": {
       "description": "La journalisation de débogage écrit sur le disque en continu et peut légèrement affecter les performances. Désactivez-la lorsque vous ne résolvez pas de problème.",
@@ -1239,7 +1321,7 @@
   },
   "apiKeysSection": {
     "title": "Clés API",
-    "description": "Créez des clés pour accéder à l'API OpenWhispr de manière programmatique.",
+    "description": "Créez des clés pour accéder à l'API rTech Whisper de manière programmatique.",
     "docsLink": "Docs de l'API",
     "empty": "Aucune clé API pour le moment",
     "createButton": "Créer une clé API",
@@ -1393,6 +1475,20 @@
     "searchPlaceholder": "Rechercher des langues"
   },
   "microphoneSettings": {
+    "automatic": "Automatic",
+    "none": "None",
+    "preferred": {
+      "label": "Preferred microphone",
+      "description": "Automatic uses this microphone whenever it is available"
+    },
+    "fallback": {
+      "label": "Fallback microphone",
+      "description": "Automatic uses this microphone when the preferred one is unavailable"
+    },
+    "disconnected": {
+      "title": "Microphone disconnected",
+      "description": "Recording stopped. Captured audio is being saved. Start a new recording on the fallback microphone."
+    },
     "builtIn": "(Intégré)",
     "errors": {
       "unableToAccess": "Impossible d'accéder au microphone. Veuillez vérifier les permissions."
@@ -1440,10 +1536,10 @@
     "recheckChecking": "Vérification...",
     "title": "Collage automatique",
     "usingMethodPrefix": "Utilisation de",
-    "waylandClipboardDescription": "Le collage automatique n'est pas disponible dans cette session Wayland. OpenWhispr copiera le texte dans le presse-papiers et vous pourrez coller manuellement avec Ctrl+V.",
+    "waylandClipboardDescription": "Le collage automatique n'est pas disponible dans cette session Wayland. rTech Whisper copiera le texte dans le presse-papiers et vous pourrez coller manuellement avec Ctrl+V.",
     "waylandClipboardTitle": "Mode presse-papiers sur Wayland",
     "windowsReady": "Windows prend en charge le collage automatique nativement. Aucune configuration requise !",
-    "withoutToolPrefix": "Sans cet outil, OpenWhispr copiera le texte dans le presse-papiers. Vous pourrez ensuite coller manuellement avec Ctrl+V.",
+    "withoutToolPrefix": "Sans cet outil, rTech Whisper copiera le texte dans le presse-papiers. Vous pourrez ensuite coller manuellement avec Ctrl+V.",
     "wtypeFallbackDescription": "wtype est la méthode de collage automatique recommandée pour ce compositeur wlroots. Une solution de repli est disponible, mais elle peut être moins fiable.",
     "xwaylandAppsOnly": "le collage automatique fonctionne uniquement pour les apps XWayland"
   },
@@ -1957,7 +2053,7 @@
         "button": "Supprimer mon compte",
         "deleting": "Suppression...",
         "title": "Supprimer votre compte ?",
-        "description": "Cela supprime définitivement votre compte OpenWhispr et vos données personnelles. Le contenu des espaces de travail et les données des autres utilisateurs locaux restent sur cet appareil.",
+        "description": "Cela supprime définitivement votre compte rTech Whisper et vos données personnelles. Le contenu des espaces de travail et les données des autres utilisateurs locaux restent sur cet appareil.",
         "confirmText": "Supprimer le compte",
         "eraseDeviceLabel": "Effacer aussi toutes les données de cet appareil",
         "eraseDeviceDescription": "Supprime les notes et caches d’espaces de tous les utilisateurs locaux, les modèles téléchargés, paramètres, calendriers, identifiants et enregistrements.",
@@ -2051,7 +2147,7 @@
       "title": "Amélioration du texte par IA",
       "toasts": {
         "switchedCloud": {
-          "description": "L'amélioration de texte utilisera le service cloud OpenWhispr.",
+          "description": "L'amélioration de texte utilisera le service cloud rTech Whisper.",
           "title": "Basculé vers OpenWhispr Cloud"
         },
         "switchedCustom": {
@@ -2083,7 +2179,13 @@
         "availableTitle": "Configuration de l'organisation disponible",
         "availableDescription": "Utilisez {{provider}} sans gérer d'identifiants.",
         "useManaged": "Utiliser la version gérée"
-      }
+      },
+      "removeFillerWords": "Remove filler words",
+      "removeFillerWordsDescription": "Automatically remove filler sounds like um, uh, er from transcriptions",
+      "fillerWordsLabel": "Filler words to remove:",
+      "fillerWordsAdd": "Add",
+      "fillerWordsReset": "Reset",
+      "fillerWordsPlaceholder": "Add word"
     },
     "developer": {
       "clearCache": "Vider le cache",
@@ -2112,7 +2214,17 @@
         "title": "Réinitialiser toutes les données de l'application"
       },
       "resetAppData": "Réinitialiser les données de l'application",
-      "resetAppDataDescription": "Supprimer définitivement tous les paramètres locaux, transcriptions, enregistrements audio, modèles téléchargés et données en cache"
+      "resetAppDataDescription": "Supprimer définitivement tous les paramètres locaux, transcriptions, enregistrements audio, modèles téléchargés et données en cache",
+      "dataFolder": {
+        "label": "Dossier de données",
+        "move": "Déplacer…",
+        "previous": "Ancien dossier de données : {{path}}",
+        "previousHint": "Conservé après le déplacement. Supprimez-le vous-même quand vous n'en avez plus besoin.",
+        "reveal": "Afficher",
+        "removeOld": "Remove old copy",
+        "removeOldConfirm": "Delete the old copy ({{size}})? The live data folder is not touched.",
+        "removeOldFailed": "Could not remove the old copy: {{reason}}"
+      }
     },
     "dictionary": {
       "title": "Dictionnaire personnalisé",
@@ -2140,7 +2252,7 @@
       "appearance": {
         "auto": "Auto",
         "dark": "Sombre",
-        "description": "Contrôlez l'apparence d'OpenWhispr",
+        "description": "Contrôlez l'apparence d'rTech Whisper",
         "light": "Clair",
         "theme": "Thème",
         "themeDescription": "Choisissez clair, sombre ou suivre le système",
@@ -2168,8 +2280,8 @@
         "linuxPttSetupDescription": "Votre utilisateur a besoin d'accéder aux périphériques de saisie clavier.",
         "linuxPttSetupNote": "Après avoir exécuté la commande, déconnectez-vous et reconnectez-vous.",
         "hyprlandConfigWriteWarningTitle": "Les raccourcis Hyprland ne seront pas conservés",
-        "hyprlandConfigWriteWarningDescription": "OpenWhispr ne peut pas écrire dans {{path}} ; les raccourcis ne survivront donc pas à un rechargement de la configuration Hyprland. Vérifiez que le fichier existe et qu'il est accessible en écriture.",
-        "hyprlandUnbindDescription": "Sous Hyprland, OpenWhispr réserve le raccourci sélectionné. Tout raccourci Hyprland existant utilisant la même combinaison de touches sera supprimé quand OpenWhispr enregistrera son raccourci."
+        "hyprlandConfigWriteWarningDescription": "rTech Whisper ne peut pas écrire dans {{path}} ; les raccourcis ne survivront donc pas à un rechargement de la configuration Hyprland. Vérifiez que le fichier existe et qu'il est accessible en écriture.",
+        "hyprlandUnbindDescription": "Sous Hyprland, rTech Whisper réserve le raccourci sélectionné. Tout raccourci Hyprland existant utilisant la même combinaison de touches sera supprimé quand rTech Whisper enregistrera son raccourci."
       },
       "meetingHotkey": {
         "title": "Raccourci mode réunion",
@@ -2181,6 +2293,10 @@
       "voiceAgentHotkey": {
         "title": "Raccourci de l'assistant vocal",
         "description": "Dites une commande et l'assistant utilise vos notes, votre calendrier et les outils web. La réponse est collée à un curseur modifiable actif, remplace le texte sélectionné ou s'ouvre dans le panneau flottant."
+      },
+      "pasteLastHotkey": {
+        "title": "Coller la dernière dictée",
+        "description": "Colle de nouveau votre dictée la plus récente à l'emplacement du curseur, telle qu'elle a été prononcée, sans appuyer sur Retour. Aucune touche n'est définie tant que vous n'en choisissez pas une. Le texte est conservé uniquement en mémoire et disparaît à la fermeture de l'app."
       },
       "microphone": {
         "description": "Sélectionnez le périphérique d'entrée à utiliser pour la dictée",
@@ -2195,13 +2311,16 @@
       },
       "notifications": {
         "title": "Notifications",
-        "description": "Choisissez les notifications qu'OpenWhispr peut afficher",
+        "description": "Choisissez les notifications qu'rTech Whisper peut afficher",
         "disableAll": "Désactiver toutes les notifications",
         "disableAllDescription": "Tout couper sauf les messages d'erreur",
         "meetingDetection": "Détection de réunion",
         "meetingDetectionDescription": "Prévenir quand une réunion est détectée pour lancer l'enregistrement",
         "calendarReminders": "Rappels de calendrier",
         "calendarRemindersDescription": "Prévenir quand une réunion planifiée va commencer",
+        "grillEventPrefixes": "Titres des sessions Grill",
+        "grillEventPrefixesDescription": "Les créneaux d'agenda dont le titre commence par l'un de ces mots proposent de lancer une session Grill. Séparez-les par des virgules ; laissez vide pour désactiver.",
+        "grillEventPrefixesPlaceholder": "Grill, Life Story",
         "updates": "Mises à jour",
         "updatesDescription": "Prévenir quand une nouvelle version est disponible"
       },
@@ -2210,18 +2329,42 @@
         "autoPaste": "Collage automatique",
         "autoPasteDescription": "Coller automatiquement le texte transcrit dans l'application active à la fin de la dictée",
         "keepInClipboard": "Garder la transcription dans le presse-papiers",
-        "keepInClipboardDescription": "Conserver le texte dicté dans le presse-papiers pour pouvoir le coller manuellement si nécessaire"
+        "keepInClipboardDescription": "Conserver le texte dicté dans le presse-papiers pour pouvoir le coller manuellement si nécessaire",
+        "appFormatting": "Adapter le format à l'application dans laquelle je dicte",
+        "appFormattingDescription": "Une dictée collée dans un terminal ou un éditeur de code perd son point final et ses guillemets deviennent droits ; dans un terminal, un premier mot qui est une commande connue (comme ls ou git) passe en minuscule. Une phrase unique collée dans une application de messagerie perd son point. Les autres applications restent inchangées.",
+        "appProfiles": {
+          "title": "Applications avec leur propre mise en forme",
+          "description": "Indiquez le nom d'une application et choisissez la mise en forme d'une dictée qui y est collée. Elles passent avant la liste intégrée.",
+          "appPlaceholder": "Nom de l'application, par exemple Ghostty",
+          "profiles": {
+            "terminal": "Terminal",
+            "editor": "Éditeur de code",
+            "chat": "Messagerie",
+            "prose": "Texte brut"
+          },
+          "add": "Ajouter une application",
+          "remove": "Supprimer",
+          "limit": "20 applications au maximum."
+        },
+        "autoSubmit": "Appuyer sur Retour après une dictée dans un terminal",
+        "autoSubmitDescription": "Après le collage d'une dictée dans Terminal ou iTerm2, la touche Retour est pressée pour qu'une consigne dictée s'envoie d'elle-même. Désactivé tant que vous ne l'activez pas. La fonction ne voit pas ce qui s'exécute dans le terminal : un éditeur, un pager ou une demande de mot de passe reçoit aussi le Retour. Elle ne distingue pas deux onglets d'une même fenêtre. Si la fenêtre change pendant le collage, le texte reste sur la ligne et vous appuyez vous-même sur Retour.",
+        "autoSubmitMinWords": "Dictée la plus courte qui est envoyée",
+        "autoSubmitMinWordsDescription": "Les dictées comptant moins de mots sont collées sans Retour.",
+        "autoSubmitMinWordsOption_one": "{{count}} mot",
+        "autoSubmitMinWordsOption_other": "{{count}} mots",
+        "showLatency": "Afficher la latence de la dictée",
+        "showLatencyDescription": "Après chaque dictée collée, la pastille de dictée affiche brièvement le temps écoulé entre le relâchement du raccourci et le collage, ainsi que la moyenne des 10 dernières. Avec l'aperçu en direct activé, les chiffres figurent aussi en bas du panneau d'aperçu."
       },
       "startup": {
         "launchAtLogin": "Lancer au démarrage",
-        "launchAtLoginDescription": "Lancer OpenWhispr en arrière-plan à l'ouverture de session",
+        "launchAtLoginDescription": "Lancer rTech Whisper en arrière-plan à l'ouverture de session",
         "title": "Démarrage",
-        "description": "Contrôlez le comportement d'OpenWhispr au lancement",
+        "description": "Contrôlez le comportement d'rTech Whisper au lancement",
         "startMinimized": "Démarrer réduit",
         "startMinimizedDescription": "Lancer sans afficher la fenêtre du panneau de contrôle",
         "needsApproval": {
           "title": "Autorisation requise dans Réglages Système",
-          "description": "macOS a enregistré OpenWhispr comme élément d'ouverture, mais attend que vous l'autorisiez dans Éléments d'ouverture.",
+          "description": "macOS a enregistré rTech Whisper comme élément d'ouverture, mais attend que vous l'autorisiez dans Éléments d'ouverture.",
           "action": "Ouvrir Éléments d'ouverture"
         }
       },
@@ -2273,7 +2416,7 @@
           "group": {
             "step1Title": "Ajouter votre utilisateur au groupe input",
             "step2Title": "Se déconnecter et se reconnecter",
-            "step2Desc": "Les modifications de groupe ne prennent effet qu'après une nouvelle session. Déconnectez-vous de votre bureau, reconnectez-vous et rouvrez OpenWhispr."
+            "step2Desc": "Les modifications de groupe ne prennent effet qu'après une nouvelle session. Déconnectez-vous de votre bureau, reconnectez-vous et rouvrez rTech Whisper."
           },
           "service": {
             "step1Title": "Créer le répertoire du service",
@@ -2297,7 +2440,7 @@
           "manualTitle": "Ajoutez ceci à votre configuration",
           "manualDesc": "Configurez-le vous-même, puis reconstruisez.",
           "flakeTitle": "Vous installez via notre flake ?",
-          "flakeDesc": "Si vous installez OpenWhispr depuis le flake, programs.openwhispr.enable active ydotool, le module uinput et les appartenances aux groupes pour vous.",
+          "flakeDesc": "Si vous installez rTech Whisper depuis le flake, programs.openwhispr.enable active ydotool, le module uinput et les appartenances aux groupes pour vous.",
           "rebuildNote": "Exécutez sudo nixos-rebuild switch, puis déconnectez-vous et reconnectez-vous pour que le changement de groupe et la règle /dev/uinput prennent effet. Remplacez <you> par votre nom d'utilisateur."
         }
       },
@@ -2330,7 +2473,7 @@
           },
           "installUpdate": {
             "confirmText": "Installer et redémarrer",
-            "description": "OpenWhispr va redémarrer pour appliquer la mise à jour.",
+            "description": "rTech Whisper va redémarrer pour appliquer la mise à jour.",
             "title": "Installer la mise à jour"
           },
           "noUpdates": {
@@ -2360,18 +2503,31 @@
       "translationHotkey": {
         "title": "Raccourci de Traduction",
         "description": "Dictez dans n'importe quelle langue : le texte collé ressort traduit"
+      },
+      "grillVoices": {
+        "title": "Grill voices",
+        "description": "The voice a spoken grill asks its questions in. A new voice needs a WAV clip and the exact words spoken in it.",
+        "voice": "Grill voice",
+        "remove": "Remove",
+        "addTitle": "Add a voice",
+        "namePlaceholder": "Voice name",
+        "chooseClip": "Choose WAV clip",
+        "clipChosen": "Clip chosen",
+        "noClip": "No clip chosen",
+        "transcriptPlaceholder": "Exact words spoken in the clip",
+        "add": "Add voice"
       }
     },
     "permissions": {
       "accessibilityDescription": "Requis pour que le collage automatique fonctionne après la transcription",
       "accessibilityTitle": "Accessibilité",
-      "description": "Testez et gérez les permissions système requises pour le bon fonctionnement d'OpenWhispr",
+      "description": "Testez et gérez les permissions système requises pour le bon fonctionnement d'rTech Whisper",
       "microphoneDescription": "Capture votre voix pour la dictée et la transcription",
       "microphoneTitle": "Microphone",
       "resetAccessibility": {
-        "description": "Cela supprimera OpenWhispr des permissions d'accessibilité. Vous devrez accorder l'accès à nouveau dans Paramètres système > Confidentialité et sécurité > Accessibilité.",
+        "description": "Cela supprimera rTech Whisper des permissions d'accessibilité. Vous devrez accorder l'accès à nouveau dans Paramètres système > Confidentialité et sécurité > Accessibilité.",
         "label": "Réinitialiser les permissions d'accessibilité",
-        "rowDescription": "Corrigez les problèmes après une réinstallation ou une recompilation en supprimant puis en rajoutant OpenWhispr dans les paramètres système",
+        "rowDescription": "Corrigez les problèmes après une réinstallation ou une recompilation en supprimant puis en rajoutant rTech Whisper dans les paramètres système",
         "title": "Réinitialiser les permissions d'accessibilité"
       },
       "optional": "Facultatif",
@@ -2383,6 +2539,32 @@
       "title": "Permissions",
       "troubleshoot": "Dépanner",
       "troubleshootingTitle": "Dépannage"
+    },
+    "hubSync": {
+      "title": "Sync hub",
+      "description": "Connect this device to your rTech Whisper hub. Saving a device key turns sync on right away and uploads your notes to the hub, so test the connection before you save the key.",
+      "url": "Hub URL",
+      "urlHint": "Clear and save the URL, or clear the device key, to turn sync off.",
+      "switchTitle": "Switch hubs?",
+      "switchDescription": "Switching hubs restarts the app.",
+      "switchConfirm": "Restart",
+      "loadFailed": "Could not read the saved hub settings. Enter the hub URL again.",
+      "urlInvalid": "Enter an https URL without a query or fragment.",
+      "urlInsecure": "L'URL du hub doit utiliser https://. Le simple http:// ne fonctionne que pour localhost, 127.0.0.1 ou ::1. La synchronisation reste désactivée jusqu'à la correction.",
+      "deviceKey": "Device key",
+      "keySaved": "Saved",
+      "keyNotSet": "Not set",
+      "keyStateUnknown": "Key state unavailable",
+      "keySaveFailed": "The device key was not saved. Try again.",
+      "keyPlaceholder": "Paste device key",
+      "saveKey": "Save",
+      "clearKey": "Clear",
+      "test": "Test connection",
+      "testOk": "Connected as {{name}}",
+      "testNoUrl": "Set the hub URL first.",
+      "testNoKey": "Save a device key first.",
+      "testUnauthorized": "The hub rejected this device key.",
+      "testError": "Connection failed: {{error}}"
     },
     "privacy": {
       "cloudBackup": "Sauvegarde cloud",
@@ -2397,7 +2579,7 @@
       "insightsSyncRequiresAccount": "Connectez-vous pour synchroniser des données de Statistiques sans contenu entre vos appareils.",
       "insightsSyncRequiresHistory": "Activez la conservation des données pour enregistrer les Statistiques avant de les synchroniser entre vos appareils.",
       "usageAnalytics": "Analyse d'utilisation",
-      "usageAnalyticsDescription": "Aidez-nous à améliorer OpenWhispr en partageant des métriques de performance anonymes. Nous n'envoyons jamais le contenu de vos transcriptions — uniquement des données de performance et d'erreurs.",
+      "usageAnalyticsDescription": "Aidez-nous à améliorer rTech Whisper en partageant des métriques de performance anonymes. Nous n'envoyons jamais le contenu de vos transcriptions — uniquement des données de performance et d'erreurs.",
       "audioRetention": "Conservation de l'audio",
       "audioRetentionDescription": "Stocke l'audio de dictée localement pour la retranscription et le téléchargement. Les fichiers sont automatiquement supprimés après la période de conservation. L'audio des réunions n'est jamais stocké.",
       "audioRetentionDisabled": "Désactivé",
@@ -2453,7 +2635,7 @@
     "transcription": {
       "customSetup": "Configuration personnalisée",
       "customSetupDescription": "Utilisez votre propre fournisseur et clé API.",
-      "description": "Choisissez comment OpenWhispr transcrit votre voix",
+      "description": "Choisissez comment rTech Whisper transcrit votre voix",
       "modes": {
         "openwhispr": "OpenWhispr Cloud",
         "providers": "Fournisseurs cloud",
@@ -2471,7 +2653,7 @@
       "title": "Reconnaissance vocale",
       "toasts": {
         "switchedCloud": {
-          "description": "La transcription utilisera le service cloud OpenWhispr.",
+          "description": "La transcription utilisera le service cloud rTech Whisper.",
           "title": "Basculé vers OpenWhispr Cloud"
         },
         "switchedCustom": {
@@ -2507,6 +2689,9 @@
       },
       "transcriptionPreview": "Aperçu en direct",
       "transcriptionPreviewDescription": "Afficher la transcription dans une fenêtre flottante avant correction",
+      "previewLayout": "Mise en page de l’aperçu",
+      "previewLayoutGrow": "Agrandir",
+      "previewLayoutFixed": "Fixe (2 lignes)",
       "vad": {
         "title": "Détection d'activité vocale",
         "description": "Configurez la manière dont Silero VAD détecte et segmente la parole pour la transcription locale Whisper",
@@ -2759,7 +2944,14 @@
     "enableDescription_other": "{{count}} dictées déjà enregistrées sur cet appareil seront envoyées vers votre compte. La synchronisation d'Insights n'envoie que le nombre de mots, la date et l'heure exacte de chacune, les durées et les types de modèle : jamais le contenu des transcriptions.",
     "emptyTitle": "Aucune dictée pour l'instant",
     "emptyBody": "Commencez à dicter : vos mots, vos séries et votre activité quotidienne apparaîtront ici.",
-    "loadError": "Impossible de lire les Insights depuis cet appareil."
+    "loadError": "Impossible de lire les Insights depuis cet appareil.",
+    "latency": {
+      "title": "Latence de la dictée",
+      "value": "{{ms}} ms",
+      "detail_one": "Médiane des 7 derniers jours, {{count}} dictée",
+      "detail_other": "Médiane des 7 derniers jours, {{count}} dictées",
+      "unknownModel": "Modèle inconnu"
+    }
   },
   "sidebar": {
     "insights": "Statistiques",
@@ -2780,11 +2972,13 @@
     "upgradeEnterpriseSecurity": "Sécurité entreprise SOC 2 Type II, HIPAA, ISO27001",
     "learnMore": "En savoir plus",
     "integrations": "Intégrations",
+    "grilling": "Grilling",
     "defaultUser": "Utilisateur",
     "notSignedIn": "Non connecté",
     "chat": "Chat",
     "collapse": "Réduire la barre latérale",
-    "expand": "Développer la barre latérale"
+    "expand": "Développer la barre latérale",
+    "brainDumps": "Brain dumps"
   },
   "workspaces": {
     "switcher": {
@@ -2830,7 +3024,7 @@
     },
     "join": {
       "title": "Rejoignez votre équipe",
-      "domainTitle": "Votre équipe est déjà sur OpenWhispr",
+      "domainTitle": "Votre équipe est déjà sur rTech Whisper",
       "description": "Ces espaces de travail comptent quelqu'un de votre domaine e-mail.",
       "invitedDescription": "Vous avez été invité à un espace de travail.",
       "invitedBy": "Invité par {{inviter}} en tant que {{role}}",
@@ -2864,8 +3058,13 @@
   },
   "chat": {
     "newChat": "Nouveau chat",
+    "spokenReplies": "Réponses vocales",
+    "spokenRepliesOn": "Skippy parle",
+    "spokenRepliesOff": "Skippy en sourdine",
     "search": "Rechercher des conversations...",
     "archived": "Archivées",
+    "chatsTab": "Chats",
+    "grillsTab": "Grills",
     "noConversations": "Démarrez votre première conversation",
     "selectChat": "Sélectionnez une conversation ou démarrez-en une nouvelle",
     "noResults": "Aucune conversation correspondante",
@@ -2882,7 +3081,81 @@
     "searchChats": "Rechercher",
     "searchTitle": "Rechercher des conversations",
     "searchDescription": "Rechercher dans toutes vos conversations",
-    "newChatEmpty": "Posez des questions sur vos notes, transcriptions ou autre"
+    "newChatEmpty": "Posez des questions sur vos notes, transcriptions ou autre",
+    "grill": {
+      "start": "Start grill",
+      "daily": "Daily grill",
+      "lifetime": "Lifetime chapter",
+      "chapter": "{{number}}. {{title}}",
+      "end": "End grill",
+      "saved": "Grill saved",
+      "notSaved": "Grill not saved: {{reason}}",
+      "contextFailed": "Couldn't read your calendar or notes; starting with standard questions.",
+      "startFailed": "Could not start the grill",
+      "savedWithoutTurns": "Grill saved without its turns; the connector can't send it until you re-save",
+      "draftFound": "Unsaved grill: {{title}}",
+      "resumeDraft": "Resume unsaved grill",
+      "saveDraft": "Save it",
+      "draftPending": "Resume or save your unsaved grill first",
+      "feedFailed": "Couldn't reach the pipeline; starting without feed questions.",
+      "alreadyRunning": "Un grill est déjà en cours",
+      "voice": {
+        "speaking": "Speaking",
+        "listening": "Listening",
+        "transcribing": "Transcribing",
+        "thinking": "Thinking",
+        "paused": "Paused",
+        "waiting": "Push to talk: dictate or type",
+        "failed": "Answer not transcribed",
+        "retry": "Retry",
+        "pause": "Pause",
+        "resume": "Resume",
+        "skip": "Skip question",
+        "mute": "Mute voice",
+        "pushToTalk": "Push to talk",
+        "pushToTalkHint": "Turns auto-listen off. Use your dictation hotkey, then press Enter.",
+        "speechFailed": "Couldn't speak the question ({{error}}). It's on screen; listening for your answer.",
+        "listenFailed": "Couldn't open the microphone ({{error}}). Dictate or type your answer.",
+        "transcriptionFailed": "Couldn't transcribe your answer ({{error}}). Retry, or type it.",
+        "stillThere": "Still there?",
+        "stillThereNotice": "Still there? Paused. Press Resume when you're ready.",
+        "answerNotSent": "Your answer was not sent: {{text}}",
+        "answerSkipped": "Réponse ignorée",
+        "unknownError": "unknown error",
+        "answerLost": "Une réponse n'a pas pu être transcrite",
+        "answerLostPath": "Audio conservé dans {{path}}",
+        "discard": "Discard grill",
+        "discardConfirm": "Discard this grill? Nothing from it is saved.",
+        "discardConfirmButton": "Discard",
+        "backToScript": "Back to script",
+        "backToScriptHint": "Put the interviewer back on its scripted questions"
+      },
+      "turn": {
+        "edit": "Edit",
+        "remove": "Remove",
+        "save": "Save",
+        "cancel": "Cancel",
+        "editLabel": "Edit this answer",
+        "removeTitle": "Remove this turn?",
+        "removeConfirm": "It will not be saved or sent.",
+        "removeConfirmButton": "Remove"
+      }
+    },
+    "grillMarks": {
+      "label": "Mark this question",
+      "good": "Good",
+      "weak": "Weak",
+      "retire": "Retire",
+      "goodHint": "A good question: keep asking it",
+      "weakHint": "A weak question: it needs work",
+      "retireHint": "Vote to retire this question. It keeps being asked until you approve the retirement.",
+      "addNote": "Add note",
+      "editNote": "Edit note",
+      "noteLabel": "Note on this mark",
+      "notePlaceholder": "Why? (optional)",
+      "saveNote": "Save note",
+      "cancel": "Cancel"
+    }
   },
   "referral": {
     "title": "Parrainez et gagnez des récompenses",
@@ -2949,7 +3222,7 @@
     },
     "tryAgain": "Réessayer",
     "card": {
-      "brand": "OpenWhispr",
+      "brand": "rTech Whisper",
       "signalId": "Signal ID",
       "audioSignature": "Votre signature audio",
       "stop": "Arrêter",
@@ -3076,7 +3349,7 @@
     },
     "structureIntro": {
       "title": "Où se trouvent vos notes",
-      "description": "OpenWhispr sépare les idées privées du travail partagé afin que les bonnes personnes voient les bonnes notes.",
+      "description": "rTech Whisper sépare les idées privées du travail partagé afin que les bonnes personnes voient les bonnes notes.",
       "personal": {
         "title": "Espace personnel",
         "description": "Vous seul pouvez voir les dossiers et les notes qui s'y trouvent."
@@ -3414,13 +3687,47 @@
       "author": {
         "you": "Vous"
       }
+    },
+    "crm": {
+      "updateTitle": "Mettre à jour la note GoHighLevel",
+      "syncTitle": "Synchroniser la note avec GoHighLevel",
+      "description": "Choisissez un contact GoHighLevel et l'une de ses opportunités.",
+      "syncedAt": "Synchronisé {{time}}",
+      "open": "Ouvrir dans GoHighLevel",
+      "search": "Rechercher des contacts GoHighLevel",
+      "noMatches": "Aucun contact correspondant",
+      "opportunity": "Opportunité",
+      "noOpportunities": "Ce contact n'a aucune opportunité dans GoHighLevel.",
+      "status": {
+        "open": "Ouverte",
+        "won": "Gagnée",
+        "lost": "Perdue",
+        "abandoned": "Abandonnée"
+      },
+      "update": "Mettre à jour la note GoHighLevel",
+      "sync": "Synchroniser avec GoHighLevel",
+      "configureFirst": "Ajoutez d'abord votre jeton GoHighLevel dans Paramètres > Intégrations.",
+      "synced": "Synchronisé"
+    },
+    "pipeline": {
+      "send": "Send to pipeline",
+      "resend": "Re-send to pipeline",
+      "sent_one": "Sent to pipeline · {{count}} piece added",
+      "sent_other": "Sent to pipeline · {{count}} pieces added",
+      "failed": "Not sent to pipeline: {{reason}}",
+      "configureFirst": "Configure the pipeline in Integrations first",
+      "synced": "Sent",
+      "notSent": "Not sent"
+    },
+    "highlight": {
+      "label": "Point clé"
     }
   },
   "dictionary": {
     "clearTitle": "Vider le dictionnaire ?",
     "clearDescription": "Cela supprimera tous les mots de votre dictionnaire personnalisé. Cette action est irréversible.",
     "addWord": "Ajouter un mot",
-    "addPlaceholder": "Ajoutez des mots séparés par des virgules — OpenWhispr, Supabase, John Snow, ARR",
+    "addPlaceholder": "Ajoutez des mots séparés par des virgules — rTech Whisper, Supabase, John Snow, ARR",
     "removeWord": "Supprimer {{word}}",
     "clearAll": "Tout effacer",
     "add": "Ajouter",
@@ -3436,23 +3743,23 @@
     "editWord": "Modifier {{word}}",
     "noMatches": "Aucune correspondance — appuyez sur Entrée pour ajouter « {{word}} »",
     "tabDictionary": "Dictionnaire",
-    "tabSnippets": "Snippets",
+    "tabSnippets": "Corrections",
     "snippets": {
-      "title": "Snippets",
+      "title": "Corrections",
       "edit": "Modifier {{trigger}}",
       "remove": "Supprimer {{trigger}}",
-      "editTitle": "Modifier le snippet",
+      "editTitle": "Modifier la correction",
       "dialogDescription": "Quand vous prononcez le déclencheur, il est remplacé par votre texte enregistré.",
       "triggerLabel": "Déclencheur",
       "triggerPlaceholder": "ex. mon agenda",
       "replacementLabel": "Remplacement",
       "replacementPlaceholder": "Texte à insérer quand vous dites le déclencheur…",
-      "create": "Créer le snippet",
-      "duplicate": "Un snippet avec ce déclencheur existe déjà",
+      "create": "Créer la correction",
+      "duplicate": "Une correction avec ce déclencheur existe déjà",
       "emptyTitle": "Ce que vous ne devriez pas avoir à dire",
       "emptyTitleAccent": "deux fois",
-      "emptyDescription": "Prononcez un mot déclencheur et OpenWhispr le remplace par ce que vous avez enregistré : URL, intros, signatures, prompts.",
-      "new": "Nouveau snippet",
+      "emptyDescription": "Prononcez un mot déclencheur et rTech Whisper le remplace par ce que vous avez enregistré : URL, intros, signatures, prompts.",
+      "new": "Nouvelle correction",
       "examples": {
         "linkedinTrigger": "Mon LinkedIn",
         "linkedinText": "linkedin.com/in/vous",
@@ -3469,7 +3776,27 @@
     "emptyDescription": "Ajoutez les mots que {{agentName}} doit toujours reconnaître : noms, outils, acronymes.",
     "addFirstWord": "Ajoutez votre premier mot",
     "importList": "Importer une liste",
-    "agentDefault": "Ajouté par défaut"
+    "agentDefault": "Ajouté par défaut",
+    "trainer": {
+      "open": "Entraîner un mot",
+      "title": "Entraîner un mot",
+      "description": "Dites le mot plusieurs fois. Chaque prise mal reconnue devient une correction. Rien n'est enregistré avant d'appuyer sur Enregistrer.",
+      "wordLabel": "Mot à entraîner",
+      "takes": "Prises :",
+      "take": "Prise {{n}}",
+      "record": "Enregistrer",
+      "stop": "Arrêter",
+      "redo": "Refaire",
+      "listening": "Écoute…",
+      "discarded": "Abandonnée, la dictée a démarré. Refaites cette prise.",
+      "noSpeech": "Aucune parole détectée",
+      "dictationRunning": "La dictée est en cours. Arrêtez-la, puis refaites cette prise.",
+      "failed": "La prise a échoué : {{error}}",
+      "willSave": "Corrections à enregistrer",
+      "alreadyRight": "La prise {{n}} était déjà correcte, rien à enregistrer.",
+      "nothingUsable": "La prise {{n}} n'a rien capté d'utile, rien à enregistrer.",
+      "saved": "{{added}} ajoutée(s), {{replaced}} remplacée(s)."
+    }
   },
   "support": {
     "documentation": "Documentation",
@@ -3478,7 +3805,7 @@
     "submitBug": "Signaler un bug"
   },
   "postMigration": {
-    "title": "Bon retour sur OpenWhispr",
+    "title": "Bon retour sur rTech Whisper",
     "description": "Vos notes et vos paramètres ont été conservés depuis la version précédente. macOS considère toutefois cette installation comme une nouvelle app, il faudra donc accorder à nouveau quelques permissions.",
     "done": "Terminé",
     "remindLater": "Me le rappeler plus tard"
@@ -3501,8 +3828,8 @@
     "ready": "Accélération GPU prête",
     "activating": "Activation du GPU...",
     "activationFailed": "Accélération GPU indisponible",
-    "activationFailedDescription": "OpenWhispr est passé à la transcription par CPU.",
-    "reasoningActivationFailedDescription": "OpenWhispr est passé au traitement par CPU.",
+    "activationFailedDescription": "rTech Whisper est passé à la transcription par CPU.",
+    "reasoningActivationFailedDescription": "rTech Whisper est passé au traitement par CPU.",
     "retryActivation": "Réessayer l'accélération GPU",
     "remove": "Supprimer",
     "dismiss": "Pas maintenant",
@@ -3522,11 +3849,11 @@
       "undo": "Annuler",
       "accessibilityMissing": {
         "title": "Autorisations d'accessibilité requises",
-        "description": "OpenWhispr a besoin des autorisations d'accessibilité pour détecter votre raccourci et coller du texte. Veuillez les activer dans le Panneau de configuration."
+        "description": "rTech Whisper a besoin des autorisations d'accessibilité pour détecter votre raccourci et coller du texte. Veuillez les activer dans le Panneau de configuration."
       },
       "gpuFallback": {
         "title": "Accélération GPU indisponible",
-        "description": "OpenWhispr est passé à la transcription par CPU.",
+        "description": "rTech Whisper est passé à la transcription par CPU.",
         "retry": "Réessayer le GPU"
       },
       "gpuPackMigration": {
@@ -3569,11 +3896,34 @@
       "visionModelDescription": "Envoie les commandes incluant une capture vers un autre modèle capable de vision.",
       "permissionTitle": "Enregistrement de l'écran",
       "permissionDescription": "macOS exige l'autorisation d'enregistrement de l'écran pour capturer votre écran.",
-      "relaunchHint": "L'enregistrement d'écran a été autorisé pendant qu'OpenWhispr était en cours d'exécution. Quittez et rouvrez OpenWhispr pour commencer à capturer des captures d'écran."
+      "relaunchHint": "L'enregistrement d'écran a été autorisé pendant qu'rTech Whisper était en cours d'exécution. Quittez et rouvrez rTech Whisper pour commencer à capturer des captures d'écran."
+    },
+    "speechProvider": {
+      "title": "La voix de {{agentName}} fonctionne sur",
+      "description": "Où les réponses vocales sont générées.",
+      "options": {
+        "hub": "Hub",
+        "local": "Local",
+        "auto": "Automatique",
+        "hubDescription": "Le serveur vocal de votre réseau. Nécessite une connexion à celui-ci.",
+        "localDescription": "Cet ordinateur. Fonctionne hors de votre réseau. Le modèle vocal nécessite à peu près 1 Go de mémoire.",
+        "autoDescription": "Le Hub d'abord. S'il est injoignable, cet ordinateur."
+      },
+      "localMissing": "La voix locale n'est pas encore installée sur cet ordinateur et ne peut donc pas être utilisée.",
+      "engineMissing": "Cette version n'inclut pas le moteur de voix locale.",
+      "weightsMissing": "La voix locale a besoin de ses fichiers de modèle (945 MB). Ils sont téléchargés une seule fois et restent sur ce Mac. Les poids sont sous licence CC BY-NC 4.0.",
+      "downloadWeights": "Télécharger la voix locale",
+      "downloading": "Téléchargement de la voix locale : {{percentage}}%",
+      "cancelDownload": "Annuler",
+      "errors": {
+        "diskFull": "Espace disque libre insuffisant pour la voix locale.",
+        "checksum": "Le téléchargement a été endommagé. Réessayez.",
+        "failed": "Le téléchargement ne s'est pas terminé. Réessayez ; il reprend là où il s'est arrêté."
+      }
     },
     "modes": {
       "openwhispr": "OpenWhispr Cloud",
-      "openwhisprDesc": "Utilisez l'agent géré par OpenWhispr, sans clé API.",
+      "openwhisprDesc": "Utilisez l'agent géré par rTech Whisper, sans clé API.",
       "providers": "Utilisez votre propre clé API",
       "providersDesc": "Connectez-vous à OpenAI, Anthropic, Gemini ou Groq avec votre propre clé API.",
       "local": "Local",
@@ -3641,6 +3991,41 @@
       "invalidArgs": "Arguments d'outil invalides pour {{name}}"
     }
   },
+  "assistantSpeechSetup": {
+    "bundle": {
+      "export": "Exporter le pack de voix",
+      "import": "Importer un pack de voix",
+      "exported": "Pack de voix enregistré.",
+      "errors": {
+        "no-profile": "Configurez d'abord une voix, puis exportez-la.",
+        "not-a-bundle": "Ce fichier n'est pas un pack de voix.",
+        "unsupported-format": "Le format de ce pack de voix n'est pas pris en charge, ou le fichier est endommagé.",
+        "corrupt": "Le pack de voix est endommagé.",
+        "too-large": "Le pack de voix est trop volumineux.",
+        "not-wav": "L'audio du pack de voix n'est pas un fichier WAV.",
+        "failed": "Le pack de voix n'a pas pu être utilisé."
+      }
+    },
+    "reference": {
+      "choose": "Choisir un WAV",
+      "save": "Enregistrer",
+      "transcribing": "Transcription du clip...",
+      "chosen": "Clip : {{name}}",
+      "window": "Fenêtre de 15 s utilisée : {{index}} sur {{count}} ({{start}} à {{end}} s)",
+      "notTranscribed": "Le clip n'a pas pu être transcrit. Saisissez ses mots exacts.",
+      "errors": {
+        "not-audio": "Ce fichier n'a pas pu être lu comme un fichier audio.",
+        "too-short": "Le clip dure moins de 3 secondes. Utilisez-en un plus long.",
+        "too-long": "Le clip dure plus de 75 secondes. Raccourcissez-le et réessayez.",
+        "transcription-failed": "Le clip n'a pas pu être transcrit. Utilisez un clip de 20 secondes ou moins et saisissez ses mots.",
+        "failed": "Le clip n'a pas pu être utilisé."
+      }
+    },
+    "seed": {
+      "label": "Graine",
+      "description": "Un nombre entier de 1 à 1000. La même graine donne à chaque fois la même diction."
+    }
+  },
   "assistant": {
     "panel": {
       "selectionHint": "Sélectionnez du texte à modifier avec",
@@ -3680,7 +4065,7 @@
       "disconnectConfirm": "Déconnecter {{email}} ?",
       "disconnectDescription": "Les notes de réunion ne seront plus enregistrées depuis ce calendrier.",
       "systemAudioRequired": "Autorisation Audio Système requise",
-      "systemAudioDescription": "Pour transcrire les réunions, OpenWhispr a besoin de l'autorisation Audio Système pour capturer l'audio des autres participants. Nous n'enregistrons jamais votre écran. Vous serez dirigé vers les Réglages Système pour l'activer.",
+      "systemAudioDescription": "Pour transcrire les réunions, rTech Whisper a besoin de l'autorisation Audio Système pour capturer l'audio des autres participants. Nous n'enregistrons jamais votre écran. Vous serez dirigé vers les Réglages Système pour l'activer.",
       "openSettings": "Ouvrir les Réglages Système",
       "connectFailed": "Échec de la connexion",
       "connectFailedDescription": "Une erreur s'est produite lors de la connexion à Google Calendar. Veuillez réessayer."
@@ -3710,16 +4095,18 @@
       "disconnectConfirm": "Déconnecter le Calendrier Apple ?",
       "disconnectDescription": "Les notes de réunion ne seront plus enregistrées depuis votre Calendrier Apple.",
       "permissionDenied": "Accès au calendrier requis",
-      "permissionDeniedDescription": "OpenWhispr a besoin d'accéder au calendrier pour détecter les réunions. Activez OpenWhispr dans Réglages Système, sous Confidentialité et sécurité → Calendriers.",
+      "permissionDeniedDescription": "rTech Whisper a besoin d'accéder au calendrier pour détecter les réunions. Activez rTech Whisper dans Réglages Système, sous Confidentialité et sécurité → Calendriers.",
       "openSettings": "Ouvrir les Réglages Système",
       "connectFailed": "Échec de la connexion",
-      "connectFailedDescription": "Une erreur s'est produite lors de la connexion à Calendar.app. Redémarrez OpenWhispr et réessayez."
+      "connectFailedDescription": "Une erreur s'est produite lors de la connexion à Calendar.app. Redémarrez rTech Whisper et réessayez."
     },
     "sections": {
       "calendar": "Calendrier",
       "api": "API",
       "mcp": "MCP",
-      "cli": "CLI"
+      "cli": "CLI",
+      "crm": "GoHighLevel",
+      "pipeline": "Pipeline"
     },
     "api": {
       "title": "Clés API",
@@ -3731,15 +4118,16 @@
     },
     "mcp": {
       "title": "Apportez vos notes à vos outils d'IA",
-      "description": "Discutez, recherchez et travaillez avec vos notes dans Claude, ChatGPT et Cursor.",
-      "step1": "Dans votre outil d'IA, ajoutez OpenWhispr MCP avec l'URL publique",
-      "step2": "Créez une clé API ci-dessus avec les permissions dont vous avez besoin.",
-      "step3": "Collez la clé comme en-tête Authorization pour vous connecter.",
+      "description": "Chat, search, and work with your notes inside Claude and other MCP tools.",
+      "step1": "Install rtw from the rtech-whisper repo: run npm install in tools/rtw.",
+      "step2": "Register it in your AI tool. For Claude Code:",
+      "step3": "It reads your notes through rTech Whisper while the app is running. Nothing leaves this Mac.",
       "learnMore": "En savoir plus",
       "viewPlans": "Voir les forfaits",
       "copyUrl": "Copier l'URL MCP",
-      "proRequired": "Passez à un plan payant pour connecter OpenWhispr à Claude, ChatGPT et Cursor.",
-      "copied": "Copié"
+      "proRequired": "Passez à un plan payant pour connecter rTech Whisper à Claude, ChatGPT et Cursor.",
+      "copied": "Copié",
+      "copyCommand": "Copy command"
     },
     "cli": {
       "title": "Accès en ligne de commande",
@@ -3752,7 +4140,7 @@
       "local": {
         "label": "Local",
         "freeBadge": "Gratuit",
-        "description": "Lisez vos notes locales directement. Aucun compte ni clé API — fonctionne tant qu'OpenWhispr est ouvert."
+        "description": "Lisez vos notes locales directement. Aucun compte ni clé API — fonctionne tant qu'rTech Whisper est ouvert."
       },
       "cloud": {
         "label": "Cloud",
@@ -3772,8 +4160,49 @@
       "upgrade": "Passer au supérieur"
     },
     "notABot": {
-      "title": "OpenWhispr est un enregistreur de réunions, pas un bot",
-      "description": "OpenWhispr capture l'audio directement depuis votre système — il ne rejoint jamais vos réunions en tant que participant. Connectez simplement votre calendrier et prenez vos notes normalement."
+      "title": "rTech Whisper est un enregistreur de réunions, pas un bot",
+      "description": "rTech Whisper capture l'audio directement depuis votre système — il ne rejoint jamais vos réunions en tant que participant. Connectez simplement votre calendrier et prenez vos notes normalement."
+    },
+    "crm": {
+      "saved": "Paramètres GoHighLevel enregistrés",
+      "testSuccess": "Connecté à {{locationName}}",
+      "saveBeforeTesting": "Enregistrez les modifications avant de tester la connexion.",
+      "title": "GoHighLevel",
+      "configured": "Configuré",
+      "notConfigured": "Non configuré",
+      "description": "Synchronisez les notes avec un contact et une opportunité du sous-compte GoHighLevel de rTech.",
+      "locationId": "ID de l'emplacement",
+      "token": "Jeton Private Integration",
+      "tokenUnchanged": "Laisser vide pour conserver le jeton enregistré",
+      "test": "Tester la connexion",
+      "removeToken": "Supprimer le jeton"
+    },
+    "pipeline": {
+      "title": "Social media pipeline",
+      "description": "Send finished grills to the pipeline and ask its open feed questions.",
+      "configured": "Configured",
+      "baseUrl": "Pipeline URL",
+      "token": "Bearer token",
+      "tokenUnchanged": "Saved · leave blank to keep",
+      "saved": "Pipeline settings saved",
+      "saveBeforeTesting": "Save changes before testing the connection.",
+      "test": "Test connection",
+      "testOk": "Connected (HTTP {{status}})",
+      "testUnauthorized": "Unauthorized. Check the token.",
+      "testUnreachable": "Pipeline is unreachable. Check the URL.",
+      "removeToken": "Remove token"
+    },
+    "calendarSyncNow": {
+      "syncNow": "Sync now",
+      "syncedJustNow": "Synced just now",
+      "syncedMinutesAgo": "Synced {{count}} min ago",
+      "syncedHoursAgo": "Synced {{count}} h ago",
+      "syncFailed": "Sync failed"
+    },
+    "calendarSyncHealth": {
+      "needsReconnect": "Doit être reconnecté",
+      "reconnect": "Reconnecter",
+      "failingSince": "Échec de la synchronisation depuis {{time}}"
     }
   },
   "notesView": {
@@ -3822,7 +4251,7 @@
         "invitationActions": "Actions de l'invitation",
         "resendSent": "Invitation envoyée",
         "resendThrottled": "Invitation envoyée récemment. Réessayez dans une minute.",
-        "syncPrompt": "Le partage conserve une copie de cette note dans votre cloud OpenWhispr. Vous seul pouvez la voir tant que vous n'avez pas choisi avec qui la partager.",
+        "syncPrompt": "Le partage conserve une copie de cette note dans votre cloud rTech Whisper. Vous seul pouvez la voir tant que vous n'avez pas choisi avec qui la partager.",
         "syncAndShare": "Synchroniser la note",
         "visibility": {
           "label": "Visibilité",
@@ -3843,7 +4272,16 @@
           "syncFailed": "Impossible de synchroniser cette note. Réessayez.",
           "loadFailed": "Impossible de charger les paramètres de partage",
           "retry": "Réessayer"
-        }
+        },
+        "help": "Anyone with the link can view it. There is no expiry.",
+        "notConfigured": "Sharing isn't set up in this build.",
+        "linkLabel": "Share link",
+        "update": "Update shared copy",
+        "newLink": "New link",
+        "stopSharing": "Stop sharing",
+        "updated": "Shared copy updated",
+        "rotated": "Old link no longer works",
+        "failed": "Sharing failed"
       }
     }
   },
@@ -3867,13 +4305,13 @@
     }
   },
   "updateNotification": {
-    "title": "Mise à jour OpenWhispr disponible",
+    "title": "Mise à jour rTech Whisper disponible",
     "body": "La version {{version}} est prête à télécharger",
     "cta": "Mettre à jour"
   },
   "permissionsGate": {
     "title": "Autorisations requises",
-    "description": "OpenWhispr a besoin de quelques autorisations pour fonctionner sur cet ordinateur.",
+    "description": "rTech Whisper a besoin de quelques autorisations pour fonctionner sur cet ordinateur.",
     "continue": "Continuer"
   },
   "embeddedChat": {
@@ -3895,7 +4333,10 @@
     "copy": "Copier",
     "copied": "Copié",
     "collapse": "Réduire la transcription",
-    "waitingForInput": "Dites quelque chose..."
+    "waitingForInput": "Dites quelque chose...",
+    "latencyAverageShort": "moy. {{average}}",
+    "latencyLast": "{{ms}} ms",
+    "latencyWithAverage": "{{ms}} ms · moy. {{average}} ms"
   },
   "transcript": {
     "speaker": {
@@ -3935,6 +4376,12 @@
     },
     "start": "Prendre des notes",
     "join": "Rejoindre et transcrire",
+    "calendarEnd": {
+      "title": "Cette réunion devait se terminer.",
+      "body": "Continuer l’enregistrement ?",
+      "stop": "Arrêter et enregistrer",
+      "keep": "Continuer l’enregistrement"
+    },
     "autoEnd": {
       "title": "L’enregistrement de la réunion est terminé",
       "body": {
@@ -3942,7 +4389,65 @@
         "silence": "Aucun son n’a été détecté, donc l’enregistrement s’est arrêté automatiquement. Redémarrez-le dans les {{seconds}} s.",
         "processExit": "Votre app de réunion s’est fermée, donc l’enregistrement s’est arrêté automatiquement. Redémarrez-le dans les {{seconds}} s."
       },
-      "restart": "Redémarrer l’enregistrement"
+      "restart": "Redémarrer l’enregistrement",
+      "confirm": {
+        "title": "La réunion semble terminée",
+        "body": "Arrêt dans {{seconds}} s",
+        "keep": "Continuer l'enregistrement",
+        "stop": "Arrêter maintenant"
+      }
+    },
+    "grill": {
+      "title": "Séance grill",
+      "body": "Votre séance grill commence.",
+      "start": "Démarrer le grill"
     }
+  },
+  "dataFolderMove": {
+    "pickTitle": "Choisissez un dossier vide pour les données de rTech Whisper",
+    "confirm": "L'app va redémarrer et copier vos données (environ {{size}}). L'ancien dossier est conservé.",
+    "moveButton": "Déplacer et redémarrer",
+    "cancel": "Annuler",
+    "progress": "Déplacement de vos données. Cela peut prendre quelques minutes. Gardez le disque connecté.",
+    "failed": "Le dossier de données n'a pas pu être déplacé. rTech Whisper continue d'utiliser l'ancien dossier.",
+    "refused": {
+      "missing": "Ce dossier est introuvable.",
+      "notWritable": "Impossible d'écrire dans ce dossier.",
+      "notEmpty": "Choisissez un dossier vide.",
+      "insideCurrent": "Choisissez un dossier en dehors du dossier de données actuel et du cache des modèles."
+    }
+  },
+  "grillTopics": {
+    "title": "To grill",
+    "description": "Topics the next daily grill asks first, then marks done.",
+    "empty": "Nothing waiting. Brain dumps sorted as grill topics land here.",
+    "addPlaceholder": "Add a topic to grill",
+    "add": "Add",
+    "remove": "Remove topic"
+  },
+  "brainDumps": {
+    "title": "Brain dumps",
+    "waitingCount_one": "{{count}} waiting",
+    "waitingCount_other": "{{count}} waiting",
+    "process": "Process",
+    "progress": "Sorting {{current}} of {{total}}...",
+    "waiting": "Waiting",
+    "empty": "No brain dumps waiting.",
+    "lastRun": "Last run",
+    "kind": {
+      "note": "Note in {{folder}}",
+      "grill": "To grill",
+      "todo": "Reminder"
+    },
+    "undo": "Undo",
+    "undone": "Undone",
+    "unavailable": "Brain dumps are not available.",
+    "roundups": "Roundups",
+    "roundupsEmpty": "Daily roundups appear here.",
+    "roundupMorning": "Morning",
+    "roundupNight": "Night",
+    "runNow": "Run now",
+    "running": "Running...",
+    "roundupNothing": "No new brain dumps since the last roundup."
   }
 }

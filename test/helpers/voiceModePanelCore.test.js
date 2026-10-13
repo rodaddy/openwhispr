@@ -2,7 +2,13 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { React, renderStatic } = require("./harness/reactSsr");
 
-const renderCore = async (mode, open, stage = "content", horizontalDirection = "right") => {
+const renderCore = async (
+  mode,
+  open,
+  stage = "content",
+  horizontalDirection = "right",
+  transcriptionPreviewLayout = "grow"
+) => {
   const { VoiceModePanelCore } =
     await import("../../src/components/dictation/VoiceModePanelCore.tsx");
   return renderStatic(
@@ -13,6 +19,7 @@ const renderCore = async (mode, open, stage = "content", horizontalDirection = "
       stage,
       horizontalDirection,
       onPreferredHeightChange: () => {},
+      transcriptionPreviewLayout,
     },
     React.createElement("main", { "data-mode-content": mode ?? "idle" })
   );
@@ -88,6 +95,13 @@ test("the shared core keeps its surface mounted while no mode is active", async 
   assert.match(idle, /^<section class="expanding-panel-surface/);
   assert.match(idle, /aria-hidden="true"/);
   assert.equal((idle.match(/<section/g) || []).length, 1);
+});
+
+test("fixed two-line transcript mode uses fixed shell measurement", async () => {
+  const fixed = await renderCore("live-transcript", true, "content", "right", "fixed2lines");
+  const grow = await renderCore("live-transcript", true, "content", "right", "grow");
+  assert.match(fixed, /data-panel-fixed-content-height="true"/);
+  assert.doesNotMatch(grow, /data-panel-fixed-content-height/);
 });
 
 test("Agent close keeps the same surface mounted while its expensive content fades", async () => {

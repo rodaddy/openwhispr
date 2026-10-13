@@ -3,6 +3,16 @@ import { API_ENDPOINTS } from "../config/constants";
 import i18n, { normalizeUiLanguage } from "../i18n";
 import { ensureAgentNameInDictionary } from "../utils/agentName";
 import { chooseDictionaryStartupAction } from "../helpers/dictionaryStartup";
+import {
+  DEFAULT_ACTIVATION_MODE,
+  normalizeActivationMode,
+  type ActivationMode,
+} from "../helpers/activationMode";
+import {
+  normalizeTranscriptionPreviewLayout,
+  type TranscriptionPreviewLayout,
+} from "../utils/transcriptionPreview";
+import { DEFAULT_FILLER_WORDS } from "../helpers/fillerWords";
 import logger from "../utils/logger";
 import whisperVadConstants from "../constants/whisperVad.json";
 import type {
@@ -43,6 +53,11 @@ import {
   type TranscriptionPolicyContext,
 } from "./policyRules";
 import { usePolicyStore } from "./policyStore";
+import {
+  createAssistantSpeechProviderSetter,
+  normalizeAssistantSpeechProvider,
+  type AssistantSpeechProvider,
+} from "./assistantSpeechProviderSetter";
 import type {
   TranscriptionSettings,
   CleanupSettings,
@@ -57,6 +72,11 @@ import type {
 import type { Snippet } from "../utils/snippets";
 import type { EnterpriseSetupMode } from "../types/enterpriseIdentity";
 import { getManagedScopeResolution } from "./enterpriseIdentityStore";
+import {
+  DEFAULT_GRILL_VOICE_ID,
+  seedGrillVoices,
+  type GrillVoice,
+} from "../services/grill/grillVoices";
 
 let _ReasoningService: typeof import("../services/ReasoningService").default | null = null;
 
@@ -64,6 +84,45 @@ let _ReasoningService: typeof import("../services/ReasoningService").default | n
 // dereference the bare localStorage global, and test harnesses import this
 // store with partial window stubs that don't define it.
 const isBrowser = typeof window !== "undefined" && typeof localStorage !== "undefined";
+
+const LOCAL_ONLY_MODE_KEYS = [
+  "transcriptionMode",
+  "cleanupMode",
+  "meetingTranscriptionMode",
+  "uploadTranscriptionMode",
+  "noteFormattingMode",
+  "translationMode",
+  "chatAgentMode",
+  "dictationAgentMode",
+  "dictationAgentVisionMode",
+] as const;
+
+function normalizeLocalOnlySettings() {
+  if (!isBrowser) return;
+  for (const key of LOCAL_ONLY_MODE_KEYS) {
+    if (localStorage.getItem(key) === "openwhispr") localStorage.setItem(key, "local");
+  }
+  for (const key of [
+    "cloudTranscriptionMode",
+    "cleanupCloudMode",
+    "uploadCloudTranscriptionMode",
+    "translationCloudMode",
+    "chatAgentCloudMode",
+    "dictationAgentCloudMode",
+    "dictationAgentVisionCloudMode",
+  ]) {
+    if (localStorage.getItem(key) === "openwhispr") localStorage.setItem(key, "byok");
+  }
+  if (localStorage.getItem("transcriptionMode") === "local") {
+    localStorage.setItem("useLocalWhisper", "true");
+  }
+  if (localStorage.getItem("uploadTranscriptionMode") === "local") {
+    localStorage.setItem("uploadUseLocalWhisper", "true");
+  }
+  localStorage.setItem("isSignedIn", "false");
+}
+
+normalizeLocalOnlySettings();
 
 export const TRANSCRIPTION_POLICY_PROVIDER_IDS = [
   ...modelRegistryData.transcriptionProviders.map((provider) => provider.id),
@@ -83,21 +142,21 @@ export const LLM_ENTERPRISE_POLICY_PROVIDER_IDS = ["bedrock"] as const;
 export const TRANSCRIPTION_ENTERPRISE_POLICY_PROVIDER_IDS = ["azure"] as const;
 
 const TRANSCRIPTION_POLICY_CATALOG = {
-  modes: ["openwhispr", "providers", "local", "self-hosted", "enterprise"] as const,
+  modes: ["providers", "local", "self-hosted", "enterprise"] as const,
   byokProviders: TRANSCRIPTION_POLICY_PROVIDER_IDS,
   enterpriseProviders: TRANSCRIPTION_ENTERPRISE_POLICY_PROVIDER_IDS,
 };
 
 const MEETING_TRANSCRIPTION_POLICY_CATALOG = {
   // Self-hosted realtime is not implemented for Note Recording.
-  modes: ["openwhispr", "providers", "local"] as const,
+  modes: ["providers", "local"] as const,
   byokProviders: modelRegistryData.transcriptionProviders
     .filter((provider) => provider.models.some((model) => model.streaming))
     .map((provider) => provider.id),
 };
 
 const LLM_POLICY_CATALOG = {
-  modes: ["openwhispr", "providers", "local", "self-hosted", "enterprise"] as const,
+  modes: ["providers", "local", "self-hosted", "enterprise"] as const,
   byokProviders: LLM_POLICY_PROVIDER_IDS,
   enterpriseProviders: LLM_ENTERPRISE_POLICY_PROVIDER_IDS,
 };
@@ -200,6 +259,43 @@ function snapMicWarmHold(value: number): number {
   return (MIC_WARM_HOLD_CHOICES as readonly number[]).includes(value) ? value : 0;
 }
 
+// Auto-submit presses Return in a terminal, so its word floor never drops
+// below 2: anything outside 2 to 12 falls back to the default of 3.
+function clampAutoSubmitMinWords(value: number): number {
+  return Number.isInteger(value) && value >= 2 && value <= 12 ? value : 3;
+}
+
+export type DictationAppProfileName = "terminal" | "editor" | "chat" | "prose";
+export type DictationAppProfile = { match: string; profile: DictationAppProfileName };
+
+const DICTATION_APP_PROFILE_NAMES: readonly string[] = ["terminal", "editor", "chat", "prose"];
+
+// Keeps only { match, profile } pairs; the main process applies the full
+// rules (sanitizeAppProfileOverrides) before a list is used.
+function normalizeDictationAppProfiles(value: unknown): DictationAppProfile[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (entry) =>
+        !!entry &&
+        typeof entry === "object" &&
+        typeof entry.match === "string" &&
+        DICTATION_APP_PROFILE_NAMES.includes(entry.profile)
+    )
+    .map((entry) => ({ match: entry.match, profile: entry.profile }));
+}
+
+function readDictationAppProfiles(): DictationAppProfile[] {
+  if (!isBrowser) return [];
+  try {
+    return normalizeDictationAppProfiles(
+      JSON.parse(localStorage.getItem("dictationAppProfiles") ?? "[]")
+    );
+  } catch {
+    return [];
+  }
+}
+
 function readStringArray(key: string, fallback: string[]): string[] {
   if (!isBrowser) return fallback;
   const stored = localStorage.getItem(key);
@@ -212,12 +308,18 @@ function readStringArray(key: string, fallback: string[]): string[] {
   }
 }
 
-type MicrophoneSelectionMode = "system" | "built-in" | "specific";
+export type MicrophoneSelectionMode = "automatic" | "system" | "built-in" | "specific";
 
 function migrateMicrophoneSelectionMode() {
   if (!isBrowser) return;
   const current = localStorage.getItem("microphoneSelectionMode");
-  if (current === "system" || current === "built-in" || current === "specific") return;
+  if (
+    current === "automatic" ||
+    current === "system" ||
+    current === "built-in" ||
+    current === "specific"
+  )
+    return;
 
   const selectedDeviceId = localStorage.getItem("selectedMicDeviceId") || "";
   const legacyBuiltIn = localStorage.getItem("preferBuiltInMic");
@@ -310,6 +412,9 @@ const BOOLEAN_SETTINGS = new Set([
   "isSignedIn",
   "autoPasteEnabled",
   "keepTranscriptionInClipboard",
+  "dictationAppFormatting",
+  "dictationAutoSubmit",
+  "dictationShowLatency",
   "dataRetentionEnabled",
   "saveDiscardedTranscriptions",
   "noteFilesEnabled",
@@ -330,16 +435,25 @@ const BOOLEAN_SETTINGS = new Set([
 
 const ARRAY_SETTINGS = new Set([
   "customDictionary",
+  "dictationAppProfiles",
+  "fillerWords",
   "snippets",
   "gcalAccounts",
   "mcalAccounts",
   "onboardingUseCases",
   "spokenLanguages",
   "translationTargets",
+  "grillEventPrefixes",
+  "grillVoices",
 ]);
+
+// Mirrors DEFAULT_GRILL_EVENT_PREFIXES in src/helpers/grillCalendarEvent.js
+// (CommonJS, main-process only), which main uses until this setting syncs.
+const DEFAULT_GRILL_EVENT_PREFIXES = ["Grill", "Life Story"];
 
 const NUMERIC_SETTINGS = new Set([
   "micWarmHoldSeconds",
+  "dictationAutoSubmitMinWords",
   "audioRetentionDays",
   "transcriptRetentionDays",
   "whisperVadThreshold",
@@ -668,6 +782,14 @@ export interface SettingsState
   notifyMeetingDetection: boolean;
   notifyCalendarReminders: boolean;
   notifyUpdates: boolean;
+  /** Calendar event titles starting with one of these prompt a grill session. */
+  grillEventPrefixes: string[];
+  /** Voices the spoken grill can ask in (Skippy is always first; see services/grill/grillVoices). */
+  grillVoices: GrillVoice[];
+  grillVoiceId: string;
+  /** Daily brain-dump roundup times, "HH:MM" local (desktop#327). */
+  brainDumpRoundupMorning: string;
+  brainDumpRoundupNight: string;
   gcalPrimaryOnly: boolean;
   mcalPrimaryOnly: boolean;
   appleCalendarConnected: boolean;
@@ -684,8 +806,14 @@ export interface SettingsState
   whisperVadSamplesOverlap: number;
   panelStartPosition: "bottom-right" | "center" | "bottom-left";
   showTranscriptionPreview: boolean;
+  transcriptionPreviewLayout: TranscriptionPreviewLayout;
   autoPasteEnabled: boolean;
   keepTranscriptionInClipboard: boolean;
+  dictationAppFormatting: boolean;
+  dictationAppProfiles: DictationAppProfile[];
+  dictationAutoSubmit: boolean;
+  dictationAutoSubmitMinWords: number;
+  dictationShowLatency: boolean;
   noteFilesEnabled: boolean;
   noteFilesPath: string;
 
@@ -758,6 +886,8 @@ export interface SettingsState
   // Voice-agent screen context: opt-in screenshot capture, plus an optional
   // dedicated model used only when a screenshot is attached.
   voiceAgentScreenContext: boolean;
+  assistantSpeechEnabled: boolean;
+  assistantSpeechProvider: AssistantSpeechProvider;
   useDictationAgentVisionModel: boolean;
   dictationAgentVisionMode: InferenceMode;
   dictationAgentVisionProvider: string;
@@ -883,6 +1013,8 @@ export interface SettingsState
   setAssemblyAiStreaming: (value: boolean) => void;
   setAutoGenerateNoteTitle: (value: boolean) => void;
   setUseCleanupModel: (value: boolean) => void;
+  setRemoveFillerWords: (value: boolean) => void;
+  setFillerWords: (words: string[]) => void;
   setUseDictationAgent: (value: boolean) => void;
   setCleanupModel: (value: string) => void;
   setCleanupProvider: (value: string) => void;
@@ -947,15 +1079,19 @@ export interface SettingsState
   setVoiceAgentKey: (key: string) => Promise<boolean>;
   translationKey: string;
   setTranslationKey: (key: string) => Promise<boolean>;
+  pasteLastKey: string;
+  setPasteLastKey: (key: string) => Promise<boolean>;
   setMeetingHotkeyLayoutMode: (mode: "side-panel" | "full-width") => void;
   setOnboardingUseCases: (useCases: string[]) => void;
   setOnboardingUseCaseNote: (note: string) => void;
   setSpokenLanguages: (languages: string[]) => void;
-  setActivationMode: (mode: "tap" | "push") => void;
+  setActivationMode: (mode: ActivationMode) => void;
 
   setPreferBuiltInMic: (value: boolean) => void;
   setMicrophoneSelectionMode: (mode: MicrophoneSelectionMode) => void;
   setSelectedMicDevice: (deviceId: string, label: string) => void;
+  setPreferredMicDevice: (deviceId: string, label: string) => void;
+  setFallbackMicDevice: (deviceId: string, label: string) => void;
   setMicWarmHoldSeconds: (seconds: number) => void;
 
   setTheme: (value: "light" | "dark" | "auto") => void;
@@ -975,6 +1111,11 @@ export interface SettingsState
   setNotificationsEnabled: (value: boolean) => void;
   setNotifyMeetingDetection: (value: boolean) => void;
   setNotifyCalendarReminders: (value: boolean) => void;
+  setGrillEventPrefixes: (prefixes: string[]) => void;
+  setBrainDumpRoundupMorning: (value: string) => void;
+  setBrainDumpRoundupNight: (value: string) => void;
+  setGrillVoices: (voices: GrillVoice[]) => void;
+  setGrillVoiceId: (id: string) => void;
   setNotifyUpdates: (value: boolean) => void;
   setGcalPrimaryOnly: (value: boolean) => void;
   setMcalPrimaryOnly: (value: boolean) => void;
@@ -992,8 +1133,14 @@ export interface SettingsState
   setWhisperVadSamplesOverlap: (value: number) => void;
   setPanelStartPosition: (position: "bottom-right" | "center" | "bottom-left") => void;
   setShowTranscriptionPreview: (value: boolean) => void;
+  setTranscriptionPreviewLayout: (value: TranscriptionPreviewLayout) => void;
   setAutoPasteEnabled: (value: boolean) => void;
   setKeepTranscriptionInClipboard: (value: boolean) => void;
+  setDictationAppFormatting: (value: boolean) => void;
+  setDictationAppProfiles: (profiles: DictationAppProfile[]) => void;
+  setDictationAutoSubmit: (value: boolean) => void;
+  setDictationAutoSubmitMinWords: (value: number) => void;
+  setDictationShowLatency: (value: boolean) => void;
   setNoteFilesEnabled: (value: boolean) => void;
   setNoteFilesPath: (value: string) => void;
   setIsSignedIn: (value: boolean) => void;
@@ -1005,6 +1152,8 @@ export interface SettingsState
   setChatAgentCloudBaseUrl: (value: string) => void;
   setChatAgentRemoteUrl: (url: string) => void;
   setChatAgentCustomApiKey: (key: string) => void;
+  setAssistantSpeechEnabled: (value: boolean) => void;
+  setAssistantSpeechProvider: (value: AssistantSpeechProvider) => void;
 
   updateTranscriptionSettings: (settings: Partial<TranscriptionSettings>) => void;
   setCloudTranscriptionForAllScopes: (settings: Partial<TranscriptionSettings>) => void;
@@ -1014,12 +1163,33 @@ export interface SettingsState
   updateChatAgentSettings: (settings: Partial<ChatAgentSettings>) => void;
 }
 
+export type { AssistantSpeechProvider };
+
+// Set once the user picks a provider, so the startup read-back cannot undo it.
+let assistantSpeechProviderChangedByUser = false;
+
 function createStringSetter(key: string) {
   return (value: string) => {
     if (isBrowser) localStorage.setItem(key, value);
     useSettingsStore.setState({ [key]: value });
   };
 }
+
+const applyAssistantSpeechProvider = createAssistantSpeechProviderSetter({
+  read: () => useSettingsStore.getState().assistantSpeechProvider,
+  write: createStringSetter("assistantSpeechProvider"),
+  warn: (message, error) => logger.warn(message, { error }, "settings"),
+  // Looked up per call: window.electronAPI may not exist when this module loads.
+  main: () => {
+    const api = isBrowser ? window.electronAPI : undefined;
+    const send = api?.setAssistantSpeechProvider;
+    if (!send) return undefined;
+    return {
+      send: (value) => send(value),
+      read: async () => (await api.getAssistantSpeechProfile?.())?.provider,
+    };
+  },
+});
 
 function persistTranscriptionModelMemory(memory: Record<string, string>) {
   if (isBrowser) localStorage.setItem("transcriptionModelByProvider", JSON.stringify(memory));
@@ -1065,7 +1235,7 @@ function createNumberSetter(key: string) {
 // being persisted. Rolls back to the previous key if registration fails.
 // Resolves to false on failure so optimistic UIs (HotkeyListInput) can revert.
 function createRegisteredHotkeySetter(
-  key: "voiceAgentKey" | "translationKey",
+  key: "voiceAgentKey" | "translationKey" | "pasteLastKey",
   label: string,
   getRegisterFn: () =>
     ((hotkey: string) => Promise<{ success: boolean; message: string }>) | undefined,
@@ -1244,13 +1414,6 @@ function createSecretSetter(
 
 export const MAX_TRANSLATION_TARGETS = 5;
 
-// Kick the matching cloud push once a local write has landed in SQLite.
-function syncAfterLocalWrite(method: "syncDictionaryNow" | "syncSnippetsNow"): void {
-  void import("../services/SyncService.js").then(({ syncService }) => {
-    if (syncService.canSync()) void syncService[method]();
-  });
-}
-
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
   uiLanguage: normalizeUiLanguage(
     isBrowser ? localStorage.getItem("uiLanguage") || i18n.language : null
@@ -1277,8 +1440,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   reasoningModelByProvider: readModelMemory("reasoningModelByProvider"),
   // Secrets aren't hydrated yet at construction; the BYOK default is set
   // post-hydration in initializeSettings.
-  cloudTranscriptionMode: readString("cloudTranscriptionMode", "openwhispr"),
-  cleanupCloudMode: readString("cleanupCloudMode", "openwhispr"),
+  cloudTranscriptionMode: readString("cloudTranscriptionMode", "byok"),
+  cleanupCloudMode: readString("cleanupCloudMode", "byok"),
   cleanupCloudBaseUrl: readString("cleanupCloudBaseUrl", API_ENDPOINTS.OPENAI_BASE),
   cortiEnvironment: readString("cortiEnvironment", "us"),
   cortiTenant: readString("cortiTenant", "base"),
@@ -1295,6 +1458,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   autoGenerateNoteTitle: readBoolean("autoGenerateNoteTitle", true),
   useCleanupModel: readBoolean("useCleanupModel", true),
+  removeFillerWords: readBoolean("removeFillerWords", true),
+  fillerWords: readStringArray("fillerWords", DEFAULT_FILLER_WORDS),
   useDictationAgent: readBoolean("useDictationAgent", true),
   cleanupModel: readString("cleanupModel", ""),
   cleanupProvider: readString("cleanupProvider", "openai"),
@@ -1345,24 +1510,28 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   meetingKey: readString("meetingKey", ""),
   voiceAgentKey: readString("voiceAgentKey", ""),
   translationKey: readString("translationKey", ""),
+  pasteLastKey: readString("pasteLastKey", ""),
   onboardingUseCases: readStringArray("onboardingUseCases", []),
   onboardingUseCaseNote: readString("onboardingUseCaseNote", ""),
   spokenLanguages: readStringArray("spokenLanguages", []),
   meetingHotkeyLayoutMode: (readString("meetingHotkeyLayoutMode", "full-width") === "side-panel"
     ? "side-panel"
     : "full-width") as "side-panel" | "full-width",
-  activationMode: (readString("activationMode", "tap") === "push" ? "push" : "tap") as
-    "tap" | "push",
+  activationMode: normalizeActivationMode(readString("activationMode", DEFAULT_ACTIVATION_MODE)),
 
   microphoneSelectionMode: (() => {
     const mode = readString("microphoneSelectionMode", "system");
     return (
-      mode === "built-in" || mode === "specific" ? mode : "system"
+      mode === "automatic" || mode === "built-in" || mode === "specific" ? mode : "system"
     ) as MicrophoneSelectionMode;
   })(),
   preferBuiltInMic: readBoolean("preferBuiltInMic", false),
   selectedMicDeviceId: readString("selectedMicDeviceId", ""),
   selectedMicDeviceLabel: readString("selectedMicDeviceLabel", ""),
+  preferredMicDeviceId: readString("preferredMicDeviceId", ""),
+  preferredMicDeviceLabel: readString("preferredMicDeviceLabel", ""),
+  fallbackMicDeviceId: readString("fallbackMicDeviceId", ""),
+  fallbackMicDeviceLabel: readString("fallbackMicDeviceLabel", ""),
   micWarmHoldSeconds: snapMicWarmHold(readNumber("micWarmHoldSeconds", 0)),
 
   theme: (() => {
@@ -1385,6 +1554,11 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   notifyMeetingDetection: readBoolean("notifyMeetingDetection", true),
   notifyCalendarReminders: readBoolean("notifyCalendarReminders", true),
   notifyUpdates: readBoolean("notifyUpdates", true),
+  grillEventPrefixes: readStringArray("grillEventPrefixes", DEFAULT_GRILL_EVENT_PREFIXES),
+  grillVoices: seedGrillVoices(readStringArray("grillVoices", [])),
+  grillVoiceId: readString("grillVoiceId", DEFAULT_GRILL_VOICE_ID),
+  brainDumpRoundupMorning: readString("brainDumpRoundupMorning", "09:30"),
+  brainDumpRoundupNight: readString("brainDumpRoundupNight", "23:00"),
   ...(() => {
     let accounts: CalendarAccount[] = [];
     try {
@@ -1446,16 +1620,26 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     return "bottom-right" as const;
   })(),
   showTranscriptionPreview: readBoolean("showTranscriptionPreview", false),
+  transcriptionPreviewLayout: normalizeTranscriptionPreviewLayout(
+    readString("transcriptionPreviewLayout", "grow")
+  ),
   autoPasteEnabled: readBoolean("autoPasteEnabled", true),
   keepTranscriptionInClipboard: readBoolean("keepTranscriptionInClipboard", false),
+  dictationAppFormatting: readBoolean("dictationAppFormatting", true),
+  dictationAppProfiles: readDictationAppProfiles(),
+  dictationAutoSubmit: readBoolean("dictationAutoSubmit", false),
+  dictationShowLatency: readBoolean("dictationShowLatency", false),
+  dictationAutoSubmitMinWords: clampAutoSubmitMinWords(
+    readNumber("dictationAutoSubmitMinWords", 3)
+  ),
   noteFilesEnabled: readBoolean("noteFilesEnabled", false),
   noteFilesPath: readString("noteFilesPath", ""),
   isSignedIn: readBoolean("isSignedIn", false),
 
   transcriptionMode: (() => {
-    const v = readString("transcriptionMode", "openwhispr");
-    if (v === "openwhispr" || v === "providers" || v === "local" || v === "self-hosted") return v;
-    return "openwhispr" as InferenceMode;
+    const v = readString("transcriptionMode", "local");
+    if (v === "providers" || v === "local" || v === "self-hosted") return v;
+    return "local" as InferenceMode;
   })(),
   remoteTranscriptionType: (() => {
     const v = readString("remoteTranscriptionType", "lan");
@@ -1464,23 +1648,16 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   remoteTranscriptionUrl: readString("remoteTranscriptionUrl", ""),
   remoteTranscriptionModel: readString("remoteTranscriptionModel", ""),
   cleanupMode: (() => {
-    const v = readString("cleanupMode", "openwhispr");
-    if (
-      v === "openwhispr" ||
-      v === "providers" ||
-      v === "local" ||
-      v === "self-hosted" ||
-      v === "enterprise"
-    )
-      return v;
-    return "openwhispr" as InferenceMode;
+    const v = readString("cleanupMode", "local");
+    if (v === "providers" || v === "local" || v === "self-hosted" || v === "enterprise") return v;
+    return "local" as InferenceMode;
   })(),
   cleanupRemoteUrl: readString("cleanupRemoteUrl", ""),
 
   meetingTranscriptionMode: (() => {
-    const v = readString("meetingTranscriptionMode", "openwhispr");
-    if (v === "openwhispr" || v === "providers" || v === "local" || v === "self-hosted") return v;
-    return "openwhispr" as InferenceMode;
+    const v = readString("meetingTranscriptionMode", "local");
+    if (v === "providers" || v === "local" || v === "self-hosted") return v;
+    return "local" as InferenceMode;
   })(),
   meetingUseLocalWhisper: readBoolean("meetingUseLocalWhisper", false),
   meetingWhisperModel: readString("meetingWhisperModel", ""),
@@ -1498,9 +1675,9 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   meetingRemoteTranscriptionUrl: readString("meetingRemoteTranscriptionUrl", ""),
 
   uploadTranscriptionMode: (() => {
-    const v = readString("uploadTranscriptionMode", "openwhispr");
-    if (v === "openwhispr" || v === "providers" || v === "local" || v === "self-hosted") return v;
-    return "openwhispr" as InferenceMode;
+    const v = readString("uploadTranscriptionMode", "local");
+    if (v === "providers" || v === "local" || v === "self-hosted") return v;
+    return "local" as InferenceMode;
   })(),
   uploadUseLocalWhisper: readBoolean("uploadUseLocalWhisper", false),
   uploadWhisperModel: readString("uploadWhisperModel", ""),
@@ -1513,16 +1690,9 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   uploadCloudTranscriptionMode: readString("uploadCloudTranscriptionMode", ""),
 
   noteFormattingMode: (() => {
-    const v = readString("noteFormattingMode", "openwhispr");
-    if (
-      v === "openwhispr" ||
-      v === "providers" ||
-      v === "local" ||
-      v === "self-hosted" ||
-      v === "enterprise"
-    )
-      return v;
-    return "openwhispr" as InferenceMode;
+    const v = readString("noteFormattingMode", "local");
+    if (v === "providers" || v === "local" || v === "self-hosted" || v === "enterprise") return v;
+    return "local" as InferenceMode;
   })(),
   noteFormattingProvider: readString("noteFormattingProvider", ""),
   noteFormattingModel: readString("noteFormattingModel", ""),
@@ -1532,20 +1702,13 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   noteFormattingCustomApiKey: readString("noteFormattingCustomApiKey", ""),
 
   translationMode: (() => {
-    const v = readString("translationMode", "openwhispr");
-    if (
-      v === "openwhispr" ||
-      v === "providers" ||
-      v === "local" ||
-      v === "self-hosted" ||
-      v === "enterprise"
-    )
-      return v;
-    return "openwhispr" as InferenceMode;
+    const v = readString("translationMode", "local");
+    if (v === "providers" || v === "local" || v === "self-hosted" || v === "enterprise") return v;
+    return "local" as InferenceMode;
   })(),
   translationProvider: readString("translationProvider", ""),
   translationModel: readString("translationModel", ""),
-  translationCloudMode: readString("translationCloudMode", "openwhispr"),
+  translationCloudMode: readString("translationCloudMode", "byok"),
   translationCloudBaseUrl: readString("translationCloudBaseUrl", ""),
   translationRemoteUrl: readString("translationRemoteUrl", ""),
   translationCustomApiKey: readString("translationCustomApiKey", ""),
@@ -1643,52 +1806,42 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   chatAgentModel: readString("chatAgentModel", "openai/gpt-oss-120b"),
   chatAgentProvider: readString("chatAgentProvider", "groq"),
-  chatAgentCloudMode: readString("chatAgentCloudMode", "openwhispr"),
+  chatAgentCloudMode: readString("chatAgentCloudMode", "byok"),
   chatAgentMode: (() => {
-    const v = readString("chatAgentMode", "openwhispr");
-    if (
-      v === "openwhispr" ||
-      v === "providers" ||
-      v === "local" ||
-      v === "self-hosted" ||
-      v === "enterprise"
-    )
-      return v;
-    return "openwhispr" as InferenceMode;
+    const v = readString("chatAgentMode", "local");
+    if (v === "providers" || v === "local" || v === "self-hosted" || v === "enterprise") return v;
+    return "local" as InferenceMode;
   })(),
   chatAgentRemoteUrl: readString("chatAgentRemoteUrl", ""),
   chatAgentCloudBaseUrl: readString("chatAgentCloudBaseUrl", ""),
   chatAgentCustomApiKey: readString("chatAgentCustomApiKey", ""),
 
   dictationAgentMode: (() => {
-    const v = readString("dictationAgentMode", "openwhispr");
-    if (
-      v === "openwhispr" ||
-      v === "providers" ||
-      v === "local" ||
-      v === "self-hosted" ||
-      v === "enterprise"
-    )
-      return v;
-    return "openwhispr" as InferenceMode;
+    const v = readString("dictationAgentMode", "local");
+    if (v === "providers" || v === "local" || v === "self-hosted" || v === "enterprise") return v;
+    return "local" as InferenceMode;
   })(),
   dictationAgentProvider: readString("dictationAgentProvider", ""),
   dictationAgentModel: readString("dictationAgentModel", ""),
-  dictationAgentCloudMode: readString("dictationAgentCloudMode", "openwhispr"),
+  dictationAgentCloudMode: readString("dictationAgentCloudMode", "byok"),
   dictationAgentCloudBaseUrl: readString("dictationAgentCloudBaseUrl", ""),
   dictationAgentRemoteUrl: readString("dictationAgentRemoteUrl", ""),
   dictationAgentCustomApiKey: readString("dictationAgentCustomApiKey", ""),
 
   voiceAgentScreenContext: readBoolean("voiceAgentScreenContext", false),
+  assistantSpeechEnabled: readBoolean("assistantSpeechEnabled", false),
+  assistantSpeechProvider: normalizeAssistantSpeechProvider(
+    readString("assistantSpeechProvider", "hub")
+  ),
   useDictationAgentVisionModel: readBoolean("useDictationAgentVisionModel", false),
   dictationAgentVisionMode: (() => {
-    const v = readString("dictationAgentVisionMode", "openwhispr");
-    if (v === "openwhispr" || v === "providers") return v as InferenceMode;
-    return "openwhispr" as InferenceMode;
+    const v = readString("dictationAgentVisionMode", "providers");
+    if (v === "providers") return v as InferenceMode;
+    return "providers" as InferenceMode;
   })(),
   dictationAgentVisionProvider: readString("dictationAgentVisionProvider", ""),
   dictationAgentVisionModel: readString("dictationAgentVisionModel", ""),
-  dictationAgentVisionCloudMode: readString("dictationAgentVisionCloudMode", "openwhispr"),
+  dictationAgentVisionCloudMode: readString("dictationAgentVisionCloudMode", "byok"),
   dictationAgentVisionCloudBaseUrl: readString("dictationAgentVisionCloudBaseUrl", ""),
   dictationAgentVisionCustomApiKey: readString("dictationAgentVisionCustomApiKey", ""),
 
@@ -1722,6 +1875,11 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   ),
 
   setVoiceAgentScreenContext: createBooleanSetter("voiceAgentScreenContext"),
+  setAssistantSpeechEnabled: createBooleanSetter("assistantSpeechEnabled"),
+  setAssistantSpeechProvider: (value: AssistantSpeechProvider) => {
+    assistantSpeechProviderChangedByUser = true;
+    applyAssistantSpeechProvider(value);
+  },
   setUseDictationAgentVisionModel: createBooleanSetter("useDictationAgentVisionModel"),
   setDictationAgentVisionMode: createStringSetter("dictationAgentVisionMode") as (
     mode: InferenceMode
@@ -1826,6 +1984,14 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setAssemblyAiStreaming: createBooleanSetter("assemblyAiStreaming"),
   setAutoGenerateNoteTitle: createBooleanSetter("autoGenerateNoteTitle"),
   setUseCleanupModel: createBooleanSetter("useCleanupModel"),
+  setRemoveFillerWords: createBooleanSetter("removeFillerWords"),
+
+  // Replaces the whole list, like setCustomDictionary: the settings UI always
+  // hands over the full set it is showing.
+  setFillerWords: (words: string[]) => {
+    if (isBrowser) localStorage.setItem("fillerWords", JSON.stringify(words));
+    set({ fillerWords: words });
+  },
   setUseDictationAgent: createBooleanSetter("useDictationAgent"),
   setCleanupProvider: createStringSetter("cleanupProvider"),
   setCleanupModel: createStringSetter("cleanupModel"),
@@ -1835,16 +2001,13 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setCustomDictionary: (words: string[]) => {
     if (isBrowser) localStorage.setItem("customDictionary", JSON.stringify(words));
     set({ customDictionary: words });
-    window.electronAPI
-      ?.setDictionary(words)
-      .then(() => syncAfterLocalWrite("syncDictionaryNow"))
-      .catch((err) => {
-        logger.warn(
-          "Failed to sync dictionary to SQLite",
-          { error: (err as Error).message },
-          "settings"
-        );
-      });
+    window.electronAPI?.setDictionary(words).catch((err) => {
+      logger.warn(
+        "Failed to sync dictionary to SQLite",
+        { error: (err as Error).message },
+        "settings"
+      );
+    });
   },
 
   updateCustomDictionary: ({ add = [], remove = [] }) => {
@@ -1876,7 +2039,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
           if (isBrowser) localStorage.setItem("customDictionary", JSON.stringify(stored));
           set({ customDictionary: stored });
         }
-        syncAfterLocalWrite("syncDictionaryNow");
       })
       .catch((err) => {
         logger.warn(
@@ -1896,16 +2058,13 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setSnippets: (snippets: Snippet[]) => {
     if (isBrowser) localStorage.setItem("snippets", JSON.stringify(snippets));
     set({ snippets });
-    window.electronAPI
-      ?.setSnippets?.(snippets)
-      .then(() => syncAfterLocalWrite("syncSnippetsNow"))
-      .catch((err) => {
-        logger.warn(
-          "Failed to sync snippets to SQLite",
-          { error: (err as Error).message },
-          "settings"
-        );
-      });
+    window.electronAPI?.setSnippets?.(snippets).catch((err) => {
+      logger.warn(
+        "Failed to sync snippets to SQLite",
+        { error: (err as Error).message },
+        "settings"
+      );
+    });
   },
 
   // For broadcasts from main process — DB is already authoritative, only update UI.
@@ -2067,6 +2226,11 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     "translation hotkey",
     () => window.electronAPI?.updateTranslationHotkey
   ),
+  setPasteLastKey: createRegisteredHotkeySetter(
+    "pasteLastKey",
+    "paste-last hotkey",
+    () => window.electronAPI?.updatePasteLastHotkey
+  ),
 
   setMeetingHotkeyLayoutMode: (mode: "side-panel" | "full-width") => {
     if (isBrowser) localStorage.setItem("meetingHotkeyLayoutMode", mode);
@@ -2085,7 +2249,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     set({ spokenLanguages: languages });
   },
 
-  setActivationMode: (mode: "tap" | "push") => {
+  setActivationMode: (mode: ActivationMode) => {
     if (isBrowser) localStorage.setItem("activationMode", mode);
     set({ activationMode: mode });
     if (isBrowser) {
@@ -2103,7 +2267,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
   setMicrophoneSelectionMode: (mode: MicrophoneSelectionMode) => {
     const normalized: MicrophoneSelectionMode =
-      mode === "built-in" || mode === "specific" ? mode : "system";
+      mode === "automatic" || mode === "built-in" || mode === "specific" ? mode : "system";
     const preferBuiltInMic = normalized === "built-in";
     if (isBrowser) {
       localStorage.setItem("microphoneSelectionMode", normalized);
@@ -2117,6 +2281,20 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       localStorage.setItem("selectedMicDeviceId", deviceId);
     }
     set({ selectedMicDeviceId: deviceId, selectedMicDeviceLabel: label });
+  },
+  setPreferredMicDevice: (deviceId: string, label: string) => {
+    if (isBrowser) {
+      localStorage.setItem("preferredMicDeviceId", deviceId);
+      localStorage.setItem("preferredMicDeviceLabel", label);
+    }
+    set({ preferredMicDeviceId: deviceId, preferredMicDeviceLabel: label });
+  },
+  setFallbackMicDevice: (deviceId: string, label: string) => {
+    if (isBrowser) {
+      localStorage.setItem("fallbackMicDeviceId", deviceId);
+      localStorage.setItem("fallbackMicDeviceLabel", label);
+    }
+    set({ fallbackMicDeviceId: deviceId, fallbackMicDeviceLabel: label });
   },
 
   setTheme: (value: "light" | "dark" | "auto") => {
@@ -2185,6 +2363,20 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setNotificationsEnabled: createBooleanSetter("notificationsEnabled"),
   setNotifyMeetingDetection: createBooleanSetter("notifyMeetingDetection"),
   setNotifyCalendarReminders: createBooleanSetter("notifyCalendarReminders"),
+  setGrillVoices: (voices: GrillVoice[]) => {
+    const next = seedGrillVoices(voices);
+    if (isBrowser) localStorage.setItem("grillVoices", JSON.stringify(next));
+    set({ grillVoices: next });
+  },
+  setGrillVoiceId: createStringSetter("grillVoiceId"),
+  setBrainDumpRoundupMorning: createStringSetter("brainDumpRoundupMorning"),
+  setBrainDumpRoundupNight: createStringSetter("brainDumpRoundupNight"),
+  // Replaces the whole list; main re-arms the calendar reminder with it.
+  setGrillEventPrefixes: (prefixes: string[]) => {
+    if (isBrowser) localStorage.setItem("grillEventPrefixes", JSON.stringify(prefixes));
+    set({ grillEventPrefixes: prefixes });
+    window.electronAPI?.syncGrillEventPrefixes?.(prefixes).catch(() => {});
+  },
   setNotifyUpdates: createBooleanSetter("notifyUpdates"),
   setGcalPrimaryOnly: (value: boolean) => {
     if (isBrowser) localStorage.setItem("gcalPrimaryOnly", String(value));
@@ -2284,8 +2476,26 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   setShowTranscriptionPreview: createBooleanSetter("showTranscriptionPreview"),
+  setTranscriptionPreviewLayout: (value: TranscriptionPreviewLayout) => {
+    const normalized = normalizeTranscriptionPreviewLayout(value);
+    if (isBrowser) localStorage.setItem("transcriptionPreviewLayout", normalized);
+    set({ transcriptionPreviewLayout: normalized });
+  },
   setAutoPasteEnabled: createBooleanSetter("autoPasteEnabled"),
   setKeepTranscriptionInClipboard: createBooleanSetter("keepTranscriptionInClipboard"),
+  setDictationAppFormatting: createBooleanSetter("dictationAppFormatting"),
+  setDictationAppProfiles: (profiles: DictationAppProfile[]) => {
+    const normalized = normalizeDictationAppProfiles(profiles);
+    if (isBrowser) localStorage.setItem("dictationAppProfiles", JSON.stringify(normalized));
+    set({ dictationAppProfiles: normalized });
+  },
+  setDictationAutoSubmit: createBooleanSetter("dictationAutoSubmit"),
+  setDictationShowLatency: createBooleanSetter("dictationShowLatency"),
+  setDictationAutoSubmitMinWords: (value: number) => {
+    const clamped = clampAutoSubmitMinWords(value);
+    if (isBrowser) localStorage.setItem("dictationAutoSubmitMinWords", String(clamped));
+    set({ dictationAutoSubmitMinWords: clamped });
+  },
   setNoteFilesEnabled: createBooleanSetter("noteFilesEnabled"),
   setNoteFilesPath: createStringSetter("noteFilesPath"),
 
@@ -2339,6 +2549,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       s.setAssemblyAiStreaming(settings.assemblyAiStreaming);
     if (settings.showTranscriptionPreview !== undefined)
       s.setShowTranscriptionPreview(settings.showTranscriptionPreview);
+    if (settings.transcriptionPreviewLayout !== undefined)
+      s.setTranscriptionPreviewLayout(settings.transcriptionPreviewLayout);
   },
 
   // Apply a transcription config to dictation, then mirror its cloud routing to
@@ -3157,6 +3369,26 @@ export async function initializeSettings(): Promise<void> {
       );
     }
 
+    // Main owns where the assistant's voice runs; mirror it without calling back.
+    try {
+      const profile = await window.electronAPI.getAssistantSpeechProfile?.();
+      if (
+        !assistantSpeechProviderChangedByUser &&
+        profile?.provider &&
+        profile.provider !== state.assistantSpeechProvider
+      ) {
+        createStringSetter("assistantSpeechProvider")(
+          normalizeAssistantSpeechProvider(profile.provider)
+        );
+      }
+    } catch (err) {
+      logger.warn(
+        "Failed to sync assistant speech provider on startup",
+        { error: (err as Error).message },
+        "settings"
+      );
+    }
+
     // Sync translation hotkey from main process
     try {
       const envKey = await window.electronAPI.getTranslationKey?.();
@@ -3171,11 +3403,27 @@ export async function initializeSettings(): Promise<void> {
       );
     }
 
+    // Sync paste-last hotkey from main process
+    try {
+      // An empty answer counts: a key cleared in main must not linger here.
+      const envKey = await window.electronAPI.getPasteLastKey?.();
+      if (typeof envKey === "string" && envKey !== state.pasteLastKey) {
+        createStringSetter("pasteLastKey")(envKey);
+      }
+    } catch (err) {
+      logger.warn(
+        "Failed to sync paste-last hotkey on startup",
+        { error: (err as Error).message },
+        "settings"
+      );
+    }
+
     try {
       let envMode = await window.electronAPI.getActivationMode?.();
       if (envMode && envMode !== state.activationMode) {
-        if (isBrowser) localStorage.setItem("activationMode", envMode);
-        useSettingsStore.setState({ activationMode: envMode });
+        const nextMode = normalizeActivationMode(envMode);
+        if (isBrowser) localStorage.setItem("activationMode", nextMode);
+        useSettingsStore.setState({ activationMode: nextMode });
       }
     } catch (err) {
       logger.warn(
@@ -3283,6 +3531,18 @@ export async function initializeSettings(): Promise<void> {
     } catch (err) {
       logger.warn(
         "Failed to sync notification preferences on startup",
+        { error: (err as Error).message },
+        "settings"
+      );
+    }
+
+    try {
+      await window.electronAPI.syncGrillEventPrefixes?.(
+        useSettingsStore.getState().grillEventPrefixes
+      );
+    } catch (err) {
+      logger.warn(
+        "Failed to sync grill event prefixes on startup",
         { error: (err as Error).message },
         "settings"
       );
@@ -3406,6 +3666,7 @@ export async function initializeSettings(): Promise<void> {
       } catch {
         value = [];
       }
+      if (key === "dictationAppProfiles") value = normalizeDictationAppProfiles(value);
     } else if (NUMERIC_SETTINGS.has(key)) {
       const parsed = Number(newValue);
       if (Number.isNaN(parsed)) {
@@ -3417,6 +3678,8 @@ export async function initializeSettings(): Promise<void> {
         // Same whitelist as the setter — a hand-edited localStorage value
         // synced from another window must not exceed the offered durations.
         value = snapMicWarmHold(parsed);
+      } else if (key === "dictationAutoSubmitMinWords") {
+        value = clampAutoSubmitMinWords(parsed);
       } else {
         value = parsed;
       }

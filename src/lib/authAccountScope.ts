@@ -1,3 +1,5 @@
+import { isHubMode } from "./hubMode";
+
 const ACCOUNT_SCOPE_USER_KEY = "openwhispr:accountScopeUserId";
 const ACCOUNT_SCOPE_VALIDATED_KEY = "openwhispr:accountScopeValidated";
 const ACCOUNT_SCOPE_PURGE_REQUIRED_KEY = "openwhispr:accountScopePurgeRequired";
@@ -228,6 +230,9 @@ export function reconcileAccountScope(
   userId: string | null,
   callbacks: AccountScopeReconcileCallbacks
 ): Promise<void> {
+  // Hub mode has no user identity: it bypasses the account-scope machinery
+  // entirely, so it can never reach "purge" or touch the previous-user keys.
+  if (isHubMode()) return Promise.resolve();
   queuedReconcile = { userId, callbacks };
   if (activeReconcile) return activeReconcile;
 

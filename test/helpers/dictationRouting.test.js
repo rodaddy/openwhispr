@@ -698,17 +698,17 @@ test("an override toggled on but never configured falls back to the base rules",
 test("wake-word language follows the dictation language when it is explicit", async () => {
   const { resolveWakeWordLanguage } = await load();
 
-  assert.equal(
-    resolveWakeWordLanguage({ preferredLanguage: "it", uiLanguage: "en" }, "fr"),
-    "it"
-  );
+  assert.equal(resolveWakeWordLanguage({ preferredLanguage: "it", uiLanguage: "en" }, "fr"), "it");
   assert.equal(resolveWakeWordLanguage({ preferredLanguage: "zh-CN", uiLanguage: "en" }), "zh-CN");
 });
 
 test("wake-word language uses detected speech before the UI language on auto", async () => {
   const { resolveWakeWordLanguage } = await load();
 
-  assert.equal(resolveWakeWordLanguage({ preferredLanguage: "auto", uiLanguage: "it" }, "en"), "en");
+  assert.equal(
+    resolveWakeWordLanguage({ preferredLanguage: "auto", uiLanguage: "it" }, "en"),
+    "en"
+  );
   assert.equal(resolveWakeWordLanguage({ preferredLanguage: "", uiLanguage: "en" }, "it"), "it");
 });
 
@@ -742,4 +742,76 @@ test("lifecycle input kind prefers assistant, then translation, then dictation",
     "translation"
   );
   assert.equal(resolveLifecycleInputKind({}), "dictation");
+});
+
+test("the dictation hotkey during a live meeting records a highlight", async () => {
+  const { resolveMeetingHighlightRequested, resolveDictationRouteKind } = await load();
+  const requested = resolveMeetingHighlightRequested({
+    meetingRecordingActive: true,
+    voiceAgentRequested: false,
+    translationRequested: false,
+  });
+  assert.equal(requested, true);
+  // Neither cleanup nor a wake word pulls a highlight off its route.
+  assert.equal(
+    resolveDictationRouteKind({
+      cleanupReachable: true,
+      agentReachable: true,
+      agentInvoked: true,
+      voiceAgentRequested: false,
+      meetingHighlightRequested: requested,
+    }),
+    "highlight"
+  );
+});
+
+test("with no meeting recording, dictation routing is unchanged", async () => {
+  const { resolveMeetingHighlightRequested, resolveDictationRouteKind } = await load();
+  const requested = resolveMeetingHighlightRequested({
+    meetingRecordingActive: false,
+    voiceAgentRequested: false,
+    translationRequested: false,
+  });
+  assert.equal(requested, false);
+  assert.equal(
+    resolveDictationRouteKind({
+      cleanupReachable: true,
+      agentReachable: false,
+      agentInvoked: false,
+      voiceAgentRequested: false,
+      meetingHighlightRequested: requested,
+    }),
+    "cleanup"
+  );
+});
+
+test("the voice assistant and translation hotkeys keep their routes during a meeting", async () => {
+  const { resolveMeetingHighlightRequested, resolveDictationRouteKind } = await load();
+  assert.equal(
+    resolveMeetingHighlightRequested({
+      meetingRecordingActive: true,
+      voiceAgentRequested: true,
+      translationRequested: false,
+    }),
+    false
+  );
+  assert.equal(
+    resolveMeetingHighlightRequested({
+      meetingRecordingActive: true,
+      voiceAgentRequested: false,
+      translationRequested: true,
+    }),
+    false
+  );
+  // Even a stray highlight flag never outranks the assistant.
+  assert.equal(
+    resolveDictationRouteKind({
+      cleanupReachable: true,
+      agentReachable: true,
+      agentInvoked: false,
+      voiceAgentRequested: true,
+      meetingHighlightRequested: true,
+    }),
+    "agent"
+  );
 });

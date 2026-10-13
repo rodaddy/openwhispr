@@ -2,8 +2,10 @@ import { useEffect, useRef, type CSSProperties, type ReactNode, type TransitionE
 import {
   LIVE_TRANSCRIPT_ENTRANCE_TIMING,
   LIVE_TRANSCRIPT_SURFACE_LIMITS,
+  resolveLiveTranscriptStageDurationMs,
 } from "../../helpers/voicePillPresentation";
 import { ExpandingPanelShell } from "./ExpandingPanelShell";
+import type { TranscriptionPreviewLayout } from "../../utils/transcriptionPreview";
 
 export type VoiceModePanel = "assistant" | "live-transcript";
 export type VoiceModePanelStage = "encapsulated" | "footer" | "content";
@@ -16,6 +18,7 @@ interface VoiceModePanelCoreProps {
   horizontalDirection?: "left" | "right";
   label?: string;
   measurementRevision?: string | number | null;
+  transcriptionPreviewLayout?: TranscriptionPreviewLayout;
   onClosingFadeComplete?: () => void;
   onPreferredHeightChange: (
     height: number,
@@ -37,6 +40,7 @@ export function VoiceModePanelCore({
   horizontalDirection = "right",
   label,
   measurementRevision = null,
+  transcriptionPreviewLayout = "grow",
   onClosingFadeComplete,
   onPreferredHeightChange,
   children,
@@ -85,8 +89,11 @@ export function VoiceModePanelCore({
       stabilizeHeight={isLiveTranscript && open}
       fillAvailableHeight={mode === "assistant"}
       preferredHeightCap={isLiveTranscript ? LIVE_TRANSCRIPT_SURFACE_LIMITS.maxHeight : undefined}
-      measurementKey={mode}
-      measurementRevision={isLiveTranscript ? measurementRevision : null}
+      measurementKey={`${mode ?? "none"}:${transcriptionPreviewLayout}`}
+      measurementRevision={
+        isLiveTranscript && transcriptionPreviewLayout === "grow" ? measurementRevision : null
+      }
+      fixedContentHeight={isLiveTranscript && transcriptionPreviewLayout === "fixed2lines"}
       onPreferredHeightChange={isLiveTranscript ? onPreferredHeightChange : undefined}
       onTransitionEndCapture={handleTransitionEndCapture}
       aria-label={label}
@@ -96,8 +103,8 @@ export function VoiceModePanelCore({
       data-panel-direction={horizontalDirection}
       style={
         {
-          "--live-transcript-horizontal-duration": `${LIVE_TRANSCRIPT_ENTRANCE_TIMING.horizontalMs}ms`,
-          "--live-transcript-encapsulation-duration": `${LIVE_TRANSCRIPT_ENTRANCE_TIMING.encapsulateMs}ms`,
+          "--live-transcript-horizontal-duration": `${resolveLiveTranscriptStageDurationMs(LIVE_TRANSCRIPT_ENTRANCE_TIMING.horizontalMs)}ms`,
+          "--live-transcript-encapsulation-duration": `${resolveLiveTranscriptStageDurationMs(LIVE_TRANSCRIPT_ENTRANCE_TIMING.encapsulateMs)}ms`,
         } as CSSProperties
       }
     >

@@ -1,1 +1,8 @@
 dist/
+# Verbatim copy and generated module; scripts/sync-grill-bank.mjs owns both.
+config/grill/question-bank.md
+config/grill/questionBankText.ts
+# Generated, minified on purpose; scripts/generate-common-words.mjs and
+# scripts/generate-emoji-data.mjs own them.
+data/commonWords.en.json
+data/spokenEmoji.en.json

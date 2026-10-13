@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rtech.example/contracts/voice-session.json",
+  "title": "rTech voice acceptance receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "targetHostname", "commands", "deployment", "sessions", "auth", "interrupt", "reconnect", "restartPersistence", "evidence"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "targetHostname": { "const": "voice-host" },
+    "commands": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "deployment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sourceSha", "artifactSha256", "manifest"],
+      "properties": {
+        "sourceSha": { "$ref": "#/$defs/gitSha" },
+        "artifactSha256": { "$ref": "#/$defs/sha256" },
+        "manifest": { "$ref": "#/$defs/fileEvidence" }
+      }
+    },
+    "sessions": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/session" } },
+    "auth": {
+      "type": "object", "additionalProperties": false,
+      "required": ["unauthenticatedDenied", "directDenied", "spoofedIdentityDenied", "crossOwner"],
+      "properties": {
+        "unauthenticatedDenied": { "const": true }, "directDenied": { "const": true }, "spoofedIdentityDenied": { "const": true },
+        "crossOwner": {
+          "type": "object", "additionalProperties": false,
+          "required": ["denied", "status", "testName", "passedTests", "failedTests", "command", "sourceFileSha256", "evidence"],
+          "properties": {
+            "denied": { "const": true }, "status": { "const": 403 },
+            "testName": { "const": "enforces ownership and refreshes with a unique participant identity" },
+            "passedTests": { "type": "integer", "minimum": 1 }, "failedTests": { "const": 0 },
+            "command": { "type": "string", "minLength": 1 }, "sourceFileSha256": { "$ref": "#/$defs/sha256" },
+            "evidence": { "$ref": "#/$defs/fileEvidence" }
+          }
+        }
+      }
+    },
+    "interrupt": { "$ref": "#/$defs/interrupt" },
+    "reconnect": { "$ref": "#/$defs/reconnect" },
+    "restartPersistence": { "$ref": "#/$defs/restart" },
+    "evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/fileEvidence" } }
+  },
+  "$defs": {
+    "gitSha": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "dateTime": { "type": "string", "format": "date-time" },
+    "fileEvidence": {
+      "type": "object", "additionalProperties": false, "required": ["path", "sha256"],
+      "properties": { "path": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/sha256" } }
+    },
+    "renderedAudio": {
+      "type": "object", "additionalProperties": false,
+      "required": ["audioElementAttached", "playingEvents", "timeUpdates", "nonSilentPcmSamples", "evidence"],
+      "properties": {
+        "audioElementAttached": { "const": true }, "playingEvents": { "type": "integer", "minimum": 1 },
+        "timeUpdates": { "type": "integer", "minimum": 1 }, "nonSilentPcmSamples": { "type": "integer", "minimum": 1 },
+        "evidence": { "$ref": "#/$defs/fileEvidence" }
+      }
+    },
+    "session": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sessionId", "roomName", "participantIdentity", "startedAt", "endedAt", "injectedTestAudio", "sttText", "llmResponse", "tts", "renderedAudio", "isolation"],
+      "properties": {
+        "sessionId": { "type": "string", "minLength": 1 }, "roomName": { "type": "string", "minLength": 1 },
+        "participantIdentity": { "type": "string", "minLength": 1 }, "startedAt": { "$ref": "#/$defs/dateTime" }, "endedAt": { "$ref": "#/$defs/dateTime" },
+        "injectedTestAudio": { "type": "object", "additionalProperties": false, "required": ["wavSha256", "expectedMarker"], "properties": { "wavSha256": { "$ref": "#/$defs/sha256" }, "expectedMarker": { "type": "string", "minLength": 1 } } },
+        "sttText": { "type": "string", "minLength": 1 }, "llmResponse": { "type": "string", "minLength": 1 },
+        "tts": { "type": "object", "additionalProperties": false, "required": ["sourceSampleRate", "sourceWavFrames", "evidence"], "properties": { "sourceSampleRate": { "const": 24000 }, "sourceWavFrames": { "type": "integer", "minimum": 1 }, "evidence": { "$ref": "#/$defs/fileEvidence" } } },
+        "renderedAudio": { "$ref": "#/$defs/renderedAudio" },
+        "isolation": { "type": "object", "additionalProperties": false, "required": ["otherRoomMarkerAbsent", "otherRoomTranscriptAbsent", "otherRoomContextAbsent"], "properties": { "otherRoomMarkerAbsent": { "const": true }, "otherRoomTranscriptAbsent": { "const": true }, "otherRoomContextAbsent": { "const": true } } }
+      }
+    },
+    "interrupt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["assistantSpeechStartedAt", "assistantSpeechId", "injectedAudioStartedAt", "injectedAudioMarker", "overlappingSpeechAt", "overlappingSpeechItemId", "injectedAudioEndedAt", "sdkEvent", "sdkEventAt", "assistantSpeechStoppedAt", "responseEventAt", "responseItemId", "responseText", "browserNonSilentSamplesBefore", "evidence"],
+      "properties": {
+        "assistantSpeechStartedAt": { "$ref": "#/$defs/dateTime" }, "assistantSpeechId": { "type": "string", "minLength": 1 }, "injectedAudioStartedAt": { "$ref": "#/$defs/dateTime" }, "injectedAudioMarker": { "type": "string", "minLength": 1 }, "overlappingSpeechAt": { "$ref": "#/$defs/dateTime" }, "overlappingSpeechItemId": { "type": "string", "minLength": 1 }, "injectedAudioEndedAt": { "$ref": "#/$defs/dateTime" },
+        "sdkEvent": { "type": "string", "minLength": 1 }, "sdkEventAt": { "$ref": "#/$defs/dateTime" }, "assistantSpeechStoppedAt": { "$ref": "#/$defs/dateTime" },
+        "responseEventAt": { "$ref": "#/$defs/dateTime" }, "responseItemId": { "type": "string", "minLength": 1 }, "responseText": { "type": "string", "minLength": 1 }, "browserNonSilentSamplesBefore": { "type": "integer", "minimum": 1 }, "evidence": { "$ref": "#/$defs/fileEvidence" }
+      }
+    },
+    "reconnect": {
+      "type": "object", "additionalProperties": false,
+      "required": ["states", "disconnectedAt", "reconnectedAt", "postReconnectStt", "postReconnectResponse", "postReconnectNonSilentPcmSamples", "evidence"],
+      "properties": {
+        "states": { "type": "array", "prefixItems": [{ "const": "reconnecting" }, { "const": "reconnected" }], "items": false },
+        "disconnectedAt": { "$ref": "#/$defs/dateTime" }, "reconnectedAt": { "$ref": "#/$defs/dateTime" },
+        "postReconnectStt": { "type": "string", "minLength": 1 }, "postReconnectResponse": { "type": "string", "minLength": 1 },
+        "postReconnectNonSilentPcmSamples": { "type": "integer", "minimum": 1 }, "evidence": { "$ref": "#/$defs/fileEvidence" }
+      }
+    },
+    "snapshot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["observedAt", "databaseIdentity", "sessionId", "sessionMetadataSha256", "voiceProfileSha256"],
+      "properties": { "observedAt": { "$ref": "#/$defs/dateTime" }, "databaseIdentity": { "type": "string", "minLength": 1 }, "sessionId": { "type": "string", "minLength": 1 }, "sessionMetadataSha256": { "$ref": "#/$defs/sha256" }, "voiceProfileSha256": { "$ref": "#/$defs/sha256" } }
+    },
+    "restart": {
+      "type": "object", "additionalProperties": false, "required": ["sourceSha", "command", "before", "after", "evidence"],
+      "properties": { "sourceSha": { "$ref": "#/$defs/gitSha" }, "command": { "type": "string", "minLength": 1 }, "before": { "$ref": "#/$defs/snapshot" }, "after": { "$ref": "#/$defs/snapshot" }, "evidence": { "$ref": "#/$defs/fileEvidence" } }
+    }
+  }
+}

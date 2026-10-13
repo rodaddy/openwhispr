@@ -63,7 +63,7 @@ test("cleanup toast localizes AWS recovery guidance and keeps fallback status qu
   assert.equal(globalThis.__cleanupFailureToasts.length, 1);
   assert.deepEqual(globalThis.__cleanupFailureToasts[0], {
     title:
-      "AWS Bedrock no está disponible temporalmente debido a una alta demanda. Este es un problema del servicio de AWS, no una interrupción de OpenWhispr. Vuelve a intentarlo en unos minutos.",
+      "AWS Bedrock no está disponible temporalmente debido a una alta demanda. Este es un problema del servicio de AWS, no una interrupción de rTech Whisper. Vuelve a intentarlo en unos minutos.",
     description: "Ejecuta el siguiente comando en tu terminal para volver a autenticarte:",
     secondaryDescription: "Tu dictado se pegó sin limpieza con IA.",
     copyCommand: "aws sso login --profile company-sso",

@@ -24,7 +24,9 @@ import {
   type NoteAclState,
 } from "../../lib/notePermissions";
 import { ownsNote } from "../../lib/spacePermissions";
-import SpaceMembersDialog from "./SpaceMembersDialog";
+import CrmSyncDialog from "./CrmSyncDialog";
+import PipelineSendButton from "./PipelineSendButton";
+import type { CrmSyncState } from "../../types/crm";
 import {
   useShareCacheEntry,
   useNoteConflict,
@@ -194,6 +196,7 @@ interface NoteEditorProps {
   onCreateFolderAndMove?: (noteId: number, folderName: string) => void;
   /** Cancels the owner's debounced autosaves before an external copy is applied. */
   onCancelPendingSaves?: (noteId: number) => void;
+  onBeforeCrmSync?: () => Promise<void>;
 }
 
 export default function NoteEditor({
@@ -225,6 +228,7 @@ export default function NoteEditor({
   onMoveToFolder,
   onCreateFolderAndMove,
   onCancelPendingSaves,
+  onBeforeCrmSync,
 }: NoteEditorProps) {
   const { t } = useTranslation();
   const [viewMode, setViewMode] = useState<MeetingViewMode>("raw");
@@ -234,7 +238,9 @@ export default function NoteEditor({
   const [newFolderName, setNewFolderName] = useState("");
   const [isDiarizing, setIsDiarizing] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
-  const [membersDialogOpen, setMembersDialogOpen] = useState(false);
+  const [crmDialogOpen, setCrmDialogOpen] = useState(false);
+  const [crmConfigured, setCrmConfigured] = useState(false);
+  const [crmSyncState, setCrmSyncState] = useState<CrmSyncState | null>(null);
   const [aclRetryVersion, setAclRetryVersion] = useState(0);
   const [aclRequest, setAclRequest] = useState<{
     cloudId: string;
@@ -248,9 +254,10 @@ export default function NoteEditor({
     [spaces, note.space_id]
   );
   const isTeamNote = space?.kind === "team";
-  // Persisted flag is the restart-safe truth; the live cache overlays it for
-  // the current session (it reflects server state before the flag persists).
-  const isShared = shareCache ? shareCache.share.visibility !== "private" : Boolean(note.is_shared);
+  // Sharing runs on the rTech share service, not the retired OpenWhispr cloud:
+  // the same local pair ShareNoteDialog maintains is the truth here. An
+  // is_shared note with no share_token is an old cloud share and is not shared.
+  const isShared = Boolean(note.is_shared && note.share_token);
   const aclState: NoteAclState = shareCache
     ? "loaded"
     : !note.cloud_id || !isSignedIn
@@ -265,11 +272,21 @@ export default function NoteEditor({
     locallyOwned: ownsNote(note, user?.id),
   });
   const shareCapabilities = noteCapabilities(notePermission);
-  const canShare =
-    isSignedIn &&
-    (!note.cloud_id || isTeamNote || aclState === "loaded") &&
-    shareCapabilities.canShare;
   const canEditNote = shareCapabilities.canEdit;
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      window.electronAPI.crmGetSettings(),
+      window.electronAPI.crmGetSyncState(note.id),
+    ]).then(([settingsResult, syncResult]) => {
+      if (cancelled) return;
+      setCrmConfigured(settingsResult.success && Boolean(settingsResult.settings.configured));
+      setCrmSyncState(syncResult.success ? syncResult.state : null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [note.id]);
   // Re-filing is owner-only on shared personal notes (a denied folder_id
   // PATCH would fork an unexpected Personal copy); team members keep
   // same-space folder moves.
@@ -966,18 +983,6 @@ export default function NoteEditor({
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-            {isTeamNote && space?.cloud_space_id && (
-              <button
-                type="button"
-                onClick={() => setMembersDialogOpen(true)}
-                aria-label={t("notes.spaces.teamsMembers.title", { space: space.name })}
-                className={CHIP_BUTTON_CLASS}
-              >
-                <Users size={11} className="shrink-0" />
-                {/* member_count tracks explicit rosters only — the audience always includes the viewer */}
-                {Math.max(1, space.member_count ?? 1)}
-              </button>
-            )}
             {isSaving && (
               <span className="inline-flex items-center gap-1 text-[11px] text-foreground/30 dark:text-foreground/15 tabular-nums">
                 <Loader2 size={8} className="animate-spin" />
@@ -1049,7 +1054,7 @@ export default function NoteEditor({
                   )}
                 </div>
               )}
-              {canShare && (
+              {note.id && (
                 <button
                   type="button"
                   onClick={() => setShareDialogOpen(true)}
@@ -1270,6 +1275,25 @@ export default function NoteEditor({
             canRecord={canEditNote}
             actionPicker={isRecording || !canEditNote ? undefined : actionPicker}
             hideInput={chatMode !== "hidden"}
+            crmConfigured={crmConfigured}
+            crmSyncedAt={crmSyncState?.syncedAt}
+            crmDisabled={!canEditNote || isRecording || isProcessing || !note.id}
+            onOpenCrmSync={() => setCrmDialogOpen(true)}
+            pipelineAction={
+              <PipelineSendButton
+                noteId={note.id}
+                disabled={isRecording || isProcessing || !note.id}
+              />
+            }
+          />
+          <CrmSyncDialog
+            open={crmDialogOpen}
+            onOpenChange={setCrmDialogOpen}
+            note={note}
+            initialState={crmSyncState}
+            onBeforeSync={onBeforeCrmSync ?? (async () => {})}
+            onSynced={setCrmSyncState}
+            blocked={!canEditNote || isRecording || isProcessing || !note.id}
           />
           {chatMode === "floating" && (
             <EmbeddedChat
@@ -1302,15 +1326,8 @@ export default function NoteEditor({
           onNewChat={embeddedChat.startNewChat}
         />
       )}
-      {canShare && (
+      {note.id && (
         <ShareNoteDialog open={shareDialogOpen} onOpenChange={setShareDialogOpen} note={note} />
-      )}
-      {isTeamNote && space?.cloud_space_id && (
-        <SpaceMembersDialog
-          space={space}
-          open={membersDialogOpen}
-          onOpenChange={setMembersDialogOpen}
-        />
       )}
     </div>
   );

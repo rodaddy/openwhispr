@@ -72,3 +72,71 @@ test("allows sustained speech-like energy through", async () => {
     maxConsecutiveSpeechWindows: 3,
   });
 });
+
+// Feeds one 100 ms window per entry and collects every non-null result.
+const feedEndOfSpeech = (recordEndOfSpeechWindow, state, windows) =>
+  windows.map((isSpeech) => recordEndOfSpeechWindow(state, isSpeech)).filter(Boolean);
+const repeat = (value, count) => Array.from({ length: count }, () => value);
+
+test("ends a take once speech is followed by 800 ms of silence, exactly once", async () => {
+  const { createEndOfSpeechState, recordEndOfSpeechWindow } =
+    await import("../../src/helpers/localSpeechGate.js");
+
+  const state = createEndOfSpeechState();
+  const beforeEnd = feedEndOfSpeech(recordEndOfSpeechWindow, state, [
+    ...repeat(false, 3),
+    ...repeat(true, 4),
+    ...repeat(false, 7),
+  ]);
+  assert.deepEqual(beforeEnd, []);
+  assert.equal(recordEndOfSpeechWindow(state, false), "speech_ended");
+  assert.deepEqual(
+    feedEndOfSpeech(recordEndOfSpeechWindow, state, [...repeat(false, 100), ...repeat(true, 5)]),
+    []
+  );
+});
+
+test("too little speech (a cough) counts as no speech after 8 s", async () => {
+  const { createEndOfSpeechState, recordEndOfSpeechWindow } =
+    await import("../../src/helpers/localSpeechGate.js");
+
+  const state = createEndOfSpeechState();
+  const windows = [true, ...repeat(false, 150)];
+  const results = windows.map((isSpeech) => recordEndOfSpeechWindow(state, isSpeech));
+  assert.deepEqual(results.filter(Boolean), ["no_speech"]);
+  assert.equal(results.indexOf("no_speech"), 79);
+});
+
+test("reports no speech after 8 s of silence", async () => {
+  const { createEndOfSpeechState, recordEndOfSpeechWindow } =
+    await import("../../src/helpers/localSpeechGate.js");
+
+  const state = createEndOfSpeechState();
+  assert.deepEqual(feedEndOfSpeech(recordEndOfSpeechWindow, state, repeat(false, 79)), []);
+  assert.equal(recordEndOfSpeechWindow(state, false), "no_speech");
+  assert.deepEqual(feedEndOfSpeech(recordEndOfSpeechWindow, state, repeat(false, 100)), []);
+});
+
+test("a short pause between words does not end the take", async () => {
+  const { createEndOfSpeechState, recordEndOfSpeechWindow } =
+    await import("../../src/helpers/localSpeechGate.js");
+
+  const state = createEndOfSpeechState();
+  assert.deepEqual(
+    feedEndOfSpeech(recordEndOfSpeechWindow, state, [
+      ...repeat(true, 3),
+      ...repeat(false, 5),
+      ...repeat(true, 3),
+      ...repeat(false, 7),
+    ]),
+    []
+  );
+});
+
+test("isSpeechWindow needs both the rms and the peak threshold", async () => {
+  const { isSpeechWindow } = await import("../../src/helpers/localSpeechGate.js");
+
+  assert.equal(isSpeechWindow(0.003, 0.02), true);
+  assert.equal(isSpeechWindow(0.0029, 0.5), false);
+  assert.equal(isSpeechWindow(0.5, 0.019), false);
+});

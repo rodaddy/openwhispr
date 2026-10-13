@@ -4,6 +4,8 @@ Enable verbose logging to diagnose issues like "no audio detected" or transcript
 
 ## Enable Debug Logging
 
+Debug logging is on by default in this build. Logs rotate daily and are kept for 3 days (200 MB cap). Turn it off with the Settings toggle, or set a different level with either option below.
+
 ### Option 1: Command Line
 
 ```bash

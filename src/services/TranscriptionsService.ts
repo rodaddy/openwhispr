@@ -41,15 +41,24 @@ async function batchCreate(
   });
 }
 
+// `cursorId` is the id of the row the cursor stamp came from: the hub resumes
+// strictly after (since) or before (before) that (stamp, id) pair, so a run of
+// rows sharing one stamp pages without a skip or a repeat. It rides as
+// `since_id` or `before_id`, and only alongside its stamp.
 async function list(
   limit?: number,
   before?: string,
-  since?: string
+  since?: string,
+  cursorId?: string
 ): Promise<{ transcriptions: CloudTranscription[] }> {
   const params = new URLSearchParams();
   if (limit !== undefined) params.set("limit", String(limit));
   if (before !== undefined) params.set("before", before);
   if (since !== undefined) params.set("since", since);
+  if (cursorId) {
+    if (before !== undefined) params.set("before_id", cursorId);
+    else if (since !== undefined) params.set("since_id", cursorId);
+  }
   const query = params.toString();
   return cloudGet<{ transcriptions: CloudTranscription[] }>(
     `/api/transcriptions/list${query ? `?${query}` : ""}`

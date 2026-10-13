@@ -5,6 +5,8 @@ interface MeetingNotificationCardProps {
   body: string;
   startLabel: string;
   onStart?: () => void;
+  secondaryLabel?: string;
+  onSecondary?: () => void;
   onDismiss?: () => void;
   /** Controls the close button's hover fade. Ignored when `onDismiss` is absent. */
   closeVisible?: boolean;
@@ -25,6 +27,8 @@ export function MeetingNotificationCard({
   body,
   startLabel,
   onStart,
+  secondaryLabel,
+  onSecondary,
   onDismiss,
   closeVisible = true,
   allowTitleWrap = false,
@@ -32,6 +36,8 @@ export function MeetingNotificationCard({
   onMouseEnter,
   onMouseLeave,
 }: MeetingNotificationCardProps) {
+  const hasSecondaryAction = Boolean(secondaryLabel && onSecondary);
+
   return (
     <div
       className={[
@@ -60,37 +66,49 @@ export function MeetingNotificationCard({
         </button>
       )}
 
-      <div className="flex items-center gap-2.5">
-        <div className="shrink-0 bg-primary/10 rounded-md p-1">
-          <svg viewBox="0 0 1024 1024" className="w-4.5 h-4.5">
-            <rect width="1024" height="1024" rx="241" fill="#2056DF" />
-            <circle cx="512" cy="512" r="314" fill="#2056DF" stroke="white" strokeWidth="74" />
-            <path d="M512 383V641" stroke="white" strokeWidth="74" strokeLinecap="round" />
-            <path d="M627 457V568" stroke="white" strokeWidth="74" strokeLinecap="round" />
-            <path d="M397 457V568" stroke="white" strokeWidth="74" strokeLinecap="round" />
-          </svg>
+      <div className={hasSecondaryAction ? "flex flex-col gap-2" : "flex items-center gap-2.5"}>
+        <div className={hasSecondaryAction ? "flex items-center gap-2.5" : "contents"}>
+          <div className="shrink-0 bg-primary/10 rounded-md p-1">
+            <svg viewBox="0 0 1024 1024" className="w-4.5 h-4.5">
+              <rect width="1024" height="1024" rx="241" fill="#2056DF" />
+              <circle cx="512" cy="512" r="314" fill="#2056DF" stroke="white" strokeWidth="74" />
+              <path d="M512 383V641" stroke="white" strokeWidth="74" strokeLinecap="round" />
+              <path d="M627 457V568" stroke="white" strokeWidth="74" strokeLinecap="round" />
+              <path d="M397 457V568" stroke="white" strokeWidth="74" strokeLinecap="round" />
+            </svg>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <p
+              className={[
+                "text-[12px] font-semibold text-foreground leading-tight",
+                allowTitleWrap ? "whitespace-normal break-words" : "truncate",
+              ].join(" ")}
+            >
+              {title}
+            </p>
+            <p className="text-[11px] text-muted-foreground leading-tight mt-0.5 break-words">
+              {body}
+            </p>
+          </div>
         </div>
 
-        <div className="flex-1 min-w-0">
-          <p
-            className={[
-              "text-[12px] font-semibold text-foreground leading-tight",
-              allowTitleWrap ? "whitespace-normal break-words" : "truncate",
-            ].join(" ")}
+        <div className={hasSecondaryAction ? "flex justify-end gap-2" : "contents"}>
+          {hasSecondaryAction && (
+            <button
+              onClick={onSecondary}
+              className="shrink-0 whitespace-nowrap text-[11px] font-medium px-2.5 py-1 rounded-md border border-border transition-colors"
+            >
+              {secondaryLabel}
+            </button>
+          )}
+          <button
+            onClick={onStart}
+            className="shrink-0 whitespace-nowrap bg-primary text-primary-foreground hover:bg-primary/90 text-[11px] font-medium px-2.5 py-1 rounded-md transition-colors"
           >
-            {title}
-          </p>
-          <p className="text-[11px] text-muted-foreground leading-tight mt-0.5 break-words">
-            {body}
-          </p>
+            {startLabel}
+          </button>
         </div>
-
-        <button
-          onClick={onStart}
-          className="shrink-0 whitespace-nowrap bg-primary text-primary-foreground hover:bg-primary/90 text-[11px] font-medium px-2.5 py-1 rounded-md transition-colors"
-        >
-          {startLabel}
-        </button>
       </div>
     </div>
   );

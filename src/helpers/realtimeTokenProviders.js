@@ -8,6 +8,12 @@
 const dual = (streams, factory) =>
   streams === 2 ? Promise.all([factory(), factory()]) : factory();
 const duplicate = (streams, value) => (streams === 2 ? [value, value] : value);
+const managedRealtimeRemoved = () => {
+  throw Object.assign(
+    new Error("Managed realtime transcription is not available in this local-only build"),
+    { code: "MANAGED_CLOUD_REMOVED" }
+  );
+};
 
 const REALTIME_TOKEN_PROVIDERS = {
   "assemblyai-realtime": async (
@@ -34,11 +40,7 @@ const REALTIME_TOKEN_PROVIDERS = {
         return data.token;
       });
     }
-    return dual(streams, async () => {
-      const data = await postServerToken("/api/streaming-token");
-      if (!data.token) throw new Error("No AssemblyAI token received");
-      return data.token;
-    });
+    return managedRealtimeRemoved();
   },
 
   "deepgram-realtime": async ({ environmentManager, postServerToken }, options, streams) => {
@@ -49,11 +51,7 @@ const REALTIME_TOKEN_PROVIDERS = {
       }
       return duplicate(streams, apiKey);
     }
-    return dual(streams, async () => {
-      const data = await postServerToken("/api/deepgram-streaming-token");
-      if (!data.token) throw new Error("No Deepgram token received");
-      return data.token;
-    });
+    return managedRealtimeRemoved();
   },
 
   "corti-realtime": async ({ mintCortiToken }, options, streams) => {
@@ -78,19 +76,7 @@ const REALTIME_TOKEN_PROVIDERS = {
       if (!apiKey) throw new Error("No OpenAI API key configured. Add your key in Settings.");
       return duplicate(streams, apiKey);
     }
-    const data = await postServerToken("/api/openai-realtime-token", {
-      model: options.model,
-      language: options.language,
-      streams: streams || 1,
-    });
-    if (streams === 2) {
-      if (!data.clientSecrets || data.clientSecrets.length < 2) {
-        throw new Error("Expected two client secrets for dual-stream");
-      }
-      return data.clientSecrets;
-    }
-    if (!data.clientSecret) throw new Error("No client secret received");
-    return data.clientSecret;
+    return managedRealtimeRemoved();
   },
 };
 

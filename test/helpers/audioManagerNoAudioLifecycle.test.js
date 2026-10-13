@@ -60,3 +60,18 @@ test("dictionary-echo silence keeps the recording but shares the settled outcome
   assert.deepEqual(order, ["idle", "no-audio"]);
   assert.deepEqual(saved, [{ message: "No audio detected", code: DICTIONARY_ECHO_CODE }]);
 });
+
+test("a no-audio outcome drops the held mic and cancels the prepared capture", async (t) => {
+  const AudioManager = await loadManagerClass(t);
+  const { manager, order } = createManager(AudioManager, new Error("No audio detected"));
+  manager.micStreamHold = { drop: () => order.push("hold-drop") };
+  manager.preparedMicCapture = { cancel: () => order.push("prepared-cancel") };
+  manager.cachedMicDeviceId = "stale-device";
+
+  await manager.processAudio({ size: 256, type: "audio/webm" });
+
+  // The next press must open the mic fresh, so the reset lands before the
+  // no-audio surface takes over.
+  assert.deepEqual(order, ["idle", "prepared-cancel", "hold-drop", "no-audio"]);
+  assert.equal(manager.cachedMicDeviceId, null);
+});

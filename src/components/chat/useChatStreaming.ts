@@ -14,13 +14,17 @@ import {
   appendDictionarySuffix,
   appendScreenContextSuffix,
   getAgentSystemPrompt,
+  type GrillSessionSpec,
 } from "../../config/prompts";
 import { getDictionaryHintWords } from "../../utils/snippets";
 import { createToolRegistry } from "../../services/tools";
+import { buildGrillModelHistory } from "../../services/grill/grillSession";
 import type { ToolRegistry } from "../../services/tools/ToolRegistry";
 import { getAgentToolActivityRemainingMs } from "../../helpers/agentToolPresentation";
+import { stripSpeechTags } from "../../helpers/speechTags";
 import type { Message, AgentState, ChatImageAttachment, ToolCallInfo } from "./types";
 import type { ContainerScope } from "../../types/chat";
+import type { RequestNoteDestination } from "../../services/tools/noteDestination";
 import {
   buildAgentRequestText,
   type AgentSelectionContext,
@@ -28,6 +32,7 @@ import {
 
 const RAG_NOTE_LIMIT = 5;
 const RAG_NOTE_SNIPPET_LENGTH = 500;
+const STREAM_FLUSH_INTERVAL_MS = 32;
 
 const LOCAL_TOOL_MIN_PARAMS_B = 4;
 
@@ -69,9 +74,20 @@ interface UseChatStreamingOptions {
   noteContext?: string;
   /** Optional container scope applied to RAG and the search_notes tool (container overview chat). */
   searchScope?: ContainerScope;
-  onStreamComplete?: (assistantId: string, content: string, toolCalls?: ToolCallInfo[]) => void;
+  /** Active grill session: the interviewer prompt replaces the chat agent, with no tools or RAG. */
+  grillSession?: GrillSessionSpec | null;
+  onStreamComplete?: (
+    assistantId: string,
+    content: string,
+    toolCalls?: ToolCallInfo[]
+  ) => void | Promise<void>;
+  onDeliverableComplete?: (content: string, token: unknown) => void | Promise<void>;
+  captureDeliverableToken?: () => unknown;
   /** Fires exactly once when displayable assistant content or tool activity becomes available. */
   onResponseContent?: () => void;
+  requestNoteDestination?: RequestNoteDestination;
+  cancelNoteDestinationRequest?: (reason?: string) => void;
+  getNoteDestinationCancellationGeneration?: () => number;
 }
 
 export interface SendToAIOptions {
@@ -128,8 +144,14 @@ export function useChatStreaming({
   setMessages,
   noteContext: externalNoteContext,
   searchScope,
+  grillSession,
   onStreamComplete,
+  onDeliverableComplete,
+  captureDeliverableToken,
   onResponseContent,
+  requestNoteDestination,
+  cancelNoteDestinationRequest,
+  getNoteDestinationCancellationGeneration,
 }: UseChatStreamingOptions): ChatStreaming {
   const { t } = useTranslation();
   const [agentState, setAgentState] = useState<AgentState>("idle");
@@ -141,6 +163,8 @@ export function useChatStreaming({
   noteContextRef.current = externalNoteContext;
   const searchScopeRef = useRef(searchScope);
   searchScopeRef.current = searchScope;
+  const grillSessionRef = useRef(grillSession ?? null);
+  grillSessionRef.current = grillSession ?? null;
   const toolRegistryRef = useRef<{ key: string; registry: ToolRegistry } | null>(null);
   const toolActivityStartedAtRef = useRef<number | null>(null);
   const toolActivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -203,9 +227,10 @@ export function useChatStreaming({
       explicitCancelGenerationRef.current = sendGenerationRef.current;
     }
     ReasoningService.cancelActiveStream();
+    cancelNoteDestinationRequest?.("stream-cancelled");
     setAgentState("idle");
     clearToolActivity();
-  }, [clearToolActivity]);
+  }, [cancelNoteDestinationRequest, clearToolActivity]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -223,6 +248,7 @@ export function useChatStreaming({
 
   const sendToAI = useCallback(
     async (userText: string, allMessages: Message[], options?: SendToAIOptions) => {
+      const deliverableToken = captureDeliverableToken?.();
       const sendGeneration = ++sendGenerationRef.current;
       const cancelled = () => sendGeneration !== sendGenerationRef.current;
       clearToolActivity();
@@ -276,7 +302,8 @@ export function useChatStreaming({
         ].includes(chatConfig.provider);
       const localModelCanUseTool =
         isLocalProvider && estimateModelSizeB(chatConfig.model) >= LOCAL_TOOL_MIN_PARAMS_B;
-      const supportsTools = isCloudAgent || !isLocalProvider || localModelCanUseTool;
+      const grill = grillSessionRef.current;
+      const supportsTools = !grill && (isCloudAgent || !isLocalProvider || localModelCanUseTool);
 
       const scope = searchScopeRef.current;
       let registry: ToolRegistry | null = null;
@@ -287,7 +314,7 @@ export function useChatStreaming({
         const calendarConnected =
           settings.gcalConnected || settings.mcalConnected || settings.appleCalendarConnected;
         const webSearchEnabled = isWebSearchAllowed(usePolicyStore.getState());
-        const cacheKey = `${settings.isSignedIn}-${calendarConnected}-${settings.cloudBackupEnabled}-${scopeKey}-${webSearchEnabled}`;
+        const cacheKey = `${settings.isSignedIn}-${calendarConnected}-${settings.cloudBackupEnabled}-${scopeKey}-${webSearchEnabled}-${requestNoteDestination ? "destination-ui" : "no-destination-ui"}`;
         if (toolRegistryRef.current?.key === cacheKey) {
           registry = toolRegistryRef.current.registry;
         } else {
@@ -297,12 +324,14 @@ export function useChatStreaming({
             cloudBackupEnabled: settings.cloudBackupEnabled,
             searchScope: scope,
             webSearchEnabled,
+            requestNoteDestination,
+            getNoteDestinationCancellationGeneration,
           });
           toolRegistryRef.current = { key: cacheKey, registry };
         }
       }
 
-      const ragContext = await buildRAGContext(userText, scope);
+      const ragContext = grill ? "" : await buildRAGContext(userText, scope);
       if (cancelled() || !mountedRef.current) return;
       const combinedContext = [noteContextRef.current, ragContext].filter(Boolean).join("\n\n");
       // The user's dictionary rides on every conversation so replies use their
@@ -310,15 +339,20 @@ export function useChatStreaming({
       let systemPrompt = appendDictionarySuffix(
         getAgentSystemPrompt(
           registry?.getAll().map((t) => t.name),
-          combinedContext || undefined
+          combinedContext || undefined,
+          grill
         ),
         getDictionaryHintWords(settings),
         settings.uiLanguage
       );
 
-      const history: HistoryMessage[] = allMessages
-        .slice(-20)
-        .map((m) => ({ role: m.role, content: m.content }));
+      // A grill's history always opens on a user turn (the start turn).
+      const history: HistoryMessage[] = grill
+        ? buildGrillModelHistory(grill, allMessages)
+        : allMessages
+            .filter((m) => m.display !== "notice")
+            .slice(-20)
+            .map((m) => ({ role: m.role, content: m.content }));
 
       const selectedContext = options?.selectedContext;
       if (selectedContext) {
@@ -373,8 +407,32 @@ export function useChatStreaming({
       ]);
       setAgentState("streaming");
 
+      // Chat re-parses the whole answer through react-markdown on every
+      // content write, so one write per streamed token made parse cost scale
+      // with token count. Buffer and flush at most once per interval.
+      let fullContent = "";
+      let contentFlushTimer: ReturnType<typeof setTimeout> | null = null;
+      const cancelContentFlush = () => {
+        if (contentFlushTimer === null) return;
+        clearTimeout(contentFlushTimer);
+        contentFlushTimer = null;
+      };
+      // fullContent stays raw for speech; everything shown, saved, copied or
+      // pasted goes through stripSpeechTags. A mid-stream flush also hides a
+      // tag that is still arriving.
+      const flushContentNow = ({ final = false } = {}) => {
+        cancelContentFlush();
+        const shown = stripSpeechTags(fullContent, { streaming: !final });
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantId ? { ...m, content: shown } : m))
+        );
+      };
+      const scheduleContentFlush = () => {
+        if (contentFlushTimer !== null) return;
+        contentFlushTimer = setTimeout(() => flushContentNow(), STREAM_FLUSH_INTERVAL_MS);
+      };
+
       try {
-        let fullContent = "";
         let stream: AsyncGenerator<AgentStreamChunk>;
 
         if (isCloudAgent) {
@@ -446,10 +504,11 @@ export function useChatStreaming({
           if (chunk.type === "content") {
             if (chunk.text) announceResponse();
             fullContent += chunk.text;
-            setMessages((prev) =>
-              prev.map((m) => (m.id === assistantId ? { ...m, content: fullContent } : m))
-            );
+            scheduleContentFlush();
           } else if (chunk.type === "tool_calls") {
+            // Text that arrived before a tool step must be on screen before the
+            // step appears, not an interval after it.
+            flushContentNow();
             if (chunk.calls.length > 0) announceResponse();
             for (const call of chunk.calls) {
               setAgentState("tool-executing");
@@ -502,6 +561,8 @@ export function useChatStreaming({
         }
 
         if (cancelled() || !mountedRef.current) {
+          // Streaming mode: a reply cut off inside a tag must not keep the half tag.
+          flushContentNow();
           setMessages((prev) =>
             prev.map((message) =>
               message.id === assistantId ? { ...message, isStreaming: false } : message
@@ -513,23 +574,29 @@ export function useChatStreaming({
           // cancelled() alone cannot tell the two apart. Neither path may run
           // the per-request delivery hook.
           const explicitlyCancelled = explicitCancelGenerationRef.current > sendGeneration;
-          if (!explicitlyCancelled && fullContent.trim().length > 0) {
+          const partialContent = stripSpeechTags(fullContent, { streaming: true });
+          if (!explicitlyCancelled && partialContent.trim().length > 0) {
             const finalMsg = messagesRef.current.find((m) => m.id === assistantId);
-            onStreamComplete?.(assistantId, fullContent, finalMsg?.toolCalls);
+            await onStreamComplete?.(assistantId, partialContent, finalMsg?.toolCalls);
           }
           return;
         }
 
-        const hasDeliverableContent = fullContent.trim().length > 0;
-        if (!responseAnnounced && !cancelled()) {
+        flushContentNow({ final: true });
+        let shownContent = stripSpeechTags(fullContent);
+        const hasDeliverableContent = shownContent.trim().length > 0;
+        // A reply that is only a sound tag has nothing to show or to speak.
+        const tagOnly = !hasDeliverableContent && fullContent.trim().length > 0;
+        if ((!responseAnnounced || tagOnly) && !cancelled()) {
           // The stream ended without a visible token or tool call (think-only
           // local model, empty completion). Show that as a reply so every
           // listener — the assistant panel's thinking state included — sees a
           // terminal outcome.
-          fullContent = t("agentMode.chat.emptyResponse");
+          shownContent = t("agentMode.chat.emptyResponse");
           announceResponse();
+          const emptyContent = shownContent;
           setMessages((prev) =>
-            prev.map((m) => (m.id === assistantId ? { ...m, content: fullContent } : m))
+            prev.map((m) => (m.id === assistantId ? { ...m, content: emptyContent } : m))
           );
         }
 
@@ -538,22 +605,25 @@ export function useChatStreaming({
         );
 
         const finalMsg = messagesRef.current.find((m) => m.id === assistantId);
-        onStreamComplete?.(assistantId, fullContent, finalMsg?.toolCalls);
+        await onStreamComplete?.(assistantId, shownContent, finalMsg?.toolCalls);
         if (hasDeliverableContent) {
+          await onDeliverableComplete?.(fullContent, deliverableToken);
           await options?.onComplete?.({
             assistantId,
-            content: fullContent,
+            content: shownContent,
             toolCalls: finalMsg?.toolCalls,
           });
         }
       } catch (error) {
         if (cancelled()) {
+          flushContentNow();
           setMessages((prev) =>
             prev.map((message) =>
               message.id === assistantId ? { ...message, isStreaming: false } : message
             )
           );
         } else {
+          cancelContentFlush();
           announceResponse();
           setMessages((prev) =>
             prev.map((m) =>
@@ -576,7 +646,11 @@ export function useChatStreaming({
       t,
       setMessages,
       onStreamComplete,
+      onDeliverableComplete,
+      captureDeliverableToken,
       onResponseContent,
+      requestNoteDestination,
+      getNoteDestinationCancellationGeneration,
       clearToolActivity,
       beginToolActivity,
       completeToolActivity,

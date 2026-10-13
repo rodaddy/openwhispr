@@ -58,6 +58,7 @@ const electronStub = {
 
 const cortiCalls = [];
 const tinfoilCalls = [];
+const selfHostedCalls = [];
 let cortiBehavior = async () => ({ text: "corti text" });
 
 // Kept installed for the whole file: the corti client is require()d lazily at
@@ -84,6 +85,14 @@ Module._load = function loadWithMocks(request, parent, isMain) {
     }
     if (request === "./windowBroadcast") {
       return { broadcastToWindows: () => {} };
+    }
+    if (request === "./selfHostedDictationTranscription") {
+      return {
+        transcribeSelfHostedDictation: async (options) => {
+          selfHostedCalls.push(options);
+          return { success: true, text: "chunked retry" };
+        },
+      };
     }
   }
   return originalLoad.call(this, request, parent, isMain);
@@ -145,6 +154,25 @@ test.after(() => {
 
 const invoke = (settings, id = 7) => retryHandler({ sender: {} }, id, settings);
 
+test("retry: self-hosted stored audio routes through the shared batch helper", async () => {
+  selfHostedCalls.length = 0;
+  fetches.length = 0;
+  const result = await invoke({
+    transcriptionMode: "self-hosted",
+    remoteTranscriptionUrl: "https://stt.internal.example.com",
+    remoteTranscriptionModel: "parakeet",
+    preferredLanguage: "en-US",
+  });
+  assert.equal(result.success, true);
+  assert.equal(selfHostedCalls.length, 1);
+  assert.equal(
+    selfHostedCalls[0].endpoint,
+    "https://stt.internal.example.com/audio/transcriptions"
+  );
+  assert.equal(selfHostedCalls[0].language, "en");
+  assert.equal(fetches.length, 0);
+});
+
 test("retry: corti routes to the corti client, never OpenAI", async () => {
   fetches.length = 0;
   const result = await invoke({
@@ -178,7 +206,7 @@ test("retry: custom misconfiguration fails closed with a coded error", async () 
   assert.equal(fetches.length, 0);
 });
 
-test("retry: openwhispr cloud masks a leftover BYOK misconfiguration", async () => {
+test("retry: legacy managed cloud selection fails locally without a request", async () => {
   fetches.length = 0;
   const result = await invoke({
     cloudTranscriptionProvider: "custom",
@@ -186,11 +214,9 @@ test("retry: openwhispr cloud masks a leftover BYOK misconfiguration", async () 
     transcriptionMode: "providers",
     cloudTranscriptionBaseUrl: "",
   });
-  // BrowserWindow.fromWebContents is stubbed to null, so the cloud branch
-  // produces no result — but the route error must NOT surface.
   assert.equal(result.success, false);
-  assert.notEqual(result.code, "CUSTOM_ENDPOINT_INVALID");
-  assert.match(result.error, /No transcription engine available/);
+  assert.equal(result.code, "MANAGED_CLOUD_REMOVED");
+  assert.match(result.error, /not available in this local-only build/);
   assert.equal(fetches.length, 0);
 });
 

@@ -21,15 +21,7 @@ function readInitialSession(): OnboardingSession {
   session.currentStepId = migrateLegacyOnboardingStep(
     localStorage.getItem(LEGACY_ONBOARDING_STEP_KEY)
   );
-  if (localStorage.getItem("authenticationSkipped") === "true") {
-    session.authPath = "guest";
-  } else if (session.currentStepId !== "auth") {
-    // A legacy save mid-flow means the auth step was already behind the user.
-    // Left null, getOnboardingRoute returns ["auth"] and the reconcile clamp
-    // overwrites the migrated step before anything can restore it — the one
-    // group the legacy map exists for would always restart from scratch.
-    session.authPath = "account";
-  }
+  session.authPath = "guest";
   return session;
 }
 
@@ -38,8 +30,6 @@ export function useOnboardingSession() {
 
   useEffect(() => {
     localStorage.setItem(ONBOARDING_SESSION_KEY, JSON.stringify(session));
-    // AppRouter uses presence of this legacy key to distinguish an OAuth
-    // callback from a returning user. Keep it until finalization is atomic.
     localStorage.setItem(LEGACY_ONBOARDING_STEP_KEY, session.currentStepId);
   }, [session]);
 

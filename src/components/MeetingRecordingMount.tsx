@@ -72,7 +72,7 @@ export default function MeetingRecordingMount(): null {
 
       requestMeetingRecordingAutoEnd(
         request,
-        stopRecording,
+        (sessionId) => stopRecording(sessionId, `auto-end:${request.reason ?? "unknown"}`),
         (sessionId, stopped) => {
           // Every path that ends the recording without offering a restart card
           // has to say so, or the recording just disappears.
@@ -80,7 +80,8 @@ export default function MeetingRecordingMount(): null {
             if (pendingAutoEndRestart.current?.sessionId === sessionId) {
               pendingAutoEndRestart.current = null;
             }
-            notifyAutoEnded.current();
+            // Stop now was the user's own choice; there is nothing to explain.
+            if (!request.userConfirmed) notifyAutoEnded.current();
           };
 
           const completion = window.electronAPI?.meetingAutoEndCompleted;
@@ -144,10 +145,16 @@ export default function MeetingRecordingMount(): null {
           notifyRestartFailed.current();
         });
     });
+    const unsubscribeCalendarStop = window.electronAPI?.onMeetingCalendarEndStopRequested?.(
+      (request) => {
+        void stopRecording(request.sessionId, "calendar-end");
+      }
+    );
 
     return () => {
       unsubscribeStop?.();
       unsubscribeRestart?.();
+      unsubscribeCalendarStop?.();
     };
   }, []);
 

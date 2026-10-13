@@ -18,6 +18,7 @@ import { cn } from "./lib/utils";
 import { Tooltip } from "./ui/tooltip";
 
 type ActivityDay = { date: string; words: number };
+type LatencySummary = Awaited<ReturnType<typeof window.electronAPI.getLatencySummary>>;
 
 const ACTIVITY_INTENSITY_CLASSES = [
   "bg-foreground/6 dark:bg-white/6",
@@ -221,6 +222,7 @@ export default function InsightsView() {
   const syncActive =
     isSignedIn && insightsSyncEnabled && syncAllowedByPolicy && dataRetentionEnabled;
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
+  const [latency, setLatency] = useState<LatencySummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncError, setSyncError] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -234,6 +236,20 @@ export default function InsightsView() {
     const requestId = ++requestIdRef.current;
     setLoading(true);
     setSyncError(false);
+
+    // Always the device's, also when the summary below comes from the account.
+    // Read on its own, never awaited here: a slow or failed read drops the
+    // block and holds up nothing else on the page.
+    const readLatency = async () => {
+      let deviceLatency: LatencySummary | null = null;
+      try {
+        deviceLatency = await window.electronAPI.getLatencySummary();
+      } catch (error) {
+        console.error("Reading dictation latency failed:", error);
+      }
+      if (requestId === requestIdRef.current) setLatency(deviceLatency);
+    };
+    void readLatency();
 
     // The device read stands on its own. Folding it into the same catch as the
     // cloud fetch meant a failed local read fell through to a summary of
@@ -403,6 +419,44 @@ export default function InsightsView() {
               detail={t("insights.longestStreak", { count: summary.longestStreakDays })}
             />
           </div>
+
+          {latency && latency.sampleCount > 0 && latency.medianMs != null && (
+            <div className="mt-5 rounded-2xl border border-border/50 bg-card/70 px-5 py-2.5 dark:border-white/8">
+              <h2 className="text-base font-medium text-foreground">
+                {t("insights.latency.title")}
+              </h2>
+              <p className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
+                {t("insights.latency.value", { ms: latency.medianMs })}
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground/70">
+                {t("insights.latency.detail", { count: latency.sampleCount })}
+                {latency.byModel.length === 1 &&
+                  ` · ${latency.byModel[0].model ?? t("insights.latency.unknownModel")}`}
+              </p>
+              {latency.byModel.length > 1 && (
+                <ul className="mt-2 space-y-1 pb-1">
+                  {latency.byModel.map((entry) => (
+                    <li
+                      key={entry.model ?? ""}
+                      className="flex items-baseline gap-3 text-xs text-muted-foreground"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-foreground">
+                        {entry.model ?? t("insights.latency.unknownModel")}
+                      </span>
+                      <span>
+                        {entry.medianMs == null
+                          ? "—"
+                          : t("insights.latency.value", { ms: entry.medianMs })}
+                      </span>
+                      <span className="w-10 text-right text-muted-foreground/70">
+                        {number.format(entry.sampleCount)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
 
           <div className="mt-5 rounded-2xl border border-border/50 bg-card/70 px-5 py-2.5 dark:border-white/8">
             <h2 className="text-base font-medium text-foreground">{t("insights.activity")}</h2>

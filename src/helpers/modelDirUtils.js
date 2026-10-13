@@ -2,6 +2,7 @@ const { app } = require("electron");
 const os = require("os");
 const fs = require("fs");
 const path = require("path");
+const { getCacheBaseRoot } = require("./cacheBaseRoot");
 
 // Same rule as safeTempDir: native whisper/parakeet binaries crash on Windows
 // when model paths contain spaces or non-ASCII (CJK / Cyrillic profile dirs).
@@ -52,9 +53,9 @@ function getPreferredCacheRoot(homeCache) {
   return homeCache;
 }
 
-// Only these subdirs resolve through getCacheRoot(). qdrant-data,
-// embedding-models, and yt-dlp are read from the home cache directly by their
-// managers (and tolerate non-ASCII paths), so they must stay put.
+// Only these subdirs resolve through getCacheRoot(). qdrant-data and
+// embedding-models follow OPENWHISPR_CACHE_ROOT directly, and yt-dlp has its
+// own env var; they tolerate non-ASCII paths, so they are never migrated here.
 const RELOCATED_SUBDIRS = ["whisper-models", "parakeet-models", "diarization-models", "models"];
 
 let migratedRootPair = null;
@@ -138,6 +139,7 @@ function getModelsDirForService(service) {
 }
 
 module.exports = {
+  getCacheBaseRoot,
   getCacheRoot,
   getModelsDirForService,
   pathHasProblematicChars,

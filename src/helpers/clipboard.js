@@ -6,6 +6,7 @@ const fs = require("fs");
 const os = require("os");
 const debugLogger = require("./debugLogger");
 const { getLinuxSessionInfo } = require("./linuxSession");
+const { tokenize, matchesPhrase } = require("./dictationFormattingProfile");
 
 const CACHE_TTL_MS = 30000;
 
@@ -13,8 +14,12 @@ const CACHE_TTL_MS = 30000;
 // only exists to debounce the dialog shown on denial.
 const ACCESSIBILITY_CHECK_TTL_MS = 5000;
 
+// Wait before the paste keystroke. The clipboard is written synchronously
+// before this, so a CGEvent ⌘V (helper or resident) only needs a few ms; the
+// streaming path proved 15 ms. osascript keeps the old 120 ms (#565).
 const PASTE_DELAYS = {
-  darwin: 120,
+  darwin: 15,
+  darwin_osascript: 120,
   win32_fast: 10,
   win32_nircmd: 30,
   win32_pwsh: 40,
@@ -66,6 +71,9 @@ const LINUX_TERMINAL_CLASSES = [
 // no entry above because it has no Linux window class. Matching it on Linux too
 // is harmless — no such window class exists there.
 const TERMINAL_SIGNATURES = [...LINUX_TERMINAL_CLASSES, "iterm"];
+
+// Matched as whole tokens on macOS: a substring match on "st" calls Raycast a terminal (#645).
+const MAC_TERMINAL_NAMES = [...TERMINAL_SIGNATURES, "iterm2"];
 
 function writeClipboardInRenderer(webContents, text) {
   if (!webContents || !webContents.executeJavaScript) {
@@ -240,14 +248,18 @@ class ClipboardManager {
   }
 
   // Accepts a Linux window class or a macOS app name.
-  isTerminalSignature(signature) {
+  isTerminalSignature(signature, platform = process.platform) {
     if (!signature) return false;
     const normalized = String(signature).toLowerCase();
+    if (platform === "darwin") {
+      const tokens = tokenize(normalized);
+      return MAC_TERMINAL_NAMES.some((name) => matchesPhrase(tokens, name));
+    }
     return TERMINAL_SIGNATURES.some((term) => normalized.includes(term));
   }
 
   isLinuxTerminalWindowClass(windowClass) {
-    return this.isTerminalSignature(windowClass);
+    return this.isTerminalSignature(windowClass, "linux");
   }
 
   // Selection capture (SelectionManager) seeds a sentinel and polls until a
@@ -842,6 +854,10 @@ class ClipboardManager {
     }
   }
 
+  // Pastes run one at a time: the next queued paste starts only after this one
+  // and its clipboard restore have settled. `options.pasteKeystroke`
+  // (auto-submit, #634) replaces the macOS paste keystroke and runs inside the
+  // same queued operation.
   async pasteText(text, options = {}) {
     return this._runClipboardOperation(
       () => this._pasteText(text, options),
@@ -880,6 +896,10 @@ class ClipboardManager {
     let method = "unknown";
     const webContents = options.webContents;
     const allowClipboardFallback = options.allowClipboardFallback === true;
+    // Only the first macOS attempt may use `pasteKeystroke`: a second targeted
+    // attempt could paste and submit twice, and the other platforms have none.
+    const untargetedOptions = { ...options };
+    delete untargetedOptions.pasteKeystroke;
 
     try {
       const shouldRestore = options.restoreClipboard !== false;
@@ -889,6 +909,7 @@ class ClipboardManager {
       if (shouldRestore) {
         this.safeLog("💾 Saved original clipboard:", originalClipboard.type);
       }
+      const clipboardSavedAt = Date.now();
 
       if (platform === "linux") {
         if (this._isWayland()) {
@@ -900,7 +921,7 @@ class ClipboardManager {
       } else {
         clipboard.writeText(text);
       }
-      this.safeLog("📋 Text copied to clipboard:", text.substring(0, 50) + "...");
+      this.safeLog("📋 Text copied to clipboard:", { textLength: text.length });
 
       let pasteResult = { restoreComplete: Promise.resolve() };
 
@@ -921,17 +942,29 @@ class ClipboardManager {
         }
 
         this.safeLog("✅ Permissions granted, attempting to paste...");
+        const permissionCheckedAt = Date.now();
         try {
           pasteResult = await this.pasteMacOS(originalClipboard, {
             ...options,
             expectedClipboardText: text,
           });
+          debugLogger.debug(
+            "Paste breakdown",
+            {
+              method,
+              saveClipboardMs: clipboardSavedAt - startTime,
+              writeAndPermissionMs: permissionCheckedAt - clipboardSavedAt,
+              keystrokeMs: Date.now() - permissionCheckedAt,
+              originalClipboardType: originalClipboard?.type ?? null,
+            },
+            "clipboard"
+          );
         } catch (firstError) {
           this.safeLog("⚠️ First paste attempt failed, retrying...", firstError?.message);
           clipboard.writeText(text);
           await new Promise((r) => setTimeout(r, 200));
           pasteResult = await this.pasteMacOS(originalClipboard, {
-            ...options,
+            ...untargetedOptions,
             expectedClipboardText: text,
           });
         }
@@ -949,7 +982,7 @@ class ClipboardManager {
         });
       } else {
         pasteResult = await this.pasteLinux(originalClipboard, {
-          ...options,
+          ...untargetedOptions,
           originalPrimary,
           expectedClipboardText: text,
         });
@@ -974,10 +1007,78 @@ class ClipboardManager {
     }
   }
 
+  // A resident process that can post ⌘V (the Globe listener). Spawning the
+  // fast-paste helper costs ~400 ms per paste on Apple silicon, most of it the
+  // new process connecting to the window server; the resident path is a few ms.
+  setResidentPaste(residentPaste) {
+    this._residentPaste = typeof residentPaste === "function" ? residentPaste : null;
+  }
+
   async pasteMacOS(originalClipboard, options = {}) {
     const fastPasteBinary = this.resolveFastPasteBinary();
     const useFastPaste = !!fastPasteBinary;
-    const pasteDelay = options.fromStreaming ? (useFastPaste ? 15 : 50) : PASTE_DELAYS.darwin;
+    const osascriptDelay = options.fromStreaming ? 50 : PASTE_DELAYS.darwin_osascript;
+    // 15 ms only once the target app is confirmed frontmost; otherwise the old
+    // 120 ms is the grace a late activation needs (#565).
+    const targetReady = options.fromStreaming || options.targetActivated === true;
+    const fastDelay = targetReady ? PASTE_DELAYS.darwin : PASTE_DELAYS.darwin_osascript;
+    const pasteDelay = useFastPaste ? fastDelay : osascriptDelay;
+
+    // `options.pasteKeystroke` (auto-submit, #634) pastes and presses Return in
+    // the target process in one step. "skipped" means it sent nothing, so the
+    // normal keystroke below runs. Any other failure has an unknown outcome:
+    // no second keystroke is sent and the dictated text stays on the clipboard
+    // for a manual paste.
+    let keystrokeOutcome = null;
+    if (typeof options.pasteKeystroke === "function") {
+      await new Promise((resolve) => setTimeout(resolve, fastDelay));
+      let outcome;
+      try {
+        outcome = await options.pasteKeystroke();
+      } catch (error) {
+        debugLogger.debug("Targeted paste keystroke threw", { error: error?.message }, "clipboard");
+        outcome = "failed";
+      }
+      if (outcome === "submitted" || outcome === "pasted") {
+        return {
+          restoreComplete:
+            originalClipboard != null
+              ? this._restoreClipboardAfterDelay(originalClipboard, {
+                  delayMs: RESTORE_DELAYS.darwin,
+                  expectedText: options.expectedClipboardText,
+                })
+              : Promise.resolve(),
+          keystrokeOutcome: outcome,
+        };
+      }
+      if (outcome !== "skipped") {
+        return { restoreComplete: Promise.resolve(), pasted: false, keystrokeOutcome: "failed" };
+      }
+      keystrokeOutcome = "skipped";
+    }
+    const withOutcome = (result) => (keystrokeOutcome ? { ...result, keystrokeOutcome } : result);
+
+    if (this._residentPaste) {
+      await new Promise((resolve) => setTimeout(resolve, fastDelay));
+      try {
+        await this._residentPaste();
+        return withOutcome({
+          restoreComplete:
+            originalClipboard != null
+              ? this._restoreClipboardAfterDelay(originalClipboard, {
+                  delayMs: RESTORE_DELAYS.darwin,
+                  expectedText: options.expectedClipboardText,
+                })
+              : Promise.resolve(),
+        });
+      } catch (error) {
+        debugLogger.debug(
+          "Resident paste unavailable, falling back to the paste helper",
+          { error: error?.message },
+          "clipboard"
+        );
+      }
+    }
 
     return new Promise((resolve, reject) => {
       setTimeout(() => {
@@ -1055,7 +1156,7 @@ class ClipboardManager {
           reject(new Error(errorMsg));
         }, 3000);
       }, pasteDelay);
-    });
+    }).then(withOutcome);
   }
 
   async pasteMacOSWithOsascript(originalClipboard, options = {}) {
@@ -1881,7 +1982,7 @@ class ClipboardManager {
             "Attempting paste",
             {
               cmd: tool.cmd,
-              args: tool.args,
+              args: tool.logArgs ?? tool.args,
               delay,
               isWayland,
             },
@@ -1926,7 +2027,7 @@ class ClipboardManager {
                 "Paste command failed",
                 {
                   cmd: tool.cmd,
-                  args: tool.args,
+                  args: tool.logArgs ?? tool.args,
                   exitCode: code,
                   stderr: stderr.trim(),
                   stdout: stdout.trim(),
@@ -1994,16 +2095,22 @@ class ClipboardManager {
       const typeArgs = targetWindowId
         ? ["windowactivate", "--sync", targetWindowId, "type", "--clearmodifiers", "--", textToType]
         : ["type", "--clearmodifiers", "--", textToType];
+      // The typed text is the last argument; it stays out of every log line.
+      const typeLogArgs = [...typeArgs.slice(0, -1), "<text>"];
 
       try {
-        const pasteResult = await pasteWith({ cmd: "xdotool", args: typeArgs });
+        const pasteResult = await pasteWith({
+          cmd: "xdotool",
+          args: typeArgs,
+          logArgs: typeLogArgs,
+        });
         this.safeLog("✅ Paste successful using xdotool type fallback");
         debugLogger.info("Terminal paste successful via xdotool type", {}, "clipboard");
         return { method: "xdotool-type", ...pasteResult };
       } catch (error) {
         const fallbackFailure = {
           tool: "xdotool type",
-          args: typeArgs,
+          args: typeLogArgs,
           error: error?.message || String(error),
         };
         failedAttempts.push(fallbackFailure);
@@ -2104,17 +2211,17 @@ class ClipboardManager {
 
     let dialogMessage;
     if (isStuckPermission) {
-      dialogMessage = `🔒 OpenWhispr needs Accessibility permissions, but it looks like you may have OLD PERMISSIONS from a previous version.
+      dialogMessage = `🔒 rTech Whisper needs Accessibility permissions, but it looks like you may have OLD PERMISSIONS from a previous version.
 
-❗ COMMON ISSUE: If you've rebuilt/reinstalled OpenWhispr, the old permissions may be "stuck" and preventing new ones.
+❗ COMMON ISSUE: If you've rebuilt/reinstalled rTech Whisper, the old permissions may be "stuck" and preventing new ones.
 
 🔧 To fix this:
 1. Open System Settings → Privacy & Security → Accessibility
-2. Look for ANY old "OpenWhispr" entries and REMOVE them (click the - button)
+2. Look for ANY old "rTech Whisper" entries and REMOVE them (click the - button)
 3. Also remove any entries that say "Electron" or have unclear names
-4. Click the + button and manually add the NEW OpenWhispr app
+4. Click the + button and manually add the NEW rTech Whisper app
 5. Make sure the checkbox is enabled
-6. Restart OpenWhispr
+6. Restart rTech Whisper
 
 ⚠️ This is especially common during development when rebuilding the app.
 
@@ -2122,7 +2229,7 @@ class ClipboardManager {
 
 Would you like to open System Settings now?`;
     } else {
-      dialogMessage = `🔒 OpenWhispr needs Accessibility permissions to paste text into other applications.
+      dialogMessage = `🔒 rTech Whisper needs Accessibility permissions to paste text into other applications.
 
 📋 Current status: Clipboard copy works, but pasting (Cmd+V simulation) fails.
 
@@ -2130,8 +2237,8 @@ Would you like to open System Settings now?`;
 1. Open System Settings (or System Preferences on older macOS)
 2. Go to Privacy & Security → Accessibility
 3. Click the lock icon and enter your password
-4. Add OpenWhispr to the list and check the box
-5. Restart OpenWhispr
+4. Add rTech Whisper to the list and check the box
+5. Restart rTech Whisper
 
 ⚠️ Without this permission, dictated text will only be copied to clipboard but won't paste automatically.
 

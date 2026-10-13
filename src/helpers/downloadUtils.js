@@ -264,9 +264,18 @@ async function fetchJson(url, options = {}) {
 }
 
 async function downloadFile(url, destPath, options = {}) {
-  const { onProgress, maxRetries = DEFAULT_MAX_RETRIES, signal, expectedSize = 0 } = options;
+  const {
+    onProgress,
+    maxRetries = DEFAULT_MAX_RETRIES,
+    signal,
+    expectedSize = 0,
+    keepPartial = false,
+  } = options;
 
   const tempPath = `${destPath}.tmp`;
+  // keepPartial leaves the temp file after a failure so the next call resumes it.
+  const discardPartial = () =>
+    keepPartial ? Promise.resolve() : fsPromises.unlink(tempPath).catch(() => {});
 
   debugLogger.info("Download starting", { url, destPath });
 
@@ -328,7 +337,7 @@ async function downloadFile(url, destPath, options = {}) {
       lastError = error;
 
       if (error.isAbort) {
-        await fsPromises.unlink(tempPath).catch(() => {});
+        await discardPartial();
         throw error;
       }
 
@@ -338,7 +347,7 @@ async function downloadFile(url, destPath, options = {}) {
           error: error.message,
           code: error.code,
         });
-        await fsPromises.unlink(tempPath).catch(() => {});
+        await discardPartial();
         throw error;
       }
 
@@ -355,7 +364,7 @@ async function downloadFile(url, destPath, options = {}) {
     error: lastError?.message,
     code: lastError?.code,
   });
-  await fsPromises.unlink(tempPath).catch(() => {});
+  await discardPartial();
   throw lastError;
 }
 

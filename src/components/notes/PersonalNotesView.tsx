@@ -69,6 +69,7 @@ import { isRegenerableNoteTitle } from "../../helpers/regenerableNoteTitle";
 import { isMeetingAutoEndEligible } from "../../helpers/meetingRecordingSession";
 import { handleMeetingRecordingRequest } from "../../helpers/meetingRecordingRequest";
 import { markIntroSeen, NOTES_STRUCTURE_INTRO, shouldShowIntro } from "../../lib/versionedIntro";
+import { persistStableCrmNoteDraft } from "../../lib/crmNoteSaveBoundary";
 import {
   applyNoteDraftMutation,
   collectPendingNoteWrites,
@@ -146,6 +147,7 @@ export default function PersonalNotesView({
   const [showAddNotesDialog, setShowAddNotesDialog] = useState(false);
   const pendingDocumentRef = useRef<PendingDocumentSave | null>(null);
   const pendingEnhancedRef = useRef<PendingEnhancedSave | null>(null);
+  const activeSavePromisesRef = useRef(new Set<Promise<unknown>>());
 
   const commitDraft = useCallback((next: NoteEditorDraft | null) => {
     draftRef.current = next;
@@ -410,14 +412,17 @@ export default function PersonalNotesView({
         if (pendingDocumentRef.current !== pending) return;
         pendingDocumentRef.current = null;
         setIsSaving(true);
+        const savePromise = window.electronAPI.updateNote(pending.noteId, {
+          title: pending.title,
+          content: pending.content,
+        });
+        activeSavePromisesRef.current.add(savePromise);
         try {
-          await window.electronAPI.updateNote(pending.noteId, {
-            title: pending.title,
-            content: pending.content,
-          });
+          await savePromise;
         } catch (err) {
           logger.warn("Failed to save note", { error: (err as Error).message }, "notes");
         } finally {
+          activeSavePromisesRef.current.delete(savePromise);
           setIsSaving(false);
         }
       }, 1000),
@@ -436,10 +441,12 @@ export default function PersonalNotesView({
         if (pendingEnhancedRef.current !== pending) return;
         pendingEnhancedRef.current = null;
         setIsSaving(true);
+        const savePromise = window.electronAPI.updateNote(pending.noteId, {
+          enhanced_content: pending.enhancedContent,
+        });
+        activeSavePromisesRef.current.add(savePromise);
         try {
-          await window.electronAPI.updateNote(pending.noteId, {
-            enhanced_content: pending.enhancedContent,
-          });
+          await savePromise;
         } catch (err) {
           logger.warn(
             "Failed to save enhanced note content",
@@ -447,11 +454,44 @@ export default function PersonalNotesView({
             "notes"
           );
         } finally {
+          activeSavePromisesRef.current.delete(savePromise);
           setIsSaving(false);
         }
       }, 1000),
     };
     pendingEnhancedRef.current = pending;
+  }, []);
+
+  const flushPendingSavesBeforeCrmSync = useCallback(async () => {
+    // A debounce may already have fired. Wait for those DB writes before
+    // asking the backend to read the note for CRM sync.
+    await Promise.all(Array.from(activeSavePromisesRef.current));
+
+    const document = pendingDocumentRef.current;
+    const enhanced = pendingEnhancedRef.current;
+    if (document) clearTimeout(document.timer);
+    if (enhanced) clearTimeout(enhanced.timer);
+
+    setIsSaving(true);
+    try {
+      await persistStableCrmNoteDraft({
+        getDraft: () => draftRef.current,
+        save: (snapshot) =>
+          window.electronAPI.updateNote(snapshot.noteId, {
+            title: snapshot.title,
+            content: snapshot.content,
+            enhanced_content: snapshot.enhancedContent,
+          }),
+      });
+      // Clear only the exact snapshots we persisted; edits made while the
+      // writes were in flight install newer pending snapshots and must stay.
+      if (pendingDocumentRef.current === document) pendingDocumentRef.current = null;
+      if (pendingEnhancedRef.current === enhanced) pendingEnhancedRef.current = null;
+    } finally {
+      // On failure the snapshot refs remain, preserving the draft for retry
+      // and for the existing switch/unmount flush paths.
+      setIsSaving(false);
+    }
   }, []);
 
   const handleTitleChange = useCallback(
@@ -762,6 +802,7 @@ export default function PersonalNotesView({
               onMoveToFolder={handleMoveToFolder}
               onCreateFolderAndMove={handleCreateFolderAndMove}
               onCancelPendingSaves={cancelPendingSaves}
+              onBeforeCrmSync={flushPendingSavesBeforeCrmSync}
               actionProcessingState={actionProcessingState}
               actionName={actionName}
               actionPicker={

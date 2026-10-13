@@ -58,7 +58,7 @@ export interface TranscriptionRouteSettings {
 
 /**
  * Outcome of managed enterprise STT resolution, computed by the caller
- * (renderer: enterpriseIdentityStore; main: enterpriseIdentityManager). The
+ * (renderer: enterpriseIdentityStore). The
  * context is identity metadata for main-process re-validation, never a secret.
  */
 export type ManagedTranscriptionResolution =
@@ -106,16 +106,6 @@ export type TranscriptionRoute =
       model: string | null;
       auth: { scheme: "bearer" | "azure-api-key" | "none"; keyRef: string | null };
       sizeCapBytes: number | null;
-      language?: string;
-    }
-  | {
-      // Workspace-managed Azure STT. Executed only in the main process, which
-      // re-validates the context and holds the Entra token.
-      transport: "managed";
-      provider: "azure";
-      deployment: string;
-      context: ManagedEnterpriseRequestContext;
-      sizeCapBytes: number;
       language?: string;
     };
 
@@ -218,27 +208,16 @@ export function resolveTranscriptionRoute({
       ? undefined
       : s.preferredLanguage.split("-")[0]);
 
-  // Managed enterprise STT outranks every personal setting; the resolution is
-  // already policy-checked where it was computed (enterpriseIdentityStore /
-  // enterpriseIdentityManager), so the selection floor below does not apply.
-  if (managedResolution) {
-    if (managedResolution.kind === "error") {
-      return error(managedResolution.message, managedResolution.code, managedResolution.messageKey);
-    }
-    return {
-      transport: "managed",
-      provider: managedResolution.provider,
-      deployment: managedResolution.deployment,
-      context: managedResolution.context,
-      sizeCapBytes: BYOK_FILE_SIZE_LIMIT,
-      language,
-    };
+  // A managed enterprise STT outcome outranks every personal setting, but there
+  // is no managed transport: an error outcome surfaces as-is, and a resolved
+  // managed config fails closed instead of falling through to a personal lane.
+  if (managedResolution?.kind === "error") {
+    return error(managedResolution.message, managedResolution.code, managedResolution.messageKey);
   }
 
-  // A policy-effective "enterprise" selection with no managed resolution means
-  // the managed config has not resolved (loading, evicted, or absent). Never
-  // fall through to a personal lane in that state.
-  if (s.transcriptionMode === "enterprise") {
+  // Same for a policy-effective "enterprise" selection (loading, evicted,
+  // absent, or resolved): never fall through to a personal lane.
+  if (managedResolution || s.transcriptionMode === "enterprise") {
     return error(
       "Managed transcription is not available right now. Try again in a moment.",
       "MANAGED_CONFIG_UNAVAILABLE",

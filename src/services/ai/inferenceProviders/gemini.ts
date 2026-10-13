@@ -1,6 +1,11 @@
 import type { InferenceProvider } from "./types";
 import { getCloudModel } from "../../../models/ModelRegistry";
-import { withRetry, createApiRetryStrategy, httpError } from "../../../utils/retry";
+import {
+  withRetry,
+  createApiRetryStrategy,
+  httpError,
+  llmTimeoutError,
+} from "../../../utils/retry";
 import { API_ENDPOINTS, TOKEN_LIMITS } from "../../../config/constants";
 import { getLlmRequestTimeoutSeconds } from "../../../helpers/llmRequestTimeout.js";
 import { wrapCleanupTranscript } from "../../../config/prompts";
@@ -70,6 +75,7 @@ export const geminiProvider: InferenceProvider = {
       generationConfig,
     };
 
+    const retryStrategy = createApiRetryStrategy({ timeoutSeconds: config.timeoutSeconds });
     const response = await withRetry(async () => {
       logger.logReasoning("GEMINI_REQUEST", {
         endpoint: `${API_ENDPOINTS.GEMINI}/models/${model}:generateContent`,
@@ -85,7 +91,7 @@ export const geminiProvider: InferenceProvider = {
       });
 
       const controller = new AbortController();
-      const timeoutSeconds = getLlmRequestTimeoutSeconds();
+      const timeoutSeconds = getLlmRequestTimeoutSeconds({ timeoutSeconds: config.timeoutSeconds });
       const timeoutId = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
       try {
         const res = await fetch(`${API_ENDPOINTS.GEMINI}/models/${model}:generateContent`, {
@@ -126,13 +132,13 @@ export const geminiProvider: InferenceProvider = {
         return jsonResponse;
       } catch (error) {
         if ((error as Error).name === "AbortError") {
-          throw new Error(`Request timed out after ${timeoutSeconds}s`);
+          throw llmTimeoutError(timeoutSeconds);
         }
         throw error;
       } finally {
         clearTimeout(timeoutId);
       }
-    }, createApiRetryStrategy());
+    }, retryStrategy);
 
     const candidate = response.candidates?.[0];
     if (config.requireCompleteOutput && candidate?.finishReason === "MAX_TOKENS") {

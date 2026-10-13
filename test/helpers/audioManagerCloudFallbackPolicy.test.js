@@ -297,7 +297,15 @@ test("self-hosted mode is never hijacked by a leftover proxied provider", async 
       throw new Error("must not be called in self-hosted mode");
     };
   }
-  const fetched = captureFetch(t, okJson({ text: "self-hosted text" }));
+  const fetched = captureFetch(
+    t,
+    rejectFetch("self-hosted final must use the main-process bridge")
+  );
+  const batchCalls = [];
+  window.electronAPI.transcribeSelfHostedDictation = async (_requestId, payload) => {
+    batchCalls.push(payload);
+    return { success: true, text: "self-hosted text" };
+  };
   const manager = createManager({
     getTranscriptionModel: () => "self-hosted-model",
     getAPIKey: async () => null,
@@ -317,22 +325,61 @@ test("self-hosted mode is never hijacked by a leftover proxied provider", async 
   }
 
   assert.deepEqual(proxyCalls, { mistral: 0, xai: 0, corti: 0 });
-  assert.equal(
-    fetched.every((e) => e.startsWith("https://stt.internal.example.com")),
-    true,
-    `unexpected endpoints: ${fetched.join(", ")}`
+  assert.equal(fetched.length, 0);
+  assert.equal(batchCalls.length, 3);
+  assert.equal(batchCalls[0].endpoint, "https://stt.internal.example.com/audio/transcriptions");
+  assert.equal(batchCalls[0].model, "self-hosted-model");
+});
+
+test("cancelled self-hosted finalization never starts local fallback", async (t) => {
+  const { window, setSettings, createManager } = await loadAudioManager(t, {
+    cachePrefix: "openwhispr-selfhosted-cancel-test-",
+    settingsKey: "__selfHostedCancelSettings",
+  });
+  let cancelled = false;
+  let localCalls = 0;
+  window.electronAPI.transcribeSelfHostedDictation = async () => {
+    cancelled = true;
+    return { error: "The operation was aborted" };
+  };
+  setSettings({
+    allowLocalFallback: true,
+    fallbackWhisperModel: "base",
+    transcriptionMode: "self-hosted",
+    remoteTranscriptionUrl: "https://stt.internal.example.com",
+    useLocalWhisper: false,
+  });
+  const manager = createManager({
+    getAPIKey: async () => null,
+    processWithLocalWhisper: async () => {
+      localCalls += 1;
+      return { success: true, text: "stale" };
+    },
+  });
+  await assert.rejects(
+    manager.processWithOpenAIAPI(
+      new Blob([new Uint8Array([1])], { type: "audio/webm" }),
+      {},
+      () => cancelled
+    ),
+    { name: "AbortError" }
   );
+  assert.equal(localCalls, 0);
 });
 
 // A self-hosted URL on an Azure host is a real population: migrateProviderSettings
 // files every legacy `custom + byok` user under transcriptionMode "self-hosted"
 // and copies their base URL across.
 test("self-hosted Azure endpoints keep their deployment URL", async (t) => {
-  const { setSettings, createManager } = await loadAudioManager(t, {
+  const { window, setSettings, createManager } = await loadAudioManager(t, {
     cachePrefix: "openwhispr-selfhosted-azure-test-",
     settingsKey: "__selfHostedAzureSettings",
   });
-  const fetched = captureFetch(t, okJson({ text: "azure text" }));
+  const fetched = [];
+  window.electronAPI.transcribeSelfHostedDictation = async (_requestId, payload) => {
+    fetched.push(payload.endpoint);
+    return { success: true, text: "azure text" };
+  };
   const manager = createManager({
     getTranscriptionModel: () => "my-deployment",
     getAPIKey: async () => "azure-key",
@@ -594,5 +641,38 @@ test("config-error code survives a failed local fallback", async (t) => {
       );
       return true;
     }
+  );
+});
+
+test("#130: an echo of the hub-capped prompt is discarded on the self-hosted path", async (t) => {
+  const { window, setSettings, createManager } = await loadAudioManager(t, {
+    cachePrefix: "audio-manager-hub-capped-echo",
+    settingsKey: "__selfHostedHubCappedEchoSettings",
+  });
+  const { capPrompt } = require("../../src/helpers/hubFirst.js");
+  // Distinct words, well over the hub's 1000-char prompt cap.
+  const dictionary = Array.from({ length: 200 }, (_, i) => `Term${i}alpha`).join(", ");
+  assert.ok(dictionary.length > 1430);
+  const echo = capPrompt(dictionary).replace(/,?\s*\S*$/, "");
+  window.electronAPI.transcribeSelfHostedDictation = async () => ({ success: true, text: echo });
+  const manager = createManager({
+    getTranscriptionModel: () => "self-hosted-model",
+    getAPIKey: async () => null,
+    getCustomDictionaryPrompt: () => dictionary,
+    getWhisperPrompt: () => dictionary,
+  });
+  delete manager.isDictionaryEcho; // use the real matcher from the prototype
+  setSettings({
+    allowLocalFallback: false,
+    transcriptionMode: "self-hosted",
+    remoteTranscriptionUrl: "https://stt.internal.example.com",
+    useLocalWhisper: false,
+  });
+
+  assert.equal(manager.isDictionaryEcho(echo), false, "the full prompt alone misses the echo");
+  assert.equal(manager.isDictionaryEcho(echo, { hubPrompt: true }), true);
+  await assert.rejects(
+    manager.processWithOpenAIAPI(new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" })),
+    (error) => error.code === "DICTIONARY_ECHO"
   );
 });

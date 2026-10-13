@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { SquarePen, Search, Archive as ArchiveIcon } from "lucide-react";
+import { SquarePen, Search, Archive as ArchiveIcon, Flame, MessageSquare } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "../lib/utils";
@@ -7,6 +7,7 @@ import { groupItemsByDate } from "../../utils/dateGrouping";
 import ConversationItem, { type ConversationPreview } from "./ConversationItem";
 import ConversationDateGroup from "./ConversationDateGroup";
 import EmptyConversationList from "./EmptyConversationList";
+import type { ConversationKind } from "../../types/electron";
 
 type FlatItem =
   { type: "header"; label: string } | { type: "conversation"; data: ConversationPreview };
@@ -70,6 +71,9 @@ export default function ConversationList({
   const [conversations, setConversations] = useState<ConversationPreview[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
+  // Grill sessions are their own list, not chats with odd titles, so they can
+  // be read or exported on their own later.
+  const [kind, setKind] = useState<ConversationKind>("chat");
   const scrollRef = useRef<HTMLDivElement>(null);
   const showSkeletonTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showSkeleton, setShowSkeleton] = useState(false);
@@ -77,8 +81,8 @@ export default function ConversationList({
   const loadConversations = useCallback(async () => {
     try {
       const [active, archived] = await Promise.all([
-        window.electronAPI?.getAgentConversationsWithPreview?.(200, 0, false),
-        window.electronAPI?.getAgentConversationsWithPreview?.(200, 0, true),
+        window.electronAPI?.getAgentConversationsWithPreview?.(200, 0, false, kind),
+        window.electronAPI?.getAgentConversationsWithPreview?.(200, 0, true, kind),
       ]);
       const toPreview = (c: {
         id: number;
@@ -106,7 +110,7 @@ export default function ConversationList({
         showSkeletonTimer.current = null;
       }
     }
-  }, []);
+  }, [kind]);
 
   useEffect(() => {
     setIsLoading(true);
@@ -212,6 +216,28 @@ export default function ConversationList({
           <Search size={14} className="shrink-0" />
           {t("chat.searchChats")}
         </button>
+        <div className="flex items-center gap-1">
+          {[
+            { value: "chat" as const, icon: MessageSquare, label: t("chat.chatsTab") },
+            { value: "grill" as const, icon: Flame, label: t("chat.grillsTab") },
+          ].map(({ value, icon: Icon, label }) => (
+            <button
+              key={value}
+              onClick={() => setKind(value)}
+              aria-pressed={kind === value}
+              className={cn(
+                "flex items-center gap-2 flex-1 px-2 py-1.5 rounded-md text-xs transition-colors duration-150",
+                "focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/30",
+                kind === value
+                  ? "bg-primary/8 text-primary"
+                  : "text-muted-foreground/80 hover:text-foreground hover:bg-foreground/5"
+              )}
+            >
+              <Icon size={14} className="shrink-0" />
+              {label}
+            </button>
+          ))}
+        </div>
         {conversations.some((c) => c.is_archived) && (
           <button
             onClick={() => setShowArchived((v) => !v)}

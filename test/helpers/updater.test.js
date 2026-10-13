@@ -4,6 +4,9 @@ const assert = require("node:assert/strict");
 const Module = require("node:module");
 
 process.env.NODE_ENV = "test";
+// The fork ships with update checks off; these tests cover the upstream
+// updater logic, so opt back in here.
+process.env.OPENWHISPR_ENABLE_UPDATES = "1";
 
 const updaterModulePath = require.resolve("../../src/updater.js");
 const originalLoad = Module._load;

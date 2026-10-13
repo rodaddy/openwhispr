@@ -10,10 +10,18 @@ export interface ToolCallInfo {
 
 export interface Message {
   id: string;
+  /**
+   * The agent_messages row this turn was stored as, once it has been. Editing
+   * or removing a single turn needs it; a turn that never reached the store
+   * (a notice, a message saved before the id came back) simply has none.
+   */
+  dbId?: number;
   role: "user" | "assistant" | "tool";
   content: string;
   isStreaming: boolean;
   toolCalls?: ToolCallInfo[];
+  /** Grill mode: "hidden" reaches the model but not the screen; "notice" the reverse. */
+  display?: "hidden" | "notice";
 }
 
 export type AgentState =

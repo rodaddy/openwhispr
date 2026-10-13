@@ -1,0 +1,61 @@
+From 3e38d26e7e5c89b7fb8447f709e8ee8da7c7f0b3 Mon Sep 17 00:00:00 2001
+From: Rico Rojas <rickrojas@gmail.com>
+Date: Thu, 10 Sep 2026 00:35:38 -0400
+Subject: [PATCH] ci: run pull request checks on Forge runners
+
+---
+ .github/workflows/lockfile-lint.yml | 7 ++++++-
+ .github/workflows/tests.yml         | 4 +++-
+ patches/README.md                   | 2 ++
+ 3 files changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/.github/workflows/lockfile-lint.yml b/.github/workflows/lockfile-lint.yml
+index 28872c19..1751ba72 100644
+--- a/.github/workflows/lockfile-lint.yml
++++ b/.github/workflows/lockfile-lint.yml
+@@ -5,8 +5,13 @@ on:
+ 
+ jobs:
+   lockfile-lint:
+-    runs-on: ubuntu-latest
++    # Forge's docker runner supplies Node for JavaScript actions; pin the
++    # repository runtime below before invoking npx.
++    runs-on: self-hosted
+     steps:
+       - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version-file: .nvmrc
+       - name: Lint package-lock.json
+         run: npx --yes lockfile-lint --path package-lock.json --type npm --validate-https --allowed-hosts npm --validate-integrity
+diff --git a/.github/workflows/tests.yml b/.github/workflows/tests.yml
+index 63de7a63..adf5955f 100644
+--- a/.github/workflows/tests.yml
++++ b/.github/workflows/tests.yml
+@@ -5,7 +5,9 @@ on:
+ 
+ jobs:
+   pr-quality:
+-    runs-on: ubuntu-latest
++    # Forge's docker runner starts from node:20-bookworm so JavaScript actions
++    # and native npm builds work; setup-node below installs the repo's Node 24.
++    runs-on: self-hosted
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-node@v4
+diff --git a/patches/README.md b/patches/README.md
+index a6dcf2a3..567638e2 100644
+--- a/patches/README.md
++++ b/patches/README.md
+@@ -15,6 +15,8 @@ Local changes carried on top of upstream OpenWhispr. Each patch is a
+ | `0008-instant-pill-warm-gate-resident-paste.patch` | Pill and preview panel open at once, the silence-gate AudioContext stays warm, and paste goes through the resident Globe listener instead of a spawned helper. |
+ | `0009-disable-update-checks.patch` | Fork-only: update checks and the update UI are off (`OPENWHISPR_ENABLE_UPDATES=1` restores them). |
+ | `0010-instant-transcript-panel.patch` | Live transcript panel appears whole on its first frame instead of staging the entrance; the staged timeline stays behind `LIVE_TRANSCRIPT_INSTANT_ENTRANCE`. |
++| `0011-crm-connector.patch` | CRM settings, contact/company selection and creation, and note activity sync with persisted update identity. |
++| `0012-forge-ci-runner-routing.patch` | Route the PR test and lockfile checks to Forge's available Docker runner and pin Node from `.nvmrc`. |
+ 
+ ## Reapply after pulling upstream
+ 
+-- 
+2.55.0
+

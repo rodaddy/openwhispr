@@ -1,0 +1,2586 @@
+From 82ee83cf79605f27c93d99c444a3aeb316b968b0 Mon Sep 17 00:00:00 2001
+From: Rico Rojas <rickrojas@gmail.com>
+Date: Thu, 10 Sep 2026 00:00:19 -0400
+Subject: [PATCH] feat(crm): sync notes to contact and company timelines
+
+Add write-only encrypted CRM settings, contact/company selection and creation,
+and summary-first note activities through a main-process IPC boundary. Persist
+the CRM activity identity so repeated syncs update one record and preserve
+the latest saved note and speaker labels.
+
+Include contract, SQLite, IPC, and credential tests plus the CRM-side API
+contract checker. Refs #6, #7, #8, #9, #10, #11.
+---
+ docs/crm-connector.md                      |  38 ++
+ preload.js                                 |   7 +
+ scripts/check-crm-contract.js              |  69 ++++
+ src/components/CrmIntegrationCard.tsx      | 236 ++++++++++++
+ src/components/IntegrationsView.tsx        |   6 +
+ src/components/notes/CrmSyncDialog.tsx     | 301 +++++++++++++++
+ src/components/notes/NoteBottomBar.tsx     |  44 ++-
+ src/components/notes/NoteEditor.tsx        |  33 ++
+ src/components/notes/PersonalNotesView.tsx |  57 ++-
+ src/helpers/crmConnector.js                | 419 +++++++++++++++++++++
+ src/helpers/crmStore.js                    |  85 +++++
+ src/helpers/database.js                    |  53 +++
+ src/helpers/environment.js                 |  16 +
+ src/helpers/ipcHandlers.js                 |  60 +++
+ src/types/crm.ts                           |  54 +++
+ src/types/electron.ts                      |  18 +
+ test/helpers/crmConnector.test.js          | 411 ++++++++++++++++++++
+ test/helpers/crmIpc.test.js                | 123 ++++++
+ test/helpers/crmPersistence.test.js        | 213 +++++++++++
+ 19 files changed, 2235 insertions(+), 8 deletions(-)
+ create mode 100644 docs/crm-connector.md
+ create mode 100644 scripts/check-crm-contract.js
+ create mode 100644 src/components/CrmIntegrationCard.tsx
+ create mode 100644 src/components/notes/CrmSyncDialog.tsx
+ create mode 100644 src/helpers/crmConnector.js
+ create mode 100644 src/helpers/crmStore.js
+ create mode 100644 src/types/crm.ts
+ create mode 100644 test/helpers/crmConnector.test.js
+ create mode 100644 test/helpers/crmIpc.test.js
+ create mode 100644 test/helpers/crmPersistence.test.js
+
+diff --git a/docs/crm-connector.md b/docs/crm-connector.md
+new file mode 100644
+index 00000000..f992226a
+--- /dev/null
++++ b/docs/crm-connector.md
+@@ -0,0 +1,38 @@
++# CRM connector contract
++
++OpenWhispr stores the CRM API base URL, browser app URL, and workspace slug in
++`crm-settings.json` under Electron `userData`. The API key is stored separately
++through the encrypted secret store. Renderer calls receive only `hasApiKey` and
++never receive the key itself.
++
++Wire requests use the configured base URL, the `/rest` prefix, and the
++`x-api-key` header. The connector requires:
++
++- `GET /rest/search?q=a` for connection checks
++- `POST /rest/contacts/search` and `POST /rest/companies/search` for target lookup
++- `POST /rest/contacts` and `POST /rest/companies` for creation
++- `POST /rest/activities` for the first note sync
++- `PATCH /rest/activities/{id}` for later syncs of the same note. The frozen
++  update contract accepts only `subject`, `body`, and `occurredAt`; delivery is
++  tracked by rtech-consulting#379.
++
++A successful note sync stores the activity and target identifiers, the sync
++time, and a hash scoped to the API URL, workspace, and account key. Repeated or
++concurrent syncs update one activity. A missing activity is recreated only when
++the CRM returns a structured `NOT_FOUND`; ambiguous failures do not create a
++duplicate. An existing activity cannot be reassigned to another contact or
++company; callers receive `TARGET_CHANGED` before any CRM request or receipt
++write. Redirects, timeouts, malformed responses, and unsuccessful writes
++leave the saved receipt unchanged. Renderer errors are sanitized.
++
++Browser links use `<appUrl>/<workspaceSlug>/contacts/<id>` or
++`<appUrl>/<workspaceSlug>/companies/<id>`.
++
++Check a server's read-only OpenAPI document with:
++
++```sh
++/opt/homebrew/opt/node@24/bin/node scripts/check-crm-contract.js http://crm-host.example.internal:8081
++```
++
++This checks the published API shape only. It does not authenticate or create,
++update, or search CRM records, and it does not prove the connector is deployed.
+diff --git a/preload.js b/preload.js
+index 82353226..d70fb8cb 100644
+--- a/preload.js
++++ b/preload.js
+@@ -215,6 +215,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
+   },
+   updateNoteCloudId: (id, cloudId) => ipcRenderer.invoke("db-update-note-cloud-id", id, cloudId),
+   updateNoteShareState: (id, state) => ipcRenderer.invoke("db-update-note-share-state", id, state),
++  crmGetSettings: () => ipcRenderer.invoke("crm-get-settings"),
++  crmSaveSettings: (input) => ipcRenderer.invoke("crm-save-settings", input),
++  crmTestConnection: () => ipcRenderer.invoke("crm-test-connection"),
++  crmSearchTargets: (query) => ipcRenderer.invoke("crm-search-targets", query),
++  crmCreateContact: (input) => ipcRenderer.invoke("crm-create-contact", input),
++  crmSyncNote: (noteId, target) => ipcRenderer.invoke("crm-sync-note", noteId, target),
++  crmGetSyncState: (noteId) => ipcRenderer.invoke("crm-get-sync-state", noteId),
+ 
+   // Folder functions
+   getFolders: (spaceId) => ipcRenderer.invoke("db-get-folders", spaceId),
+diff --git a/scripts/check-crm-contract.js b/scripts/check-crm-contract.js
+new file mode 100644
+index 00000000..432fa372
+--- /dev/null
++++ b/scripts/check-crm-contract.js
+@@ -0,0 +1,69 @@
++#!/usr/bin/env node
++
++const baseUrl = process.argv[2];
++
++function usageError(message) {
++  console.error(message);
++  console.error("Usage: node scripts/check-crm-contract.js <http(s)://crm-base-url>");
++  process.exitCode = 2;
++}
++
++async function main() {
++  if (!baseUrl) return usageError("CRM base URL is required.");
++  let parsed;
++  try {
++    parsed = new URL(baseUrl);
++  } catch {
++    return usageError("CRM base URL is invalid.");
++  }
++  if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
++    return usageError("CRM base URL must be HTTP(S) and must not contain credentials.");
++  }
++
++  const openapiUrl = new URL("/openapi.json", parsed).toString();
++  let response;
++  try {
++    response = await fetch(openapiUrl, { redirect: "error" });
++  } catch {
++    console.error(`Unable to read OpenAPI document from ${openapiUrl}.`);
++    process.exitCode = 1;
++    return;
++  }
++  if (!response.ok) {
++    console.error(`OpenAPI request failed with HTTP ${response.status}.`);
++    process.exitCode = 1;
++    return;
++  }
++
++  let document;
++  try {
++    document = await response.json();
++  } catch {
++    console.error("OpenAPI response is not valid JSON.");
++    process.exitCode = 1;
++    return;
++  }
++
++  const required = [
++    ["get", "/search"],
++    ["post", "/contacts/search"],
++    ["post", "/companies/search"],
++    ["post", "/contacts"],
++    ["post", "/companies"],
++    ["post", "/activities"],
++    ["patch", "/activities/{id}"],
++  ];
++  const missing = required.filter(([method, path]) => !document.paths?.[path]?.[method]);
++  if (missing.length) {
++    console.error("CRM OpenAPI contract is missing:");
++    for (const [method, path] of missing) console.error(`- ${method.toUpperCase()} /rest${path}`);
++    process.exitCode = 1;
++    return;
++  }
++  console.log("CRM OpenAPI contract includes all required operations.");
++}
++
++main().catch(() => {
++  console.error("CRM OpenAPI contract check failed.");
++  process.exitCode = 1;
++});
+diff --git a/src/components/CrmIntegrationCard.tsx b/src/components/CrmIntegrationCard.tsx
+new file mode 100644
+index 00000000..a250e2af
+--- /dev/null
++++ b/src/components/CrmIntegrationCard.tsx
+@@ -0,0 +1,236 @@
++import { useCallback, useEffect, useState } from "react";
++import { useTranslation } from "react-i18next";
++import { CheckCircle2, KeyRound, Loader2, RefreshCw, Trash2 } from "lucide-react";
++import { Badge } from "./ui/badge";
++import { Button } from "./ui/button";
++import { Input } from "./ui/input";
++import type { CrmFailure, CrmSettings, CrmSaveSettingsInput } from "../types/crm";
++
++const EMPTY_SETTINGS: CrmSettings = {
++  baseUrl: "",
++  appUrl: "",
++  workspaceSlug: "",
++  hasApiKey: false,
++  configured: false,
++};
++
++function failureKind(error: CrmFailure): "auth" | "unreachable" | "generic" {
++  const code = error.code?.toLowerCase();
++  if (error.status === 401 || error.status === 403 || code?.includes("auth")) return "auth";
++  if (
++    code === "unreachable" ||
++    code === "network" ||
++    code === "network_error" ||
++    code === "timeout" ||
++    /unreachable|connect|network|fetch/i.test(error.error)
++  ) {
++    return "unreachable";
++  }
++  return "generic";
++}
++
++export default function CrmIntegrationCard() {
++  const { t } = useTranslation();
++  const [settings, setSettings] = useState(EMPTY_SETTINGS);
++  const [apiKey, setApiKey] = useState("");
++  const [loading, setLoading] = useState(true);
++  const [saving, setSaving] = useState(false);
++  const [testing, setTesting] = useState(false);
++  const [message, setMessage] = useState<{
++    kind: "success" | "auth" | "unreachable" | "generic";
++    text: string;
++  } | null>(null);
++
++  const load = useCallback(async () => {
++    setLoading(true);
++    const result = await window.electronAPI.crmGetSettings();
++    if ("settings" in result) {
++      const configured =
++        result.settings.configured ??
++        Boolean(
++          result.settings.baseUrl &&
++          result.settings.appUrl &&
++          result.settings.workspaceSlug &&
++          result.settings.hasApiKey
++        );
++      setSettings({ ...result.settings, configured });
++    } else setMessage({ kind: failureKind(result), text: result.error });
++    setLoading(false);
++  }, []);
++
++  useEffect(() => {
++    void load();
++  }, [load]);
++
++  const save = async (removeKey = false) => {
++    setSaving(true);
++    setMessage(null);
++    const input: CrmSaveSettingsInput = {
++      baseUrl: settings.baseUrl.trim(),
++      appUrl: settings.appUrl.trim(),
++      workspaceSlug: settings.workspaceSlug.trim(),
++    };
++    if (removeKey) input.apiKey = "";
++    else if (apiKey.trim()) input.apiKey = apiKey.trim();
++    const result = await window.electronAPI.crmSaveSettings(input);
++    if ("settings" in result) {
++      setSettings(result.settings);
++      setApiKey("");
++      setMessage({
++        kind: "success",
++        text: t("integrations.crm.saved", { defaultValue: "CRM settings saved" }),
++      });
++    } else {
++      setMessage({ kind: failureKind(result), text: result.error });
++    }
++    setSaving(false);
++  };
++
++  const test = async () => {
++    setTesting(true);
++    setMessage(null);
++    const result = await window.electronAPI.crmTestConnection();
++    if ("rowCount" in result) {
++      setMessage({
++        kind: "success",
++        text: t("integrations.crm.testSuccess", {
++          defaultValue: "Connected (HTTP {{status}}) · {{count}} CRM records available",
++          status: result.status,
++          count: result.rowCount,
++        }),
++      });
++    } else {
++      const kind = failureKind(result);
++      const fallback =
++        kind === "auth"
++          ? "Authentication failed. Check the API key."
++          : kind === "unreachable"
++            ? "CRM is unreachable. Check the server URL."
++            : result.error;
++      setMessage({ kind, text: t(`integrations.crm.${kind}Error`, { defaultValue: fallback }) });
++    }
++    setTesting(false);
++  };
++
++  if (loading) {
++    return (
++      <div className="rounded-lg border border-border/50 p-4">
++        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
++      </div>
++    );
++  }
++
++  return (
++    <div className="rounded-lg border border-border/50 dark:border-border-subtle/70 bg-card/50 dark:bg-surface-2/50 backdrop-blur-sm p-4">
++      <div className="flex items-start gap-3 mb-4">
++        <div className="w-9 h-9 rounded-lg bg-primary/5 dark:bg-primary/10 flex items-center justify-center shrink-0">
++          <KeyRound className="h-4 w-4 text-primary/80" />
++        </div>
++        <div className="min-w-0 flex-1">
++          <div className="flex items-center gap-2">
++            <h3 className="text-sm font-semibold text-foreground">
++              {t("integrations.crm.title", { defaultValue: "CRM" })}
++            </h3>
++            {settings.configured && (
++              <Badge variant="success">
++                {t("integrations.crm.configured", { defaultValue: "Configured" })}
++              </Badge>
++            )}
++          </div>
++          <p className="text-xs text-muted-foreground/70 mt-0.5 leading-relaxed">
++            {t("integrations.crm.description", {
++              defaultValue: "Sync saved notes to CRM contacts and companies.",
++            })}
++          </p>
++        </div>
++      </div>
++
++      <div className="grid gap-3 sm:grid-cols-2">
++        <label className="space-y-1 text-xs text-muted-foreground">
++          {t("integrations.crm.baseUrl", { defaultValue: "API base URL" })}
++          <Input
++            value={settings.baseUrl}
++            onChange={(e) => setSettings((s) => ({ ...s, baseUrl: e.target.value }))}
++            placeholder="https://crm-api.example.com"
++          />
++        </label>
++        <label className="space-y-1 text-xs text-muted-foreground">
++          {t("integrations.crm.appUrl", { defaultValue: "CRM app URL" })}
++          <Input
++            value={settings.appUrl}
++            onChange={(e) => setSettings((s) => ({ ...s, appUrl: e.target.value }))}
++            placeholder="https://crm.example.com"
++          />
++        </label>
++        <label className="space-y-1 text-xs text-muted-foreground">
++          {t("integrations.crm.workspace", { defaultValue: "Workspace slug" })}
++          <Input
++            value={settings.workspaceSlug}
++            onChange={(e) => setSettings((s) => ({ ...s, workspaceSlug: e.target.value }))}
++            placeholder="my-workspace"
++          />
++        </label>
++        <label className="space-y-1 text-xs text-muted-foreground">
++          {t("integrations.crm.apiKey", { defaultValue: "API key" })}
++          <Input
++            type="password"
++            value={apiKey}
++            onChange={(e) => setApiKey(e.target.value)}
++            placeholder={
++              settings.hasApiKey
++                ? t("integrations.crm.keyUnchanged", {
++                    defaultValue: "Saved · leave blank to keep",
++                  })
++                : ""
++            }
++            autoComplete="new-password"
++          />
++        </label>
++      </div>
++
++      {message && (
++        <div
++          className={`mt-3 text-xs ${message.kind === "success" ? "text-success" : message.kind === "auth" ? "text-destructive" : "text-warning"}`}
++        >
++          {message.text}
++        </div>
++      )}
++
++      <div className="flex flex-wrap items-center gap-2 mt-4">
++        <Button size="sm" onClick={() => void save()} disabled={saving || testing}>
++          {saving ? (
++            <Loader2 className="h-3.5 w-3.5 animate-spin" />
++          ) : (
++            <CheckCircle2 className="h-3.5 w-3.5" />
++          )}
++          {t("common.save", { defaultValue: "Save" })}
++        </Button>
++        <Button
++          size="sm"
++          variant="outline"
++          onClick={() => void test()}
++          disabled={saving || testing || !settings.configured}
++        >
++          {testing ? (
++            <Loader2 className="h-3.5 w-3.5 animate-spin" />
++          ) : (
++            <RefreshCw className="h-3.5 w-3.5" />
++          )}
++          {t("integrations.crm.test", { defaultValue: "Test connection" })}
++        </Button>
++        {settings.hasApiKey && (
++          <Button
++            size="sm"
++            variant="ghost"
++            onClick={() => void save(true)}
++            disabled={saving || testing}
++            className="text-destructive"
++          >
++            <Trash2 className="h-3.5 w-3.5" />
++            {t("integrations.crm.removeKey", { defaultValue: "Remove API key" })}
++          </Button>
++        )}
++      </div>
++    </div>
++  );
++}
+diff --git a/src/components/IntegrationsView.tsx b/src/components/IntegrationsView.tsx
+index de3422e3..6a6af42e 100644
+--- a/src/components/IntegrationsView.tsx
++++ b/src/components/IntegrationsView.tsx
+@@ -21,6 +21,7 @@ import type { CalendarAccount } from "../types/calendar";
+ import ApiKeysSection from "./ApiKeysSection";
+ import CliIntegrationCard from "./CliIntegrationCard";
+ import McpIntegrationCard from "./McpIntegrationCard";
++import CrmIntegrationCard from "./CrmIntegrationCard";
+ import googleCalendarIcon from "../assets/icons/google-calendar.svg";
+ import microsoftCalendarIcon from "../assets/icons/microsoft-calendar.svg";
+ import appleCalendarIcon from "../assets/icons/apple-calendar.svg";
+@@ -464,6 +465,11 @@ export default function IntegrationsView({ isPaid, onUpgrade }: IntegrationsView
+         </SettingsPanel>
+       </div>
+ 
++      <div>
++        <SectionLabel>{t("integrations.sections.crm", { defaultValue: "CRM" })}</SectionLabel>
++        <CrmIntegrationCard />
++      </div>
++
+       <div>
+         <SectionLabel>{t("integrations.sections.mcp")}</SectionLabel>
+         <McpIntegrationCard isPaid={isPaid} onUpgrade={onUpgrade} />
+diff --git a/src/components/notes/CrmSyncDialog.tsx b/src/components/notes/CrmSyncDialog.tsx
+new file mode 100644
+index 00000000..01ea6a80
+--- /dev/null
++++ b/src/components/notes/CrmSyncDialog.tsx
+@@ -0,0 +1,301 @@
++import { useEffect, useMemo, useState } from "react";
++import { useTranslation } from "react-i18next";
++import { Building2, Contact, ExternalLink, Loader2, Plus, Search } from "lucide-react";
++import { Button } from "../ui/button";
++import { Badge } from "../ui/badge";
++import {
++  Dialog,
++  DialogContent,
++  DialogDescription,
++  DialogFooter,
++  DialogHeader,
++  DialogTitle,
++} from "../ui/dialog";
++import { Input } from "../ui/input";
++import type { NoteItem } from "../../types/electron";
++import type { CrmCreateContactInput, CrmSyncState, CrmTarget } from "../../types/crm";
++
++interface CrmSyncDialogProps {
++  open: boolean;
++  onOpenChange: (open: boolean) => void;
++  note: NoteItem;
++  initialState: CrmSyncState | null;
++  onBeforeSync: () => Promise<void>;
++  onSynced: (state: CrmSyncState) => void;
++}
++
++interface AttendeeSeed {
++  name: string;
++  email: string;
++}
++
++function firstAttendee(raw: string | null): AttendeeSeed | null {
++  if (!raw) return null;
++  try {
++    const rows = JSON.parse(raw);
++    if (!Array.isArray(rows)) return null;
++    const row = rows.find((item) => item && !item.self && (item.email || item.displayName));
++    if (!row) return null;
++    return { name: String(row.displayName || ""), email: String(row.email || "") };
++  } catch {
++    return null;
++  }
++}
++
++function domainFromEmail(email: string): string {
++  const domain = email.trim().toLowerCase().split("@")[1] || "";
++  return /^(gmail|googlemail|outlook|hotmail|icloud|yahoo|protonmail|proton)\./.test(domain)
++    ? ""
++    : domain;
++}
++
++export default function CrmSyncDialog({
++  open,
++  onOpenChange,
++  note,
++  initialState,
++  onBeforeSync,
++  onSynced,
++}: CrmSyncDialogProps) {
++  const { t } = useTranslation();
++  const attendee = useMemo(() => firstAttendee(note.participants), [note.participants]);
++  const initialQuery = attendee?.email || attendee?.name || note.title;
++  const [query, setQuery] = useState(initialQuery);
++  const [targets, setTargets] = useState<CrmTarget[]>([]);
++  const [selected, setSelected] = useState<CrmTarget | null>(null);
++  const [searching, setSearching] = useState(false);
++  const [showCreate, setShowCreate] = useState(false);
++  const [creating, setCreating] = useState(false);
++  const [syncing, setSyncing] = useState(false);
++  const [syncState, setSyncState] = useState(initialState);
++  const [error, setError] = useState("");
++  const [contact, setContact] = useState<CrmCreateContactInput>({
++    name: attendee?.name || "",
++    email: attendee?.email || "",
++    companyName: "",
++    companyDomain: domainFromEmail(attendee?.email || ""),
++  });
++
++  useEffect(() => {
++    if (!open) return;
++    setQuery(initialQuery);
++    setSelected(null);
++    setShowCreate(false);
++    setSyncState(initialState);
++    setTargets([]);
++    setSearching(false);
++    setError("");
++    setContact({
++      name: attendee?.name || "",
++      email: attendee?.email || "",
++      companyName: "",
++      companyDomain: domainFromEmail(attendee?.email || ""),
++    });
++  }, [attendee, initialQuery, initialState, open]);
++
++  useEffect(() => {
++    if (!open) return;
++    let cancelled = false;
++    setSelected(null);
++    setTargets([]);
++    const timer = setTimeout(async () => {
++      setSearching(true);
++      const result = await window.electronAPI.crmSearchTargets(query.trim());
++      if (cancelled) return;
++      if ("targets" in result) setTargets(result.targets);
++      else setError(result.error);
++      setSearching(false);
++    }, 250);
++    return () => {
++      cancelled = true;
++      clearTimeout(timer);
++    };
++  }, [open, query]);
++
++  const createContact = async () => {
++    if (!contact.name.trim() || !contact.email.trim()) return;
++    setCreating(true);
++    setError("");
++    const result = await window.electronAPI.crmCreateContact({
++      name: contact.name.trim(),
++      email: contact.email.trim(),
++      companyName: contact.companyName?.trim() || undefined,
++      // Empty is intentional: clearing the editable suggestion means no
++      // company association, including for an otherwise derivable domain.
++      companyDomain: contact.companyDomain?.trim() ?? "",
++    });
++    if ("target" in result) {
++      setSelected(result.target);
++      setTargets((rows) => [result.target, ...rows.filter((row) => row.id !== result.target.id)]);
++      setShowCreate(false);
++    } else setError(result.error);
++    setCreating(false);
++  };
++
++  const sync = async () => {
++    if (!selected) return;
++    setSyncing(true);
++    setError("");
++    try {
++      await onBeforeSync();
++      const result = await window.electronAPI.crmSyncNote(note.id, selected);
++      if ("state" in result) {
++        setSyncState(result.state);
++        onSynced(result.state);
++      } else setError(result.error);
++    } catch (cause) {
++      setError(cause instanceof Error ? cause.message : String(cause));
++    } finally {
++      setSyncing(false);
++    }
++  };
++
++  return (
++    <Dialog open={open} onOpenChange={onOpenChange}>
++      <DialogContent className="sm:max-w-xl">
++        <DialogHeader>
++          <DialogTitle>
++            {syncState
++              ? t("notes.crm.updateTitle", { defaultValue: "Update CRM note" })
++              : t("notes.crm.syncTitle", { defaultValue: "Sync note to CRM" })}
++          </DialogTitle>
++          <DialogDescription>
++            {t("notes.crm.description", {
++              defaultValue: "Choose one contact or company for this note.",
++            })}
++          </DialogDescription>
++        </DialogHeader>
++
++        {syncState && (
++          <div className="flex items-center justify-between rounded-lg border border-success/20 bg-success/5 px-3 py-2 text-xs">
++            <Badge variant="success">
++              {t("notes.crm.syncedAt", {
++                defaultValue: "Synced {{time}}",
++                time: new Date(syncState.syncedAt).toLocaleString(),
++              })}
++            </Badge>
++            <Button
++              size="sm"
++              variant="ghost"
++              onClick={() => window.electronAPI.openExternal(syncState.url)}
++            >
++              {t("notes.crm.open", { defaultValue: "Open in CRM" })}
++              <ExternalLink className="h-3.5 w-3.5" />
++            </Button>
++          </div>
++        )}
++
++        <div className="relative">
++          <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground/50" />
++          <Input
++            value={query}
++            onChange={(e) => setQuery(e.target.value)}
++            className="pl-9"
++            placeholder={t("notes.crm.search", { defaultValue: "Search contacts and companies" })}
++            autoFocus
++          />
++          {searching && (
++            <Loader2 className="absolute right-3 top-3 h-4 w-4 animate-spin text-muted-foreground" />
++          )}
++        </div>
++
++        <div className="max-h-48 overflow-y-auto rounded-lg border border-border/50 divide-y divide-border/40">
++          {targets.map((target) => (
++            <button
++              key={`${target.type}:${target.id}`}
++              type="button"
++              onClick={() => setSelected(target)}
++              className={`w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/50 ${selected?.id === target.id && selected.type === target.type ? "bg-primary/5 ring-1 ring-inset ring-primary/20" : ""}`}
++            >
++              {target.type === "contact" ? (
++                <Contact className="h-4 w-4 text-primary/70" />
++              ) : (
++                <Building2 className="h-4 w-4 text-primary/70" />
++              )}
++              <span className="min-w-0 flex-1">
++                <span className="block text-sm font-medium truncate">{target.name}</span>
++                <span className="block text-xs text-muted-foreground truncate">
++                  {target.email || target.domain || target.type}
++                </span>
++              </span>
++              <span
++                className={`h-3.5 w-3.5 rounded-full border ${selected?.id === target.id && selected.type === target.type ? "border-primary bg-primary ring-2 ring-primary/15" : "border-border"}`}
++              />
++            </button>
++          ))}
++          {!searching && targets.length === 0 && (
++            <div className="px-3 py-4 text-center text-xs text-muted-foreground">
++              {t("notes.crm.noMatches", { defaultValue: "No matching contacts or companies" })}
++            </div>
++          )}
++        </div>
++
++        {!showCreate ? (
++          <Button variant="outline-flat" size="sm" onClick={() => setShowCreate(true)}>
++            <Plus className="h-3.5 w-3.5" />
++            {t("notes.crm.newContact", { defaultValue: "New contact" })}
++          </Button>
++        ) : (
++          <div className="rounded-lg border border-border/50 p-3 space-y-3">
++            <p className="text-xs text-muted-foreground">
++              {t("notes.crm.confirmCreate", {
++                defaultValue: "Review these details before creating the contact.",
++              })}
++            </p>
++            <div className="grid grid-cols-2 gap-2">
++              <Input
++                value={contact.name}
++                onChange={(e) => setContact((c) => ({ ...c, name: e.target.value }))}
++                placeholder={t("notes.crm.name", { defaultValue: "Name" })}
++              />
++              <Input
++                type="email"
++                value={contact.email}
++                onChange={(e) => setContact((c) => ({ ...c, email: e.target.value }))}
++                placeholder={t("notes.crm.email", { defaultValue: "Email" })}
++              />
++              <Input
++                value={contact.companyName}
++                onChange={(e) => setContact((c) => ({ ...c, companyName: e.target.value }))}
++                placeholder={t("notes.crm.company", { defaultValue: "Company (optional)" })}
++              />
++              <Input
++                value={contact.companyDomain}
++                onChange={(e) => setContact((c) => ({ ...c, companyDomain: e.target.value }))}
++                placeholder={t("notes.crm.domainSuggestion", {
++                  defaultValue: "Company domain (editable suggestion)",
++                })}
++              />
++            </div>
++            <div className="flex justify-end gap-2">
++              <Button variant="ghost" size="sm" onClick={() => setShowCreate(false)}>
++                {t("common.cancel", { defaultValue: "Cancel" })}
++              </Button>
++              <Button
++                size="sm"
++                onClick={() => void createContact()}
++                disabled={creating || !contact.name.trim() || !contact.email.trim()}
++              >
++                {creating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
++                {t("notes.crm.createContact", { defaultValue: "Create contact" })}
++              </Button>
++            </div>
++          </div>
++        )}
++
++        {error && <p className="text-xs text-destructive">{error}</p>}
++        <DialogFooter>
++          <Button variant="outline" onClick={() => onOpenChange(false)}>
++            {t("common.cancel", { defaultValue: "Cancel" })}
++          </Button>
++          <Button onClick={() => void sync()} disabled={!selected || syncing}>
++            {syncing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
++            {syncState
++              ? t("notes.crm.update", { defaultValue: "Update CRM note" })
++              : t("notes.crm.sync", { defaultValue: "Sync to CRM" })}
++          </Button>
++        </DialogFooter>
++      </DialogContent>
++    </Dialog>
++  );
++}
+diff --git a/src/components/notes/NoteBottomBar.tsx b/src/components/notes/NoteBottomBar.tsx
+index ea90c101..1d2f6076 100644
+--- a/src/components/notes/NoteBottomBar.tsx
++++ b/src/components/notes/NoteBottomBar.tsx
+@@ -1,6 +1,6 @@
+ import { useState, useRef, useCallback, useEffect } from "react";
+ import { useTranslation } from "react-i18next";
+-import { Mic, Square, Loader2 } from "lucide-react";
++import { Mic, Square, Loader2, RefreshCw } from "lucide-react";
+ import { cn } from "../lib/utils";
+ import { SendIcon } from "../ui/SendIcon";
+ import { LiveWaveform } from "../ui/LiveWaveform";
+@@ -37,6 +37,10 @@ interface NoteBottomBarProps {
+   hideInput?: boolean;
+   /** False hides the record control (e.g. read-only shared notes). */
+   canRecord?: boolean;
++  crmConfigured?: boolean;
++  crmSyncedAt?: string | null;
++  crmDisabled?: boolean;
++  onOpenCrmSync?: () => void;
+ }
+ 
+ export default function NoteBottomBar({
+@@ -51,6 +55,10 @@ export default function NoteBottomBar({
+   actionPicker,
+   hideInput,
+   canRecord = true,
++  crmConfigured = false,
++  crmSyncedAt,
++  crmDisabled = false,
++  onOpenCrmSync,
+ }: NoteBottomBarProps) {
+   const { t } = useTranslation();
+   const [inputText, setInputText] = useState("");
+@@ -127,6 +135,40 @@ export default function NoteBottomBar({
+       className="absolute bottom-0 left-0 right-0 z-10 px-5 pb-4 pt-6 pointer-events-none bg-gradient-to-t from-background from-45% to-transparent"
+     >
+       <div className="flex items-end pointer-events-auto w-full max-w-[600px] mx-auto">
++        {onOpenCrmSync && (
++          <button
++            type="button"
++            onClick={onOpenCrmSync}
++            disabled={!crmConfigured || crmDisabled}
++            className={cn(
++              "shrink-0 h-11 mr-2 px-3 rounded-full border border-black/10 dark:border-white/14",
++              GLASS_SURFACE,
++              "inline-flex items-center gap-1.5 text-xs font-medium text-foreground/65",
++              "hover:text-foreground hover:border-primary/25 transition-colors",
++              "disabled:opacity-35 disabled:pointer-events-none"
++            )}
++            title={
++              !crmConfigured
++                ? t("notes.crm.configureFirst", {
++                    defaultValue: "Configure CRM in Integrations first",
++                  })
++                : undefined
++            }
++          >
++            <RefreshCw size={13} />
++            <span className="hidden min-[760px]:inline">
++              {crmSyncedAt
++                ? t("notes.crm.update", { defaultValue: "Update CRM note" })
++                : t("notes.crm.sync", { defaultValue: "Sync to CRM" })}
++            </span>
++            {crmSyncedAt && (
++              <span
++                className="h-1.5 w-1.5 rounded-full bg-success"
++                aria-label={t("notes.crm.synced", { defaultValue: "Synced" })}
++              />
++            )}
++          </button>
++        )}
+         {canRecord && (
+           <div
+             className={cn(
+diff --git a/src/components/notes/NoteEditor.tsx b/src/components/notes/NoteEditor.tsx
+index 87580183..e7b5975f 100644
+--- a/src/components/notes/NoteEditor.tsx
++++ b/src/components/notes/NoteEditor.tsx
+@@ -25,6 +25,8 @@ import {
+ } from "../../lib/notePermissions";
+ import { ownsNote } from "../../lib/spacePermissions";
+ import SpaceMembersDialog from "./SpaceMembersDialog";
++import CrmSyncDialog from "./CrmSyncDialog";
++import type { CrmSyncState } from "../../types/crm";
+ import {
+   useShareCacheEntry,
+   useNoteConflict,
+@@ -194,6 +196,7 @@ interface NoteEditorProps {
+   onCreateFolderAndMove?: (noteId: number, folderName: string) => void;
+   /** Cancels the owner's debounced autosaves before an external copy is applied. */
+   onCancelPendingSaves?: (noteId: number) => void;
++  onBeforeCrmSync?: () => Promise<void>;
+ }
+ 
+ export default function NoteEditor({
+@@ -225,6 +228,7 @@ export default function NoteEditor({
+   onMoveToFolder,
+   onCreateFolderAndMove,
+   onCancelPendingSaves,
++  onBeforeCrmSync,
+ }: NoteEditorProps) {
+   const { t } = useTranslation();
+   const [viewMode, setViewMode] = useState<MeetingViewMode>("raw");
+@@ -235,6 +239,9 @@ export default function NoteEditor({
+   const [isDiarizing, setIsDiarizing] = useState(false);
+   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+   const [membersDialogOpen, setMembersDialogOpen] = useState(false);
++  const [crmDialogOpen, setCrmDialogOpen] = useState(false);
++  const [crmConfigured, setCrmConfigured] = useState(false);
++  const [crmSyncState, setCrmSyncState] = useState<CrmSyncState | null>(null);
+   const [aclRetryVersion, setAclRetryVersion] = useState(0);
+   const [aclRequest, setAclRequest] = useState<{
+     cloudId: string;
+@@ -270,6 +277,20 @@ export default function NoteEditor({
+     (!note.cloud_id || isTeamNote || aclState === "loaded") &&
+     shareCapabilities.canShare;
+   const canEditNote = shareCapabilities.canEdit;
++  useEffect(() => {
++    let cancelled = false;
++    void Promise.all([
++      window.electronAPI.crmGetSettings(),
++      window.electronAPI.crmGetSyncState(note.id),
++    ]).then(([settingsResult, syncResult]) => {
++      if (cancelled) return;
++      setCrmConfigured(settingsResult.success && Boolean(settingsResult.settings.configured));
++      setCrmSyncState(syncResult.success ? syncResult.state : null);
++    });
++    return () => {
++      cancelled = true;
++    };
++  }, [note.id]);
+   // Re-filing is owner-only on shared personal notes (a denied folder_id
+   // PATCH would fork an unexpected Personal copy); team members keep
+   // same-space folder moves.
+@@ -1270,6 +1291,18 @@ export default function NoteEditor({
+             canRecord={canEditNote}
+             actionPicker={isRecording || !canEditNote ? undefined : actionPicker}
+             hideInput={chatMode !== "hidden"}
++            crmConfigured={crmConfigured}
++            crmSyncedAt={crmSyncState?.syncedAt}
++            crmDisabled={!canEditNote || isRecording || isProcessing || !note.id}
++            onOpenCrmSync={() => setCrmDialogOpen(true)}
++          />
++          <CrmSyncDialog
++            open={crmDialogOpen}
++            onOpenChange={setCrmDialogOpen}
++            note={note}
++            initialState={crmSyncState}
++            onBeforeSync={onBeforeCrmSync ?? (async () => {})}
++            onSynced={setCrmSyncState}
+           />
+           {chatMode === "floating" && (
+             <EmbeddedChat
+diff --git a/src/components/notes/PersonalNotesView.tsx b/src/components/notes/PersonalNotesView.tsx
+index bb29a203..0583c29d 100644
+--- a/src/components/notes/PersonalNotesView.tsx
++++ b/src/components/notes/PersonalNotesView.tsx
+@@ -146,6 +146,7 @@ export default function PersonalNotesView({
+   const [showAddNotesDialog, setShowAddNotesDialog] = useState(false);
+   const pendingDocumentRef = useRef<PendingDocumentSave | null>(null);
+   const pendingEnhancedRef = useRef<PendingEnhancedSave | null>(null);
++  const activeSavePromisesRef = useRef(new Set<Promise<unknown>>());
+ 
+   const commitDraft = useCallback((next: NoteEditorDraft | null) => {
+     draftRef.current = next;
+@@ -410,14 +411,17 @@ export default function PersonalNotesView({
+         if (pendingDocumentRef.current !== pending) return;
+         pendingDocumentRef.current = null;
+         setIsSaving(true);
++        const savePromise = window.electronAPI.updateNote(pending.noteId, {
++          title: pending.title,
++          content: pending.content,
++        });
++        activeSavePromisesRef.current.add(savePromise);
+         try {
+-          await window.electronAPI.updateNote(pending.noteId, {
+-            title: pending.title,
+-            content: pending.content,
+-          });
++          await savePromise;
+         } catch (err) {
+           logger.warn("Failed to save note", { error: (err as Error).message }, "notes");
+         } finally {
++          activeSavePromisesRef.current.delete(savePromise);
+           setIsSaving(false);
+         }
+       }, 1000),
+@@ -436,10 +440,12 @@ export default function PersonalNotesView({
+         if (pendingEnhancedRef.current !== pending) return;
+         pendingEnhancedRef.current = null;
+         setIsSaving(true);
++        const savePromise = window.electronAPI.updateNote(pending.noteId, {
++          enhanced_content: pending.enhancedContent,
++        });
++        activeSavePromisesRef.current.add(savePromise);
+         try {
+-          await window.electronAPI.updateNote(pending.noteId, {
+-            enhanced_content: pending.enhancedContent,
+-          });
++          await savePromise;
+         } catch (err) {
+           logger.warn(
+             "Failed to save enhanced note content",
+@@ -447,6 +453,7 @@ export default function PersonalNotesView({
+             "notes"
+           );
+         } finally {
++          activeSavePromisesRef.current.delete(savePromise);
+           setIsSaving(false);
+         }
+       }, 1000),
+@@ -454,6 +461,41 @@ export default function PersonalNotesView({
+     pendingEnhancedRef.current = pending;
+   }, []);
+ 
++  const flushPendingSavesBeforeCrmSync = useCallback(async () => {
++    // A debounce may already have fired. Wait for those DB writes before
++    // asking the backend to read the note for CRM sync.
++    await Promise.all(Array.from(activeSavePromisesRef.current));
++
++    const snapshot = draftRef.current;
++    if (!snapshot) throw new Error("No saved note is available to sync");
++
++    const document = pendingDocumentRef.current;
++    const enhanced = pendingEnhancedRef.current;
++    if (document) clearTimeout(document.timer);
++    if (enhanced) clearTimeout(enhanced.timer);
++
++    setIsSaving(true);
++    try {
++      // Persist the complete current draft even when an earlier debounce has
++      // already failed and removed its pending marker. CRM reads from the DB,
++      // so this successful acknowledgement is the sync boundary.
++      const result = await window.electronAPI.updateNote(snapshot.noteId, {
++        title: snapshot.title,
++        content: snapshot.content,
++        enhanced_content: snapshot.enhancedContent,
++      });
++      if (!result?.success) throw new Error("Could not save the latest note before CRM sync");
++      // Clear only the exact snapshots we persisted; edits made while the
++      // writes were in flight install newer pending snapshots and must stay.
++      if (pendingDocumentRef.current === document) pendingDocumentRef.current = null;
++      if (pendingEnhancedRef.current === enhanced) pendingEnhancedRef.current = null;
++    } finally {
++      // On failure the snapshot refs remain, preserving the draft for retry
++      // and for the existing switch/unmount flush paths.
++      setIsSaving(false);
++    }
++  }, []);
++
+   const handleTitleChange = useCallback(
+     (sourceNoteId: number, title: string) => {
+       const next = applyNoteDraftMutation(draftRef.current, {
+@@ -762,6 +804,7 @@ export default function PersonalNotesView({
+               onMoveToFolder={handleMoveToFolder}
+               onCreateFolderAndMove={handleCreateFolderAndMove}
+               onCancelPendingSaves={cancelPendingSaves}
++              onBeforeCrmSync={flushPendingSavesBeforeCrmSync}
+               actionProcessingState={actionProcessingState}
+               actionName={actionName}
+               actionPicker={
+diff --git a/src/helpers/crmConnector.js b/src/helpers/crmConnector.js
+new file mode 100644
+index 00000000..840eb8be
+--- /dev/null
++++ b/src/helpers/crmConnector.js
+@@ -0,0 +1,419 @@
++const crypto = require("crypto");
++const { parseNoteDate } = require("./transcriptFormatter");
++
++const REQUEST_TIMEOUT_MS = 10000;
++
++class CrmError extends Error {
++  constructor(message, { code, status } = {}) {
++    super(message);
++    this.name = "CrmError";
++    if (code) this.code = code;
++    if (status) this.status = status;
++  }
++}
++
++function normalizeUrl(value, field) {
++  let url;
++  try {
++    url = new URL(String(value || ""));
++  } catch {
++    throw new CrmError(`${field} must be a valid HTTP(S) URL`, { code: "INVALID_SETTINGS" });
++  }
++  if (
++    !["http:", "https:"].includes(url.protocol) ||
++    url.username ||
++    url.password ||
++    url.search ||
++    url.hash
++  ) {
++    throw new CrmError(
++      `${field} must be a valid HTTP(S) URL without credentials, query, or fragment`,
++      {
++        code: "INVALID_SETTINGS",
++      }
++    );
++  }
++  return url.toString().replace(/\/$/, "");
++}
++
++function sanitizeSettings(input = {}) {
++  const workspaceSlug = String(input.workspaceSlug || "").trim();
++  if (!workspaceSlug || !/^[A-Za-z0-9_-]+$/.test(workspaceSlug)) {
++    throw new CrmError("Workspace slug is invalid", { code: "INVALID_SETTINGS" });
++  }
++  return {
++    baseUrl: normalizeUrl(input.baseUrl, "CRM base URL"),
++    appUrl: normalizeUrl(input.appUrl, "CRM app URL"),
++    workspaceSlug,
++  };
++}
++
++function renderTranscript(note) {
++  const raw = note.transcript || note.content || "";
++  if (typeof raw !== "string") return String(raw || "");
++  try {
++    const parsed = JSON.parse(raw);
++    const segments = Array.isArray(parsed) ? parsed : parsed?.segments;
++    if (!Array.isArray(segments)) return raw;
++    const mappings = note.speakerMappings || {};
++    return segments
++      .filter((segment) => segment?.text?.trim())
++      .map((segment) => {
++        const speaker =
++          (segment.speakerName && !segment.speakerIsPlaceholder && segment.speakerName) ||
++          mappings[segment.speaker] ||
++          (segment.speaker === "you" || segment.source === "mic" ? "You" : null) ||
++          (segment.source === "system" ? "Others" : null) ||
++          (segment.speaker
++            ? `Speaker ${Number.parseInt(String(segment.speaker).replace("speaker_", ""), 10) + 1}`
++            : "Unknown Speaker");
++        return `${speaker}: ${segment.text.trim()}`;
++      })
++      .join("\n\n");
++  } catch {
++    return raw;
++  }
++}
++
++function buildActivityBody(note, timestamp) {
++  const summary = String(note.enhanced_content || note.content || "").trim();
++  const transcript = renderTranscript(note).trim();
++  const parts = [];
++  if (summary) parts.push(summary);
++  if (transcript && transcript !== summary) parts.push(transcript);
++  const noteId = note.id == null ? "unknown" : note.id;
++  parts.push(`Synced from OpenWhispr ${noteId} on ${timestamp.toISOString()}`);
++  return parts.join("\n\n---\n\n");
++}
++
++function createCrmConnector({ store, fetchImpl = fetch, now = () => new Date() }) {
++  const noteQueues = new Map();
++
++  async function resolvedConfig() {
++    const settings = sanitizeSettings(await store.getSettings());
++    const apiKey = await store.getApiKey();
++    if (!apiKey) throw new CrmError("CRM API key is required", { code: "NOT_CONFIGURED" });
++    return { ...settings, apiKey: String(apiKey) };
++  }
++
++  async function request(path, { method = "GET", body } = {}, capturedConfig = null) {
++    const config = capturedConfig || (await resolvedConfig());
++    const controller = new AbortController();
++    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
++    try {
++      let response;
++      try {
++        response = await fetchImpl(`${config.baseUrl}${path}`, {
++          method,
++          headers: {
++            "x-api-key": config.apiKey,
++            ...(body === undefined ? {} : { "content-type": "application/json" }),
++          },
++          body: body === undefined ? undefined : JSON.stringify(body),
++          redirect: "manual",
++          signal: controller.signal,
++        });
++      } catch (error) {
++        if (error?.name === "AbortError")
++          throw new CrmError("CRM request timed out", { code: "TIMEOUT" });
++        throw new CrmError("CRM request failed", { code: "NETWORK_ERROR" });
++      }
++      if (response.status >= 300 && response.status < 400) {
++        throw new CrmError("CRM redirects are not allowed", {
++          code: "REDIRECT_BLOCKED",
++          status: response.status,
++        });
++      }
++      let payload = null;
++      const contentType = response.headers?.get?.("content-type") || "";
++      if (contentType.includes("json")) {
++        try {
++          payload = await response.json();
++        } catch (error) {
++          if (controller.signal.aborted || error?.name === "AbortError") {
++            throw new CrmError("CRM request timed out", { code: "TIMEOUT" });
++          }
++          throw new CrmError("CRM returned an invalid response", {
++            code: "INVALID_RESPONSE",
++            status: response.status,
++          });
++        }
++      }
++      if (!response.ok) {
++        throw new CrmError("CRM request was rejected", {
++          code: typeof payload?.code === "string" ? payload.code : "CRM_ERROR",
++          status: response.status,
++        });
++      }
++      if (!payload || typeof payload !== "object") {
++        throw new CrmError("CRM returned an invalid response", {
++          code: "INVALID_RESPONSE",
++          status: response.status,
++        });
++      }
++      return { payload, config };
++    } finally {
++      clearTimeout(timer);
++    }
++  }
++
++  async function syncOnce(noteId, target) {
++    if (!target || !["contact", "company"].includes(target.type) || !target.id) {
++      throw new CrmError("CRM target is invalid", { code: "INVALID_TARGET" });
++    }
++    const note = await store.getNote(noteId);
++    if (!note || note.deleted_at) throw new CrmError("Note not found", { code: "NOTE_NOT_FOUND" });
++    const config = await resolvedConfig();
++    const timestamp = now();
++    const syncedAt = timestamp.toISOString();
++    const noteDate = parseNoteDate(note.created_at);
++    const occurredAt = Number.isNaN(noteDate.getTime()) ? syncedAt : noteDate.toISOString();
++    const activity = {
++      type: "NOTE",
++      subject: String(note.title || "Untitled Note"),
++      body: buildActivityBody(note, timestamp),
++      occurredAt,
++      ...(target.type === "contact"
++        ? { contactId: String(target.id) }
++        : { companyId: String(target.id) }),
++    };
++    const previous = await store.getSyncState(noteId);
++    const sameScope =
++      previous?.baseUrl === config.baseUrl && previous?.workspaceSlug === config.workspaceSlug;
++    let activityId = sameScope ? previous?.activityId : null;
++    if (activityId) {
++      if (previous.targetId !== String(target.id) || previous.targetType !== target.type) {
++        throw new CrmError("An existing CRM activity cannot be moved to a different target", {
++          code: "TARGET_CHANGED",
++        });
++      }
++      try {
++        const patchBody = {
++          subject: activity.subject,
++          body: activity.body,
++          occurredAt: activity.occurredAt,
++        };
++        const result = await request(
++          `/rest/activities/${encodeURIComponent(activityId)}`,
++          { method: "PATCH", body: patchBody },
++          config
++        );
++        activityId = String(result.payload.id || activityId);
++      } catch (error) {
++        if (!(error.status === 404 && error.code === "NOT_FOUND")) throw error;
++        activityId = null;
++      }
++    }
++    if (!activityId) {
++      const result = await request("/rest/activities", { method: "POST", body: activity }, config);
++      if (!result.payload.id)
++        throw new CrmError("CRM returned an invalid activity", { code: "INVALID_RESPONSE" });
++      activityId = String(result.payload.id);
++    }
++    const currentConfig = await resolvedConfig();
++    if (
++      currentConfig.baseUrl !== config.baseUrl ||
++      currentConfig.workspaceSlug !== config.workspaceSlug ||
++      currentConfig.apiKey !== config.apiKey
++    ) {
++      throw new CrmError("CRM settings changed during sync", { code: "SETTINGS_CHANGED" });
++    }
++    const state = {
++      baseUrl: config.baseUrl,
++      workspaceSlug: config.workspaceSlug,
++      activityId,
++      targetId: String(target.id),
++      targetType: target.type,
++      syncedAt,
++      scopeHash: crypto
++        .createHash("sha256")
++        .update(`${config.baseUrl}\0${config.workspaceSlug}\0${config.apiKey}`)
++        .digest("hex"),
++    };
++    await store.saveSyncState(noteId, state);
++    return {
++      activityId,
++      targetId: state.targetId,
++      targetType: state.targetType,
++      syncedAt,
++      url: `${config.appUrl}/${encodeURIComponent(config.workspaceSlug)}/${target.type === "contact" ? "contacts" : "companies"}/${encodeURIComponent(target.id)}`,
++    };
++  }
++
++  return {
++    async getSettings() {
++      let settings;
++      try {
++        settings = sanitizeSettings(await store.getSettings());
++      } catch {
++        settings = { baseUrl: "", appUrl: "", workspaceSlug: "" };
++      }
++      const hasApiKey = Boolean(await store.getApiKey());
++      return {
++        ...settings,
++        hasApiKey,
++        configured: Boolean(
++          settings.baseUrl && settings.appUrl && settings.workspaceSlug && hasApiKey
++        ),
++      };
++    },
++    async saveSettings(input) {
++      const settings = sanitizeSettings(input);
++      if (Object.hasOwn(input, "apiKey")) await store.saveApiKey(String(input.apiKey || ""));
++      await store.saveSettings(settings);
++      return this.getSettings();
++    },
++    async testConnection() {
++      const config = await resolvedConfig();
++      const { payload } = await request("/rest/search?q=a", {}, config);
++      if (!Array.isArray(payload.hits))
++        throw new CrmError("CRM returned an invalid search response", { code: "INVALID_RESPONSE" });
++      return { status: 200, rowCount: payload.hits.length };
++    },
++    async searchTargets(query) {
++      const q = String(query || "").trim();
++      if (!q) return [];
++      const config = await resolvedConfig();
++      const searchBody = { q, page: 1, pageSize: 100 };
++      const [contacts, companies] = await Promise.all([
++        request("/rest/contacts/search", { method: "POST", body: searchBody }, config),
++        request("/rest/companies/search", { method: "POST", body: searchBody }, config),
++      ]);
++      if (!Array.isArray(contacts.payload.rows) || !Array.isArray(companies.payload.rows)) {
++        throw new CrmError("CRM returned an invalid search response", { code: "INVALID_RESPONSE" });
++      }
++      return [
++        ...contacts.payload.rows.flatMap((row) => {
++          if (!row?.id) return [];
++          const name = [row.firstName, row.lastName].filter(Boolean).join(" ").trim();
++          return name
++            ? [
++                {
++                  id: String(row.id),
++                  type: "contact",
++                  name,
++                  ...(row.email ? { email: String(row.email) } : {}),
++                },
++              ]
++            : [];
++        }),
++        ...companies.payload.rows.flatMap((row) =>
++          row?.id && row?.name
++            ? [
++                {
++                  id: String(row.id),
++                  type: "company",
++                  name: String(row.name),
++                  ...(row.domain ? { domain: String(row.domain) } : {}),
++                },
++              ]
++            : []
++        ),
++      ];
++    },
++    async createContact(input) {
++      const name = String(input?.name || "").trim();
++      const email = String(input?.email || "").trim();
++      if (!name || !email)
++        throw new CrmError("Contact name and email are required", { code: "INVALID_CONTACT" });
++      const config = await resolvedConfig();
++      const existingContacts = await request(
++        "/rest/contacts/search",
++        {
++          method: "POST",
++          body: { q: email, page: 1, pageSize: 100 },
++        },
++        config
++      );
++      if (!Array.isArray(existingContacts.payload.rows)) {
++        throw new CrmError("CRM returned an invalid contact search", { code: "INVALID_RESPONSE" });
++      }
++      const existing = existingContacts.payload.rows.find(
++        (row) =>
++          String(row.email || "")
++            .trim()
++            .toLowerCase() === email.toLowerCase()
++      );
++      if (existing) {
++        return {
++          id: String(existing.id),
++          type: "contact",
++          name: [existing.firstName, existing.lastName].filter(Boolean).join(" ").trim() || name,
++          email: String(existing.email),
++        };
++      }
++      let companyId;
++      if (input.companyName && input.companyDomain !== "") {
++        const companyName = String(input.companyName).trim();
++        const domain = String(input.companyDomain || "")
++          .trim()
++          .toLowerCase();
++        const { payload } = await request(
++          "/rest/companies/search",
++          { method: "POST", body: { q: domain || companyName, page: 1, pageSize: 100 } },
++          config
++        );
++        if (!Array.isArray(payload.rows))
++          throw new CrmError("CRM returned an invalid company search", {
++            code: "INVALID_RESPONSE",
++          });
++        const match = payload.rows.find(
++          (row) => domain && String(row.domain || row.domainName || "").toLowerCase() === domain
++        );
++        if (match) companyId = String(match.id);
++        else {
++          const created = await request(
++            "/rest/companies",
++            { method: "POST", body: { name: companyName, ...(domain ? { domain } : {}) } },
++            config
++          );
++          if (!created.payload.id)
++            throw new CrmError("CRM returned an invalid company", { code: "INVALID_RESPONSE" });
++          companyId = String(created.payload.id);
++        }
++      }
++      const parts = name.split(/\s+/);
++      const firstName = parts.shift();
++      const lastName = parts.join(" ");
++      const { payload } = await request(
++        "/rest/contacts",
++        {
++          method: "POST",
++          body: { firstName, lastName, email, ...(companyId ? { companyId } : {}) },
++        },
++        config
++      );
++      if (!payload.id)
++        throw new CrmError("CRM returned an invalid contact", { code: "INVALID_RESPONSE" });
++      return {
++        id: String(payload.id),
++        type: "contact",
++        name: [payload.firstName, payload.lastName].filter(Boolean).join(" ") || name,
++        ...(payload.email || email ? { email: String(payload.email || email) } : {}),
++      };
++    },
++    syncNote(noteId, target) {
++      const key = String(noteId);
++      const prior = noteQueues.get(key) || Promise.resolve();
++      const next = prior.catch(() => {}).then(() => syncOnce(noteId, target));
++      noteQueues.set(key, next);
++      return next.finally(() => {
++        if (noteQueues.get(key) === next) noteQueues.delete(key);
++      });
++    },
++    async getSyncState(noteId) {
++      const state = await store.getSyncState(noteId);
++      if (!state) return null;
++      const settings = sanitizeSettings(await store.getSettings());
++      return {
++        activityId: state.activityId,
++        targetId: state.targetId,
++        targetType: state.targetType,
++        syncedAt: state.syncedAt,
++        url: `${settings.appUrl}/${encodeURIComponent(settings.workspaceSlug)}/${state.targetType === "contact" ? "contacts" : "companies"}/${encodeURIComponent(state.targetId)}`,
++      };
++    },
++  };
++}
++
++module.exports = { buildActivityBody, createCrmConnector, CrmError };
+diff --git a/src/helpers/crmStore.js b/src/helpers/crmStore.js
+new file mode 100644
+index 00000000..0a96f7fd
+--- /dev/null
++++ b/src/helpers/crmStore.js
+@@ -0,0 +1,85 @@
++const fs = require("fs/promises");
++const path = require("path");
++const crypto = require("crypto");
++const { app } = require("electron");
++
++class CrmStore {
++  constructor({ databaseManager, environmentManager }) {
++    this.databaseManager = databaseManager;
++    this.environmentManager = environmentManager;
++    this.settingsPath = path.join(app.getPath("userData"), "crm-settings.json");
++    this.writeQueue = Promise.resolve();
++  }
++
++  async getSettings() {
++    try {
++      const value = JSON.parse(await fs.readFile(this.settingsPath, "utf8"));
++      return {
++        baseUrl: typeof value.baseUrl === "string" ? value.baseUrl : "",
++        appUrl: typeof value.appUrl === "string" ? value.appUrl : "",
++        workspaceSlug: typeof value.workspaceSlug === "string" ? value.workspaceSlug : "",
++      };
++    } catch {
++      return { baseUrl: "", appUrl: "", workspaceSlug: "" };
++    }
++  }
++
++  async saveSettings(settings) {
++    this.writeQueue = this.writeQueue
++      .catch(() => {})
++      .then(async () => {
++        await fs.mkdir(path.dirname(this.settingsPath), { recursive: true });
++        const temp = `${this.settingsPath}.tmp`;
++        await fs.writeFile(temp, JSON.stringify(settings, null, 2) + "\n", { mode: 0o600 });
++        await fs.rename(temp, this.settingsPath);
++      });
++    return this.writeQueue;
++  }
++
++  getApiKey() {
++    return this.environmentManager.getCrmApiKey();
++  }
++
++  saveApiKey(key) {
++    return this.environmentManager.saveCrmApiKey(key);
++  }
++
++  getNote(id) {
++    const note = this.databaseManager.getNote(id);
++    if (!note || note.deleted_at) return null;
++    const mappings = Object.fromEntries(
++      (this.databaseManager.getSpeakerMappings?.(id) || []).map((row) => [
++        row.speaker_id,
++        row.display_name || row.speaker_name || row.name,
++      ])
++    );
++    return { ...note, speakerMappings: mappings };
++  }
++
++  async _scope() {
++    const settings = await this.getSettings();
++    const key = (await this.getApiKey()) || "";
++    return crypto
++      .createHash("sha256")
++      .update(`${settings.baseUrl}\0${settings.workspaceSlug}\0${key}`)
++      .digest("hex");
++  }
++
++  async getSyncState(noteId) {
++    const settings = await this.getSettings();
++    const state = this.databaseManager.getCrmSyncState(noteId, await this._scope());
++    return state
++      ? { ...state, baseUrl: settings.baseUrl, workspaceSlug: settings.workspaceSlug }
++      : null;
++  }
++
++  async saveSyncState(noteId, state) {
++    return this.databaseManager.saveCrmSyncState(
++      noteId,
++      state,
++      state.scopeHash || (await this._scope())
++    );
++  }
++}
++
++module.exports = CrmStore;
+diff --git a/src/helpers/database.js b/src/helpers/database.js
+index 3bf60ac1..5710873e 100644
+--- a/src/helpers/database.js
++++ b/src/helpers/database.js
+@@ -325,6 +325,19 @@ class DatabaseManager {
+       } catch (err) {
+         if (!err.message.includes("duplicate column")) throw err;
+       }
++      for (const [column, definition] of [
++        ["crm_activity_id", "TEXT"],
++        ["crm_target_id", "TEXT"],
++        ["crm_target_type", "TEXT"],
++        ["crm_synced_at", "TEXT"],
++        ["crm_scope", "TEXT"],
++      ]) {
++        try {
++          this.db.exec(`ALTER TABLE notes ADD COLUMN ${column} ${definition}`);
++        } catch (err) {
++          if (!err.message.includes("duplicate column")) throw err;
++        }
++      }
+ 
+       this.db.exec(`
+         CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+@@ -2639,6 +2652,46 @@ class DatabaseManager {
+     }
+   }
+ 
++  getCrmSyncState(noteId, scope) {
++    if (!this.db) throw new Error("Database not initialized");
++    const accountScope = this._accountScopeCondition("notes");
++    const row = this.db
++      .prepare(
++        `SELECT crm_activity_id, crm_target_id, crm_target_type, crm_synced_at
++         FROM notes WHERE id = ? AND deleted_at IS NULL AND crm_scope = ? AND ${accountScope.sql}`
++      )
++      .get(noteId, scope, ...accountScope.params);
++    if (!row?.crm_activity_id) return null;
++    return {
++      activityId: row.crm_activity_id,
++      targetId: row.crm_target_id,
++      targetType: row.crm_target_type,
++      syncedAt: row.crm_synced_at,
++    };
++  }
++
++  saveCrmSyncState(noteId, state, scope) {
++    if (!this.db) throw new Error("Database not initialized");
++    const accountScope = this._accountScopeCondition("notes");
++    const result = this.db
++      .prepare(
++        `UPDATE notes SET crm_activity_id = ?, crm_target_id = ?, crm_target_type = ?,
++          crm_synced_at = ?, crm_scope = ?
++         WHERE id = ? AND deleted_at IS NULL AND ${accountScope.sql}`
++      )
++      .run(
++        state.activityId,
++        state.targetId,
++        state.targetType,
++        state.syncedAt,
++        scope,
++        noteId,
++        ...accountScope.params
++      );
++    if (result.changes !== 1) throw new Error("Note not found");
++    return state;
++  }
++
+   getNotes(noteType = null, limit = 100, folderId = null, spaceId = null) {
+     try {
+       if (!this.db) {
+diff --git a/src/helpers/environment.js b/src/helpers/environment.js
+index 057c7eea..0dfb1db7 100644
+--- a/src/helpers/environment.js
++++ b/src/helpers/environment.js
+@@ -21,6 +21,7 @@ const SECRET_KEYS = [
+   "BEDROCK_SESSION_TOKEN",
+   "AZURE_OPENAI_API_KEY",
+   "VERTEX_API_KEY",
++  "CRM_API_KEY",
+ ];
+ 
+ const SECRET_KEY_SET = new Set(SECRET_KEYS);
+@@ -497,6 +498,21 @@ class EnvironmentManager {
+     return { ...result, language: normalized };
+   }
+ 
++  getCrmApiKey() {
++    return this._getKey("CRM_API_KEY");
++  }
++
++  async saveCrmApiKey(key) {
++    if (this._encryptionAvailable()) {
++      await this._saveSecretKey("CRM_API_KEY", key);
++    } else if (key) {
++      process.env.CRM_API_KEY = key;
++    } else {
++      delete process.env.CRM_API_KEY;
++    }
++    return { success: true };
++  }
++
+   async saveAllKeysToEnvFile() {
+     const envPath = path.join(app.getPath("userData"), ".env");
+     await this._writeEnvFileAtomic(envPath);
+diff --git a/src/helpers/ipcHandlers.js b/src/helpers/ipcHandlers.js
+index 47937ea2..f93b460e 100644
+--- a/src/helpers/ipcHandlers.js
++++ b/src/helpers/ipcHandlers.js
+@@ -30,6 +30,8 @@ const {
+ } = require("./policyResponseError");
+ const { classifyAndLog } = require("./networkErrors");
+ const { resolveSystemDefaultMicrophone } = require("./systemDefaultMicrophone");
++const CrmStore = require("./crmStore");
++const { createCrmConnector, CrmError } = require("./crmConnector");
+ // The renderer's ModelRegistry is not main-loadable; the raw registry data is
+ // packaged, and the route resolver only needs {id, baseUrl} per provider.
+ const transcriptionProviderBaseUrls = () =>
+@@ -596,6 +598,12 @@ class IPCHandlers {
+     this.oauthProtocolRegistered = managers.oauthProtocolRegistered === true;
+     this.oauthProtocol = managers.oauthProtocol || "openwhispr";
+     this.sessionId = crypto.randomUUID();
++    this.crmConnector = createCrmConnector({
++      store: new CrmStore({
++        databaseManager: this.databaseManager,
++        environmentManager: this.environmentManager,
++      }),
++    });
+     // requestId -> AbortControllers for in-flight audio-upload work (cloud
+     // upload, or local transcription + diarization sharing one id), so a
+     // cancel can abort the exact job.
+@@ -1186,6 +1194,58 @@ class IPCHandlers {
+   }
+ 
+   setupHandlers() {
++    const crmEnvelope =
++      (fn, success) =>
++      async (...args) => {
++        try {
++          return { success: true, [success]: await fn(...args) };
++        } catch (error) {
++          const known = error instanceof CrmError;
++          return {
++            success: false,
++            error: known ? error.message : "CRM operation failed",
++            ...(known && error.code ? { code: error.code } : {}),
++            ...(known && error.status ? { status: error.status } : {}),
++          };
++        }
++      };
++    ipcMain.handle(
++      "crm-get-settings",
++      crmEnvelope(() => this.crmConnector.getSettings(), "settings")
++    );
++    ipcMain.handle(
++      "crm-save-settings",
++      crmEnvelope((_event, input) => this.crmConnector.saveSettings(input), "settings")
++    );
++    ipcMain.handle("crm-test-connection", async () => {
++      try {
++        return { success: true, ...(await this.crmConnector.testConnection()) };
++      } catch (error) {
++        const known = error instanceof CrmError;
++        return {
++          success: false,
++          error: known ? error.message : "CRM operation failed",
++          ...(known && error.code ? { code: error.code } : {}),
++          ...(known && error.status ? { status: error.status } : {}),
++        };
++      }
++    });
++    ipcMain.handle(
++      "crm-search-targets",
++      crmEnvelope((_event, query) => this.crmConnector.searchTargets(query), "targets")
++    );
++    ipcMain.handle(
++      "crm-create-contact",
++      crmEnvelope((_event, input) => this.crmConnector.createContact(input), "target")
++    );
++    ipcMain.handle(
++      "crm-sync-note",
++      crmEnvelope((_event, noteId, target) => this.crmConnector.syncNote(noteId, target), "state")
++    );
++    ipcMain.handle(
++      "crm-get-sync-state",
++      crmEnvelope((_event, noteId) => this.crmConnector.getSyncState(noteId), "state")
++    );
+     ipcMain.handle("onboarding-set-window-mode", (_event, mode) =>
+       this.windowManager.setOnboardingWindowMode(mode)
+     );
+diff --git a/src/types/crm.ts b/src/types/crm.ts
+new file mode 100644
+index 00000000..64a6030b
+--- /dev/null
++++ b/src/types/crm.ts
+@@ -0,0 +1,54 @@
++export type CrmTargetType = "contact" | "company";
++
++export interface CrmTarget {
++  id: string;
++  type: CrmTargetType;
++  name: string;
++  email?: string;
++  domain?: string;
++}
++
++export interface CrmSettings {
++  baseUrl: string;
++  appUrl: string;
++  workspaceSlug: string;
++  hasApiKey?: boolean;
++  configured?: boolean;
++}
++
++export interface CrmSyncState {
++  activityId: string;
++  targetId: string;
++  targetType: CrmTargetType;
++  syncedAt: string;
++  url: string;
++}
++
++export interface CrmSaveSettingsInput {
++  baseUrl: string;
++  appUrl: string;
++  workspaceSlug: string;
++  apiKey?: string;
++}
++
++export interface CrmCreateContactInput {
++  name: string;
++  email: string;
++  companyName?: string;
++  companyDomain?: string;
++}
++
++export type CrmFailure = {
++  success: false;
++  error: string;
++  code?: string;
++  status?: number;
++};
++
++export type CrmSettingsResult = { success: true; settings: CrmSettings } | CrmFailure;
++export type CrmTestConnectionResult =
++  { success: true; status: number; rowCount: number } | CrmFailure;
++export type CrmSearchTargetsResult = { success: true; targets: CrmTarget[] } | CrmFailure;
++export type CrmCreateContactResult = { success: true; target: CrmTarget } | CrmFailure;
++export type CrmSyncResult = { success: true; state: CrmSyncState } | CrmFailure;
++export type CrmGetSyncStateResult = { success: true; state: CrmSyncState | null } | CrmFailure;
+diff --git a/src/types/electron.ts b/src/types/electron.ts
+index 0a1309e2..c0864971 100644
+--- a/src/types/electron.ts
++++ b/src/types/electron.ts
+@@ -7,6 +7,17 @@ import type {
+   ManagedEnterpriseRequestContext,
+ } from "./enterpriseIdentity";
+ import type { CalendarAvailabilityRequest, CalendarAvailabilityResult } from "./calendar";
++import type {
++  CrmCreateContactInput,
++  CrmCreateContactResult,
++  CrmGetSyncStateResult,
++  CrmSaveSettingsInput,
++  CrmSearchTargetsResult,
++  CrmSettingsResult,
++  CrmSyncResult,
++  CrmTarget,
++  CrmTestConnectionResult,
++} from "./crm";
+ 
+ export type LocalTranscriptionProvider = "whisper" | "nvidia" | "cohere";
+ 
+@@ -1333,6 +1344,13 @@ declare global {
+         id: number,
+         state: { is_shared: number; share_token?: string | null }
+       ) => Promise<NoteItem>;
++      crmGetSettings: () => Promise<CrmSettingsResult>;
++      crmSaveSettings: (input: CrmSaveSettingsInput) => Promise<CrmSettingsResult>;
++      crmTestConnection: () => Promise<CrmTestConnectionResult>;
++      crmSearchTargets: (query: string) => Promise<CrmSearchTargetsResult>;
++      crmCreateContact: (input: CrmCreateContactInput) => Promise<CrmCreateContactResult>;
++      crmSyncNote: (noteId: number, target: CrmTarget) => Promise<CrmSyncResult>;
++      crmGetSyncState: (noteId: number) => Promise<CrmGetSyncStateResult>;
+ 
+       // Folder operations
+       getFolders: (spaceId?: number | null) => Promise<FolderItem[]>;
+diff --git a/test/helpers/crmConnector.test.js b/test/helpers/crmConnector.test.js
+new file mode 100644
+index 00000000..f601a3b9
+--- /dev/null
++++ b/test/helpers/crmConnector.test.js
+@@ -0,0 +1,411 @@
++const test = require("node:test");
++const assert = require("node:assert/strict");
++
++const { buildActivityBody, createCrmConnector } = require("../../src/helpers/crmConnector.js");
++
++const CONFIG = {
++  baseUrl: "https://crm.example",
++  appUrl: "https://app.crm.example",
++  workspaceSlug: "acme",
++};
++
++function makeStore(overrides = {}) {
++  let settings = overrides.settings || { ...CONFIG };
++  let apiKey = Object.hasOwn(overrides, "apiKey") ? overrides.apiKey : "secret-key";
++  const notes = new Map([
++    [
++      1,
++      {
++        id: 1,
++        created_at: "2026-09-09T13:00:00.000Z",
++        title: "Quarterly review",
++        enhanced_content: "The concise summary",
++        transcript: "The full transcript",
++      },
++    ],
++  ]);
++  const syncStates = new Map();
++
++  return {
++    async getSettings() {
++      return settings;
++    },
++    async saveSettings(value) {
++      settings = value;
++    },
++    async getApiKey() {
++      return apiKey;
++    },
++    async saveApiKey(value) {
++      apiKey = value;
++    },
++    async getNote(id) {
++      return notes.get(id) || null;
++    },
++    async getSyncState(id) {
++      return syncStates.get(id) || null;
++    },
++    async saveSyncState(id, value) {
++      syncStates.set(id, value);
++    },
++    inspect() {
++      return { settings, apiKey, syncStates };
++    },
++    ...overrides.methods,
++  };
++}
++
++function jsonResponse(body, status = 200, init = {}) {
++  return new Response(JSON.stringify(body), {
++    status,
++    headers: { "content-type": "application/json" },
++    ...init,
++  });
++}
++
++function requestDetails(input, init = {}) {
++  const url = typeof input === "string" ? input : input.url;
++  const headers = new Headers(
++    init.headers || (typeof input === "string" ? undefined : input.headers)
++  );
++  return {
++    url,
++    method: init.method || (typeof input === "string" ? "GET" : input.method),
++    headers,
++    body: init.body ? JSON.parse(init.body) : undefined,
++  };
++}
++
++test("settings are sanitized, report configuration state, and retain an omitted API key", async () => {
++  const store = makeStore();
++  const connector = createCrmConnector({ store, fetchImpl: async () => jsonResponse({}) });
++
++  assert.deepEqual(await connector.getSettings(), { ...CONFIG, hasApiKey: true, configured: true });
++  assert.deepEqual(await connector.saveSettings({ ...CONFIG, workspaceSlug: "new-workspace" }), {
++    ...CONFIG,
++    workspaceSlug: "new-workspace",
++    hasApiKey: true,
++    configured: true,
++  });
++  assert.equal(store.inspect().apiKey, "secret-key");
++  assert.equal("apiKey" in store.inspect().settings, false);
++});
++
++test("saving a supplied API key stores it separately and never returns it", async () => {
++  const store = makeStore({ apiKey: "old-key" });
++  const connector = createCrmConnector({ store, fetchImpl: async () => jsonResponse({}) });
++
++  const result = await connector.saveSettings({ ...CONFIG, apiKey: "replacement-key" });
++
++  assert.equal(store.inspect().apiKey, "replacement-key");
++  assert.equal(JSON.stringify(result).includes("replacement-key"), false);
++  assert.equal("apiKey" in store.inspect().settings, false);
++});
++
++test("configuration rejects non-HTTP URLs before saving", async () => {
++  const store = makeStore();
++  const connector = createCrmConnector({ store, fetchImpl: async () => jsonResponse({}) });
++
++  await assert.rejects(
++    connector.saveSettings({ ...CONFIG, baseUrl: "file:///etc/passwd" }),
++    /https?|url/i
++  );
++  assert.deepEqual(store.inspect().settings, CONFIG);
++});
++
++test("connection check authenticates in the main-process request and returns the row count", async () => {
++  const store = makeStore();
++  const connector = createCrmConnector({
++    store,
++    fetchImpl: async (input, init) => {
++      const request = requestDetails(input, init);
++      assert.equal(request.headers.get("x-api-key"), "secret-key");
++      assert.equal(request.url, "https://crm.example/rest/search?q=a");
++      assert.equal(request.method, "GET");
++      return jsonResponse({
++        hits: [{ kind: "contact", id: "contact-1", label: "Ada", detail: "ada@example.com" }],
++      });
++    },
++  });
++
++  assert.deepEqual(await connector.testConnection(), { status: 200, rowCount: 1 });
++});
++
++test("target search combines and normalizes contacts and companies", async () => {
++  const seen = [];
++  const connector = createCrmConnector({
++    store: makeStore(),
++    fetchImpl: async (input, init) => {
++      const request = requestDetails(input, init);
++      seen.push(request);
++      if (request.url.endsWith("/rest/contacts/search")) {
++        return jsonResponse({
++          rows: [{ id: "p1", firstName: "Ada", lastName: "Lovelace", email: "ada@example.com" }],
++          total: 1,
++          facetCounts: {},
++        });
++      }
++      return jsonResponse({
++        rows: [{ id: "c1", name: "Analytical Engines", domain: "engines.example" }],
++        total: 1,
++        facetCounts: {},
++      });
++    },
++  });
++
++  assert.deepEqual(await connector.searchTargets("ada"), [
++    { id: "p1", type: "contact", name: "Ada Lovelace", email: "ada@example.com" },
++    { id: "c1", type: "company", name: "Analytical Engines", domain: "engines.example" },
++  ]);
++  assert.deepEqual(
++    seen.map(({ url, method }) => ({ url, method })),
++    [
++      { url: "https://crm.example/rest/contacts/search", method: "POST" },
++      { url: "https://crm.example/rest/companies/search", method: "POST" },
++    ]
++  );
++  for (const request of seen) {
++    assert.equal(request.body.q, "ada");
++    assert.equal(request.body.page, 1);
++    assert.equal(Number.isInteger(request.body.pageSize), true);
++    assert.ok(request.body.pageSize > 0);
++  }
++});
++
++test("contact creation resolves a company then sends the CRM contact schema", async () => {
++  const requests = [];
++  const connector = createCrmConnector({
++    store: makeStore(),
++    fetchImpl: async (input, init) => {
++      const request = requestDetails(input, init);
++      requests.push(request);
++      if (request.url.endsWith("/rest/contacts/search")) {
++        return jsonResponse({ rows: [], total: 0, facetCounts: {} });
++      }
++      if (request.url.endsWith("/rest/companies/search")) {
++        return jsonResponse({ rows: [], total: 0, facetCounts: {} });
++      }
++      if (request.url.endsWith("/rest/companies"))
++        return jsonResponse({ id: "company-1", name: "Example Co", domain: "example.com" }, 201);
++      return jsonResponse(
++        { id: "contact-1", firstName: "Ada", lastName: "Lovelace", email: "ada@example.com" },
++        201
++      );
++    },
++  });
++
++  assert.deepEqual(
++    await connector.createContact({
++      name: "Ada Lovelace",
++      email: "ada@example.com",
++      companyName: "Example Co",
++      companyDomain: "example.com",
++    }),
++    { id: "contact-1", type: "contact", name: "Ada Lovelace", email: "ada@example.com" }
++  );
++  const createCompany = requests.find(
++    ({ url, method }) => url.endsWith("/rest/companies") && method === "POST"
++  );
++  const createContact = requests.find(
++    ({ url, method }) => url.endsWith("/rest/contacts") && method === "POST"
++  );
++  assert.deepEqual(createCompany.body, { name: "Example Co", domain: "example.com" });
++  assert.deepEqual(createContact.body, {
++    firstName: "Ada",
++    lastName: "Lovelace",
++    email: "ada@example.com",
++    companyId: "company-1",
++  });
++});
++
++test("activity body prefers enhanced content, retains transcript, and includes source", () => {
++  const timestamp = new Date("2026-09-09T14:15:00.000Z");
++  const body = buildActivityBody(
++    {
++      id: 1,
++      enhanced_content: "The concise summary",
++      transcript: "The full transcript",
++    },
++    timestamp
++  );
++
++  assert.ok(body.indexOf("The concise summary") < body.indexOf("The full transcript"));
++  assert.match(body, /The concise summary[\s\S]+---[\s\S]+The full transcript/);
++  assert.match(body, /Synced from OpenWhispr 1 on 2026-09-09T14:15:00\.000Z$/);
++});
++
++test("activity body renders persisted transcript speaker names instead of serialized JSON", () => {
++  const body = buildActivityBody(
++    {
++      id: 2,
++      enhanced_content: "Introductions and next steps",
++      transcript: JSON.stringify([
++        { text: "Welcome everyone", speaker: "speaker_0", speakerName: "Rico" },
++        { text: "Glad to be here", speaker: "speaker_1", speakerName: "Ada" },
++      ]),
++    },
++    new Date("2026-09-09T15:00:00.000Z")
++  );
++
++  assert.match(body, /Rico:\s*Welcome everyone/);
++  assert.match(body, /Ada:\s*Glad to be here/);
++  assert.doesNotMatch(body, /speaker_0|speakerName|\{"text"/);
++  assert.match(body, /Synced from OpenWhispr 2 on 2026-09-09T15:00:00\.000Z$/);
++});
++
++test("first sync creates one activity, persists endpoint-scoped state, and returns a safe receipt", async () => {
++  const store = makeStore();
++  const connector = createCrmConnector({
++    store,
++    now: () => new Date("2026-09-09T14:15:00.000Z"),
++    fetchImpl: async (input, init) => {
++      const request = requestDetails(input, init);
++      assert.equal(request.url, "https://crm.example/rest/activities");
++      assert.deepEqual(request.body, {
++        type: "NOTE",
++        subject: "Quarterly review",
++        body: buildActivityBody(await store.getNote(1), new Date("2026-09-09T14:15:00.000Z")),
++        occurredAt: "2026-09-09T13:00:00.000Z",
++        contactId: "contact-1",
++      });
++      return jsonResponse({ id: "activity-1" }, 201);
++    },
++  });
++
++  const result = await connector.syncNote(1, { id: "contact-1", type: "contact", name: "Ada" });
++  assert.deepEqual(result, {
++    activityId: "activity-1",
++    targetId: "contact-1",
++    targetType: "contact",
++    syncedAt: "2026-09-09T14:15:00.000Z",
++    url: result.url,
++  });
++  assert.equal(result.url, "https://app.crm.example/acme/contacts/contact-1");
++  assert.equal(JSON.stringify(result).includes("secret-key"), false);
++  const savedState = store.inspect().syncStates.get(1);
++  assert.equal(savedState.activityId, "activity-1");
++  assert.equal(savedState.targetId, "contact-1");
++  assert.equal(savedState.targetType, "contact");
++  assert.equal(savedState.syncedAt, "2026-09-09T14:15:00.000Z");
++});
++
++test("repeat and concurrent syncs update the one existing activity", async () => {
++  const store = makeStore();
++  let creates = 0;
++  let patches = 0;
++  const connector = createCrmConnector({
++    store,
++    fetchImpl: async (input, init) => {
++      const request = requestDetails(input, init);
++      if (request.method === "POST") {
++        creates += 1;
++        await new Promise((resolve) => setTimeout(resolve, 10));
++        return jsonResponse({ id: "activity-1" }, 201);
++      }
++      patches += 1;
++      assert.equal(request.url, "https://crm.example/rest/activities/activity-1");
++      assert.deepEqual(Object.keys(request.body).sort(), ["body", "occurredAt", "subject"]);
++      return jsonResponse({ id: "activity-1" });
++    },
++  });
++  const target = { id: "contact-1", type: "contact", name: "Ada" };
++
++  await Promise.all([connector.syncNote(1, target), connector.syncNote(1, target)]);
++  await connector.syncNote(1, target);
++
++  assert.equal(creates, 1);
++  assert.equal(patches, 2);
++});
++
++test("an existing activity refuses target reassignment before any request or persistence", async () => {
++  let requests = 0;
++  let saves = 0;
++  const store = makeStore({
++    methods: {
++      async getSyncState() {
++        return {
++          ...CONFIG,
++          activityId: "activity-1",
++          targetId: "contact-1",
++          targetType: "contact",
++          syncedAt: "2026-09-09T14:15:00.000Z",
++        };
++      },
++      async saveSyncState() {
++        saves += 1;
++      },
++    },
++  });
++  const connector = createCrmConnector({
++    store,
++    fetchImpl: async () => {
++      requests += 1;
++      return jsonResponse({ id: "activity-1" });
++    },
++  });
++
++  await assert.rejects(
++    connector.syncNote(1, { id: "contact-2", type: "contact", name: "Grace" }),
++    (error) => error.code === "TARGET_CHANGED"
++  );
++  assert.equal(requests, 0);
++  assert.equal(saves, 0);
++});
++
++test("a missing saved activity is recreated only for the CRM NOT_FOUND code", async () => {
++  async function exercise(errorBody) {
++    const store = makeStore({
++      methods: {
++        async getSyncState() {
++          return { ...CONFIG, activityId: "gone", targetId: "contact-1", targetType: "contact" };
++        },
++      },
++    });
++    let creates = 0;
++    const connector = createCrmConnector({
++      store,
++      fetchImpl: async (input, init) => {
++        const request = requestDetails(input, init);
++        if (request.method === "PATCH") return jsonResponse(errorBody, 404);
++        creates += 1;
++        return jsonResponse({ id: "replacement" }, 201);
++      },
++    });
++    return { connector, getCreates: () => creates };
++  }
++
++  const missing = await exercise({ code: "NOT_FOUND", message: "Activity not found" });
++  assert.equal(
++    (await missing.connector.syncNote(1, { id: "contact-1", type: "contact" })).activityId,
++    "replacement"
++  );
++  assert.equal(missing.getCreates(), 1);
++
++  const missingRoute = await exercise({ message: "Cannot PATCH /rest/activities/gone" });
++  await assert.rejects(missingRoute.connector.syncNote(1, { id: "contact-1", type: "contact" }));
++  assert.equal(missingRoute.getCreates(), 0);
++});
++
++test("failed and redirected CRM writes neither stamp success nor expose or forward the key", async () => {
++  for (const response of [
++    jsonResponse({ message: "upstream failed" }, 500),
++    new Response(null, { status: 302, headers: { location: "https://evil.example/collect" } }),
++  ]) {
++    const store = makeStore();
++    const requests = [];
++    const connector = createCrmConnector({
++      store,
++      fetchImpl: async (input, init) => {
++        requests.push(requestDetails(input, init));
++        return response.clone();
++      },
++    });
++
++    await assert.rejects(
++      connector.syncNote(1, { id: "contact-1", type: "contact" }),
++      (error) => !String(error).includes("secret-key")
++    );
++    assert.equal(store.inspect().syncStates.has(1), false);
++    assert.equal(requests.length, 1, "redirects must not be followed with credentials");
++  }
++});
+diff --git a/test/helpers/crmIpc.test.js b/test/helpers/crmIpc.test.js
+new file mode 100644
+index 00000000..38430670
+--- /dev/null
++++ b/test/helpers/crmIpc.test.js
+@@ -0,0 +1,123 @@
++const test = require("node:test");
++const assert = require("node:assert/strict");
++const Module = require("node:module");
++
++const handlersModulePath = require.resolve("../../src/helpers/ipcHandlers");
++const connectorModulePath = require.resolve("../../src/helpers/crmConnector");
++const originalLoad = Module._load;
++const handlers = new Map();
++const electronStub = {
++  app: {
++    getPath: () => "/var/tmp/openwhispr/crm-verification/ipc",
++    getName: () => "test",
++    getVersion: () => "0.0.0",
++    isPackaged: false,
++    on: () => {},
++    requestSingleInstanceLock: () => true,
++  },
++  ipcMain: { handle: (channel, fn) => handlers.set(channel, fn), on: () => {} },
++  net: { fetch: async () => ({ ok: true, status: 200, json: async () => ({}) }) },
++  BrowserWindow: class BrowserWindow {
++    static getAllWindows() {
++      return [];
++    }
++    static fromWebContents() {
++      return null;
++    }
++  },
++  shell: {},
++  dialog: {},
++  clipboard: {},
++  nativeImage: {},
++  globalShortcut: {},
++  utilityProcess: {},
++  screen: { getPrimaryDisplay: () => ({ workAreaSize: { width: 0, height: 0 } }) },
++  systemPreferences: { getMediaAccessStatus: () => "granted" },
++  session: { fromPartition: () => ({}) },
++  MessageChannelMain: class {},
++};
++
++Module._load = function loadWithElectronStub(request, parent, isMain) {
++  if (request === "electron") return electronStub;
++  if (parent?.filename === handlersModulePath && request === "./debugLogger") {
++    return new Proxy({}, { get: () => () => {} });
++  }
++  return originalLoad.call(this, request, parent, isMain);
++};
++
++function anything() {
++  return new Proxy(function () {}, {
++    get: (_target, property) => {
++      if (property === Symbol.toPrimitive || property === "toString") return () => "";
++      if (property === "then") return undefined;
++      return anything();
++    },
++    apply: () => anything(),
++  });
++}
++
++let target;
++let CrmError;
++test.before(() => {
++  delete require.cache[handlersModulePath];
++  const IPCHandlers = require(handlersModulePath);
++  ({ CrmError } = require(connectorModulePath));
++  const Ctor = IPCHandlers.default || IPCHandlers;
++  target = { sessionId: "crm-ipc-test", crmConnector: {} };
++  Ctor.prototype.setupHandlers.call(
++    new Proxy(target, {
++      get: (value, property) => (property in value ? value[property] : anything()),
++    })
++  );
++});
++
++test.after(() => {
++  Module._load = originalLoad;
++});
++
++test("registers only the seven narrow CRM invoke channels", () => {
++  const crmChannels = [...handlers.keys()].filter((channel) => channel.startsWith("crm-"));
++  assert.deepEqual(crmChannels.sort(), [
++    "crm-create-contact",
++    "crm-get-settings",
++    "crm-get-sync-state",
++    "crm-save-settings",
++    "crm-search-targets",
++    "crm-sync-note",
++    "crm-test-connection",
++  ]);
++});
++
++test("CRM IPC envelopes omit API keys and sanitize unknown main-process failures", async () => {
++  target.crmConnector.getSettings = async () => ({
++    baseUrl: "https://crm.example.test",
++    appUrl: "https://app.example.test",
++    workspaceSlug: "acme",
++    hasApiKey: true,
++    configured: true,
++  });
++  const settings = await handlers.get("crm-get-settings")({ sender: {} });
++  assert.equal(settings.success, true);
++  assert.equal(JSON.stringify(settings).includes("crm-secret"), false);
++  assert.equal(Object.hasOwn(settings.settings, "apiKey"), false);
++
++  target.crmConnector.searchTargets = async () => {
++    throw new Error("upstream body included crm-secret and private details");
++  };
++  assert.deepEqual(await handlers.get("crm-search-targets")({ sender: {} }, "Ada"), {
++    success: false,
++    error: "CRM operation failed",
++  });
++});
++
++test("CRM IPC preserves bounded connector error metadata without raw response data", async () => {
++  target.crmConnector.createContact = async () => {
++    throw new CrmError("CRM request was rejected", { code: "VALIDATION_ERROR", status: 422 });
++  };
++  assert.deepEqual(await handlers.get("crm-create-contact")({ sender: {} }, { name: "Ada" }), {
++    success: false,
++    error: "CRM request was rejected",
++    code: "VALIDATION_ERROR",
++    status: 422,
++  });
++});
+diff --git a/test/helpers/crmPersistence.test.js b/test/helpers/crmPersistence.test.js
+new file mode 100644
+index 00000000..1fc66e99
+--- /dev/null
++++ b/test/helpers/crmPersistence.test.js
+@@ -0,0 +1,213 @@
++const test = require("node:test");
++const assert = require("node:assert/strict");
++const fs = require("node:fs");
++const path = require("node:path");
++const Module = require("node:module");
++
++const fixtureRoot = "/var/tmp/openwhispr/crm-verification";
++fs.mkdirSync(fixtureRoot, { recursive: true });
++let userDataDir = fs.mkdtempSync(path.join(fixtureRoot, "persistence-"));
++
++const originalLoad = Module._load;
++Module._load = function patchedLoad(request, parent, isMain) {
++  if (request === "electron") {
++    return {
++      app: {
++        getPath: () => userDataDir,
++        getAppPath: () => process.cwd(),
++        isReady: () => false,
++      },
++    };
++  }
++  return originalLoad.call(this, request, parent, isMain);
++};
++
++process.env.NODE_ENV = "test";
++const DatabaseManager = require("../../src/helpers/database.js");
++const CrmStore = require("../../src/helpers/crmStore.js");
++const { createCrmConnector } = require("../../src/helpers/crmConnector.js");
++Module._load = originalLoad;
++
++function openDatabase(t) {
++  try {
++    return new DatabaseManager();
++  } catch (error) {
++    const message = String(error?.message || error);
++    if (
++      message.includes("NODE_MODULE_VERSION") ||
++      message.includes("Could not locate the bindings")
++    ) {
++      t.skip("better-sqlite3 native binding is unavailable for this Node runtime");
++      return null;
++    }
++    throw error;
++  }
++}
++
++function insertPrivateNote(manager, { accountId, deleted = false }) {
++  const space = manager.db
++    .prepare("INSERT INTO spaces (name, kind) VALUES (?, 'private')")
++    .run(`Private ${accountId}`);
++  return Number(
++    manager.db
++      .prepare(
++        `INSERT INTO notes (title, content, note_type, space_id, account_id, deleted_at)
++         VALUES ('CRM note', 'Follow up', 'personal', ?, ?, ?)`
++      )
++      .run(space.lastInsertRowid, accountId, deleted ? new Date().toISOString() : null)
++      .lastInsertRowid
++  );
++}
++
++test("CRM note state migrates, survives reopen, and cannot cross account or deleted-note boundaries", (t) => {
++  userDataDir = fs.mkdtempSync(path.join(fixtureRoot, "persistence-"));
++  let manager = openDatabase(t);
++  if (!manager) return;
++
++  const columns = manager.db
++    .prepare("PRAGMA table_info(notes)")
++    .all()
++    .map((row) => row.name);
++  for (const column of [
++    "crm_activity_id",
++    "crm_target_id",
++    "crm_target_type",
++    "crm_synced_at",
++    "crm_scope",
++  ]) {
++    assert.ok(columns.includes(column), `migration adds ${column}`);
++  }
++
++  manager.setActiveAccountId("account-a");
++  const noteId = insertPrivateNote(manager, { accountId: "account-a" });
++  const deletedNoteId = insertPrivateNote(manager, { accountId: "account-a", deleted: true });
++  const state = {
++    activityId: "activity-1",
++    targetId: "contact-1",
++    targetType: "contact",
++    syncedAt: "2026-09-08T12:00:00.000Z",
++  };
++  assert.deepEqual(manager.saveCrmSyncState(noteId, state, "scope-a"), state);
++  assert.throws(() => manager.saveCrmSyncState(deletedNoteId, state, "scope-a"), /Note not found/);
++
++  manager.db.close();
++  manager.db = null;
++  manager = openDatabase(t);
++  if (!manager) return;
++  manager.setActiveAccountId("account-a");
++  assert.deepEqual(manager.getCrmSyncState(noteId, "scope-a"), state);
++
++  manager.setActiveAccountId("account-b");
++  assert.equal(manager.getCrmSyncState(noteId, "scope-a"), null);
++  assert.throws(
++    () => manager.saveCrmSyncState(noteId, { ...state, activityId: "hijacked" }, "scope-b"),
++    /Note not found/
++  );
++
++  manager.setActiveAccountId("account-a");
++  assert.deepEqual(manager.getCrmSyncState(noteId, "scope-a"), state);
++  manager.db.close();
++  manager.db = null;
++});
++
++test("actual CRM store composition updates an existing activity after persisted state is reopened", async (t) => {
++  userDataDir = fs.mkdtempSync(path.join(fixtureRoot, "adapter-"));
++  let manager = openDatabase(t);
++  if (!manager) return;
++  manager.setActiveAccountId("account-a");
++  const noteId = insertPrivateNote(manager, { accountId: "account-a" });
++
++  let apiKey = "crm-secret";
++  const environmentManager = {
++    getCrmApiKey: () => apiKey,
++    saveCrmApiKey: (value) => {
++      apiKey = value;
++    },
++  };
++  let store = new CrmStore({ databaseManager: manager, environmentManager });
++  await store.saveSettings({
++    baseUrl: "http://127.0.0.1:43199",
++    appUrl: "http://127.0.0.1:43200",
++    workspaceSlug: "acme",
++  });
++
++  const requests = [];
++  const fetchImpl = async (url, options) => {
++    requests.push({ url, method: options.method });
++    return {
++      ok: true,
++      status: 200,
++      headers: { get: () => "application/json" },
++      json: async () => ({ id: "activity-1" }),
++    };
++  };
++  let connector = createCrmConnector({ store, fetchImpl });
++  await connector.syncNote(noteId, { id: "contact-1", type: "contact" });
++
++  manager.db.close();
++  manager.db = null;
++  manager = openDatabase(t);
++  if (!manager) return;
++  manager.setActiveAccountId("account-a");
++  store = new CrmStore({ databaseManager: manager, environmentManager });
++  connector = createCrmConnector({ store, fetchImpl });
++  await connector.syncNote(noteId, { id: "contact-1", type: "contact" });
++
++  assert.deepEqual(
++    requests.map(({ url, method }) => ({ url, method })),
++    [
++      { url: "http://127.0.0.1:43199/rest/activities", method: "POST" },
++      {
++        url: "http://127.0.0.1:43199/rest/activities/activity-1",
++        method: "PATCH",
++      },
++    ]
++  );
++  manager.db.close();
++  manager.db = null;
++});
++
++test("CRM API key uses encrypted secret storage, stays out of .env, and explicit empty removes it", async () => {
++  userDataDir = fs.mkdtempSync(path.join(fixtureRoot, "secret-"));
++  const environmentPath = require.resolve("../../src/helpers/environment.js");
++  const secretCryptoPath = require.resolve("../../src/helpers/secretCrypto.js");
++  const encryptedPrefix = Buffer.from("encrypted:");
++  const cryptoStub = {
++    isAvailable: () => true,
++    encrypt: (value) => Buffer.concat([encryptedPrefix, Buffer.from(value).reverse()]),
++    decrypt: (buffer) => ({
++      value: Buffer.from(buffer.subarray(encryptedPrefix.length)).reverse().toString("utf8"),
++      needsReencrypt: false,
++    }),
++  };
++  const priorLoad = Module._load;
++  Module._load = function loadEncryptedEnvironment(request, parent, isMain) {
++    if (request === "electron") {
++      return { app: { getPath: () => userDataDir }, safeStorage: {} };
++    }
++    if (request === "./secretCrypto" && parent?.filename === environmentPath) return cryptoStub;
++    return priorLoad.call(this, request, parent, isMain);
++  };
++  delete require.cache[environmentPath];
++  delete require.cache[secretCryptoPath];
++  const EnvironmentManager = require(environmentPath);
++  Module._load = priorLoad;
++
++  const environment = new EnvironmentManager();
++  delete process.env.CRM_API_KEY;
++  await environment.init();
++  await environment.saveCrmApiKey("crm-secret-value");
++  const secretPath = path.join(userDataDir, "secure-keys", "CRM_API_KEY.enc");
++  const encrypted = fs.readFileSync(secretPath);
++  assert.equal(encrypted.includes(Buffer.from("crm-secret-value")), false);
++  assert.equal(environment.getCrmApiKey(), "crm-secret-value");
++
++  await environment.saveAllKeysToEnvFile();
++  const envContents = fs.readFileSync(path.join(userDataDir, ".env"), "utf8");
++  assert.equal(envContents.includes("CRM_API_KEY"), false);
++  assert.equal(envContents.includes("crm-secret-value"), false);
++
++  await environment.saveCrmApiKey("");
++  assert.equal(environment.getCrmApiKey(), "");
++  assert.equal(fs.existsSync(secretPath), false);
++});
+-- 
+2.55.0
+

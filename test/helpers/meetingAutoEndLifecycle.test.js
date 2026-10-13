@@ -39,7 +39,7 @@ test("stop-completion validation rejects invalid, stale, and non-owning sessions
   ]);
 });
 
-test("overlay response validation accepts only restart or dismiss for a live offer", () => {
+test("overlay response validation accepts only keep, stop, restart, or dismiss", () => {
   const overlay = { id: "overlay" };
   const calls = [];
   const engine = {
@@ -53,9 +53,13 @@ test("overlay response validation accepts only restart or dismiss for a live off
     success: false,
     reason: "invalid-session",
   });
-  assert.deepEqual(respondToMeetingAutoEndNotification(engine, "meeting-2", "keep", overlay), {
+  assert.deepEqual(respondToMeetingAutoEndNotification(engine, "meeting-2", "pause", overlay), {
     success: false,
     reason: "invalid-action",
+  });
+  assert.deepEqual(respondToMeetingAutoEndNotification(engine, "meeting-1", "keep", overlay), {
+    success: false,
+    reason: "stale-session",
   });
   assert.deepEqual(respondToMeetingAutoEndNotification(engine, "meeting-1", "dismiss", overlay), {
     success: false,
@@ -65,6 +69,7 @@ test("overlay response validation accepts only restart or dismiss for a live off
     success: true,
   });
   assert.deepEqual(calls, [
+    { sessionId: "meeting-1", action: "keep", sender: overlay },
     { sessionId: "meeting-1", action: "dismiss", sender: overlay },
     { sessionId: "meeting-2", action: "restart", sender: overlay },
   ]);
@@ -83,10 +88,10 @@ test("main IPC resolves the current engine and scopes both actions to event.send
   };
   registerMeetingAutoEndLifecycleHandlers(ipcMain, () => engine);
 
-  assert.deepEqual(
-    await handlers.get("meeting-auto-end-completed")({ sender }, "meeting-1"),
-    { success: false, reason: "stale-session" }
-  );
+  assert.deepEqual(await handlers.get("meeting-auto-end-completed")({ sender }, "meeting-1"), {
+    success: false,
+    reason: "stale-session",
+  });
 
   engine = {
     completeAutoEndSession: async (sessionId, eventSender) => {
@@ -98,10 +103,9 @@ test("main IPC resolves the current engine and scopes both actions to event.send
       return true;
     },
   };
-  assert.deepEqual(
-    await handlers.get("meeting-auto-end-completed")({ sender }, "meeting-2"),
-    { success: true }
-  );
+  assert.deepEqual(await handlers.get("meeting-auto-end-completed")({ sender }, "meeting-2"), {
+    success: true,
+  });
   assert.deepEqual(
     await handlers.get("meeting-auto-end-respond")({ sender }, "meeting-2", "dismiss"),
     { success: true }

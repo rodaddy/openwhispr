@@ -84,6 +84,7 @@ export interface WhisperModelInfo {
   descriptionKey?: string;
   size: string;
   sizeMb: number;
+  ramEstimateMb?: number;
   fileName: string;
   downloadUrl: string;
   recommended?: boolean;
@@ -103,6 +104,7 @@ export interface ParakeetModelInfo {
   descriptionKey?: string;
   size: string;
   sizeMb: number;
+  ramEstimateMb?: number;
   expectedSizeBytes?: number;
   language: string;
   supportedLanguages: string[];

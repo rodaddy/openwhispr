@@ -1,0 +1,10 @@
+{
+  "name": "@rtech-whisper/voice-acceptance",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24 <25" },
+  "scripts": {
+    "check": "node --test test/*.test.mjs"
+  }
+}

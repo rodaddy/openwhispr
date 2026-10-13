@@ -40,14 +40,14 @@ export const tinfoilProvider: InferenceProvider = {
     applyChatCompletionsParams(requestBody, { model, provider: "tinfoil", config, maxTokens });
 
     // Keep SDK-internal retries off so withRetry stays the single retry layer.
-    const timeoutMs = getLlmRequestTimeoutSeconds() * 1000;
+    const timeoutMs = getLlmRequestTimeoutSeconds({ timeoutSeconds: config.timeoutSeconds }) * 1000;
     const response = await withRetry(
       () =>
         client.chat.completions.create(requestBody as any, {
           timeout: timeoutMs,
           maxRetries: 0,
         }),
-      createApiRetryStrategy()
+      createApiRetryStrategy({ timeoutSeconds: config.timeoutSeconds })
     );
 
     const responseText =

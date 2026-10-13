@@ -1,0 +1,291 @@
+From 13e8146e30ab7d15b182a4f9e9ed600087b23ead Mon Sep 17 00:00:00 2001
+From: Rico Rojas <rickrojas@gmail.com>
+Date: Tue, 8 Sep 2026 21:08:24 -0400
+Subject: [PATCH 8/9] perf(dictation): open the pill and panel at once, warm
+ the gate context, paste from the resident listener
+
+Three more delays measured on the fork after the press path was fixed:
+
+- The pill held 260 ms before growing (300 ms) and the live transcript
+  entrance reached content ~1.5 s after the press. Both timelines keep
+  their beats but land inside ~0.2 s and ~0.4 s respectively.
+- The silence-gate AudioContext cost 135 ms on a cold audio stack every
+  recording. It now survives the recording suspended and resumes in a
+  few ms; cleanup() closes it.
+- Spawning macos-fast-paste cost ~420 ms per paste, almost all of it a
+  new process connecting to the window server. The resident Globe
+  listener accepts a PASTE line on stdin and posts Cmd+V itself; the
+  clipboard manager uses it when wired and falls back to the helper on
+  any failure or timeout.
+---
+ main.js                              |  1 +
+ resources/macos-globe-listener.swift | 25 ++++++++++++++++++++-
+ src/helpers/audioManager.js          | 21 +++++++++++++++---
+ src/helpers/clipboard.js             | 29 ++++++++++++++++++++++++
+ src/helpers/globeKeyManager.js       | 33 ++++++++++++++++++++++++++++
+ src/helpers/voicePillPresentation.js | 31 +++++++++++++++-----------
+ 6 files changed, 123 insertions(+), 17 deletions(-)
+
+diff --git a/main.js b/main.js
+index 0e0c6a23..6d78590e 100644
+--- a/main.js
++++ b/main.js
+@@ -1735,6 +1735,7 @@ async function startApp() {
+     syncMacNativeHotkeyConfiguration();
+     globeKeyManager.start();
+     hotkeyManager.on("hotkey-loaded", syncMacNativeHotkeyConfiguration);
++    clipboardManager?.setResidentPaste?.(() => globeKeyManager.pasteViaListener());
+ 
+     ipcMain.on("hotkey-listening-mode-changed", (_event, enabled) => {
+       if (enabled) {
+diff --git a/resources/macos-globe-listener.swift b/resources/macos-globe-listener.swift
+index 1b8402e1..302fc000 100644
+--- a/resources/macos-globe-listener.swift
++++ b/resources/macos-globe-listener.swift
+@@ -345,13 +345,36 @@ stdinSource.setEventHandler {
+     while let newline = stdinBuffer.firstIndex(of: UInt8(ascii: "\n")) {
+         let line = Data(stdinBuffer[..<newline])
+         stdinBuffer.removeSubrange(...newline)
+-        if let config = try? JSONDecoder().decode(ListenerConfig.self, from: line) {
++        if line == Data("PASTE".utf8) {
++            postPasteKeystroke()
++        } else if let config = try? JSONDecoder().decode(ListenerConfig.self, from: line) {
+             applyConfiguration(config)
+         } else {
+             emitWarning("Ignored malformed configuration line")
+         }
+     }
+ }
++
++// Posts ⌘V from this resident process. A freshly spawned helper pays ~400 ms
++// per paste just to come up and connect to the window server; this process is
++// already connected, so the keystroke lands in a few ms.
++func postPasteKeystroke() {
++    guard AXIsProcessTrusted() else {
++        emit("PASTE_FAILED:untrusted")
++        return
++    }
++    guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: true),
++          let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: false) else {
++        emit("PASTE_FAILED:event")
++        return
++    }
++    keyDown.flags = .maskCommand
++    keyUp.flags = .maskCommand
++    keyDown.post(tap: .cgSessionEventTap)
++    usleep(8000)
++    keyUp.post(tap: .cgSessionEventTap)
++    emit("PASTE_OK")
++}
+ stdinSource.resume()
+ 
+ func installTerminationSource(for signalNumber: Int32) -> DispatchSourceSignal {
+diff --git a/src/helpers/audioManager.js b/src/helpers/audioManager.js
+index fdd7d4ed..a176775d 100644
+--- a/src/helpers/audioManager.js
++++ b/src/helpers/audioManager.js
+@@ -1271,7 +1271,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
+       }
+ 
+       try {
+-        this._silenceCtx = new AudioContext();
++        // A fresh AudioContext costs ~135 ms on a cold audio stack (measured on
++        // Apple silicon); one that was only suspended resumes in a few ms, so
++        // the gate context outlives the recording (teardownSpeechGate).
++        if (!this._silenceCtx || this._silenceCtx.state === "closed") {
++          this._silenceCtx = new AudioContext();
++        }
+         if (this._silenceCtx.state === "suspended") {
+           // Not awaited — resume() can hang when the output device is wedged.
+           this._silenceCtx.resume().catch(() => {});
+@@ -1671,8 +1676,14 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
+       clearInterval(this._silenceInterval);
+       this._silenceInterval = null;
+     }
+-    this._silenceCtx?.close().catch(() => {});
+-    this._silenceCtx = null;
++    // Detach the stream but keep the context suspended for the next recording;
++    // cleanup() closes it for good.
++    try {
++      this._silenceSource?.disconnect();
++    } catch {}
++    if (this._silenceCtx && this._silenceCtx.state === "running") {
++      this._silenceCtx.suspend().catch(() => {});
++    }
+     this._silenceAnalyser = null;
+     this._silenceSource = null;
+     this._levelData = null;
+@@ -5377,6 +5388,10 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
+       this.persistentAudioContext = null;
+       this.workletModuleLoaded = false;
+     }
++    if (this._silenceCtx && this._silenceCtx.state !== "closed") {
++      this._silenceCtx.close().catch(() => {});
++    }
++    this._silenceCtx = null;
+     if (this.workletBlobUrl) {
+       URL.revokeObjectURL(this.workletBlobUrl);
+       this.workletBlobUrl = null;
+diff --git a/src/helpers/clipboard.js b/src/helpers/clipboard.js
+index c85aeb44..9cbb987e 100644
+--- a/src/helpers/clipboard.js
++++ b/src/helpers/clipboard.js
+@@ -987,11 +987,40 @@ class ClipboardManager {
+     }
+   }
+ 
++  // A resident process that can post ⌘V (the Globe listener). Spawning the
++  // fast-paste helper costs ~400 ms per paste on Apple silicon, most of it the
++  // new process connecting to the window server; the resident path is a few ms.
++  setResidentPaste(residentPaste) {
++    this._residentPaste = typeof residentPaste === "function" ? residentPaste : null;
++  }
++
+   async pasteMacOS(originalClipboard, options = {}) {
+     const fastPasteBinary = this.resolveFastPasteBinary();
+     const useFastPaste = !!fastPasteBinary;
+     const pasteDelay = options.fromStreaming ? (useFastPaste ? 15 : 50) : PASTE_DELAYS.darwin;
+ 
++    if (this._residentPaste) {
++      await new Promise((resolve) => setTimeout(resolve, pasteDelay));
++      try {
++        await this._residentPaste();
++        return {
++          restoreComplete:
++            originalClipboard != null
++              ? this._restoreClipboardAfterDelay(originalClipboard, {
++                  delayMs: RESTORE_DELAYS.darwin,
++                  expectedText: options.expectedClipboardText,
++                })
++              : Promise.resolve(),
++        };
++      } catch (error) {
++        debugLogger.debug(
++          "Resident paste unavailable, falling back to the paste helper",
++          { error: error?.message },
++          "clipboard"
++        );
++      }
++    }
++
+     return new Promise((resolve, reject) => {
+       setTimeout(() => {
+         const pasteProcess = useFastPaste
+diff --git a/src/helpers/globeKeyManager.js b/src/helpers/globeKeyManager.js
+index 46f8ffee..04dd8ba8 100644
+--- a/src/helpers/globeKeyManager.js
++++ b/src/helpers/globeKeyManager.js
+@@ -57,6 +57,36 @@ class GlobeKeyManager extends EventEmitter {
+     }
+   }
+ 
++  // Asks the resident listener to post ⌘V. Rejects when the listener is not
++  // running, reports a failure, or does not answer in time, so the caller can
++  // fall back to spawning the paste helper.
++  pasteViaListener({ timeoutMs = 400 } = {}) {
++    const child = this.process;
++    if (!child?.stdin?.writable || this._pendingPaste) {
++      return Promise.reject(new Error("listener unavailable"));
++    }
++    return new Promise((resolve, reject) => {
++      const timer = setTimeout(() => {
++        this._settlePendingPaste(new Error("listener paste timed out"));
++      }, timeoutMs);
++      this._pendingPaste = { resolve, reject, timer };
++      try {
++        child.stdin.write("PASTE\n");
++      } catch (error) {
++        this._settlePendingPaste(error);
++      }
++    });
++  }
++
++  _settlePendingPaste(error) {
++    const pending = this._pendingPaste;
++    if (!pending) return;
++    this._pendingPaste = null;
++    clearTimeout(pending.timer);
++    if (error) pending.reject(error);
++    else pending.resolve();
++  }
++
+   _sendConfiguration() {
+     const child = this.process;
+     if (!child?.stdin?.writable) {
+@@ -195,6 +225,8 @@ class GlobeKeyManager extends EventEmitter {
+             if (button) {
+               this.emit("mouse-button-up", button);
+             }
++          } else if (line === "PASTE_OK" || line.startsWith("PASTE_FAILED")) {
++            this._settlePendingPaste(line === "PASTE_OK" ? null : new Error(line));
+           }
+         });
+     });
+@@ -281,6 +313,7 @@ class GlobeKeyManager extends EventEmitter {
+       this.process.kill();
+       this.process = null;
+     }
++    this._settlePendingPaste(new Error("listener stopped"));
+   }
+ 
+   reportError(error) {
+diff --git a/src/helpers/voicePillPresentation.js b/src/helpers/voicePillPresentation.js
+index 5b289289..25881907 100644
+--- a/src/helpers/voicePillPresentation.js
++++ b/src/helpers/voicePillPresentation.js
+@@ -23,16 +23,18 @@ export const LISTENING_ENTRANCE_TIMING = Object.freeze({
+   // changes shape. It was 420ms when it also had to hide the native window
+   // grow; BASE and RECORDING now share one box (windowConfig.js), so the
+   // floating pill's hold is purely the design beat.
+-  thinkingMs: 260,
++  // Fork: recording starts within a few ms of the press, so the pill has to
++  // read as listening just as fast. The beats are kept, only shortened.
++  thinkingMs: 40,
+   // A recording that starts under the open assistant panel first hands the
+   // footer from final actions back to the pill (actions retreat + pill
+   // entrance — getAssistantFooterTransitionTimeline). The expansion must not
+   // start until that handoff settles, or both animate the same control.
+   assistantFooterThinkingMs: 420,
+-  expansionMs: 300,
++  expansionMs: 120,
+   // Hold the finished footprint briefly so the waveform reveal cannot be
+   // perceived as part of the width animation.
+-  waveformDelayMs: 100,
++  waveformDelayMs: 20,
+ });
+ 
+ // The pill's morph between the two VOICE_PILL_FOOTPRINT boxes. The cancel
+@@ -93,17 +95,20 @@ export function resolveAssistantResponseReady({
+   );
+ }
+ 
++// Fork: the upstream choreography reached content ~1.5 s after the press and
++// streamed text at ~1.8 s. The same beats now land inside ~0.4 s so the panel
++// is effectively there when the user starts talking.
+ export const LIVE_TRANSCRIPT_ENTRANCE_TIMING = Object.freeze({
+-  encapsulateMs: 180,
+-  encapsulateHoldMs: 140,
+-  horizontalMs: 320,
+-  controlsDelayMs: 70,
+-  controlsRevealMs: 200,
+-  contentDelayMs: 110,
+-  measurementSettleMs: 220,
+-  panelExpansionMs: 320,
+-  contentRevealDelayMs: 80,
+-  contentSettleMs: 280,
++  encapsulateMs: 40,
++  encapsulateHoldMs: 10,
++  horizontalMs: 120,
++  controlsDelayMs: 10,
++  controlsRevealMs: 60,
++  contentDelayMs: 10,
++  measurementSettleMs: 40,
++  panelExpansionMs: 120,
++  contentRevealDelayMs: 10,
++  contentSettleMs: 20,
+ });
+ 
+ export function getLiveTranscriptEntranceTimeline(timing = LIVE_TRANSCRIPT_ENTRANCE_TIMING) {
+-- 
+2.55.0
+

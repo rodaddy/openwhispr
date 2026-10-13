@@ -29,7 +29,8 @@ const loadStartup = () => import("../../src/helpers/dictionaryStartup.js");
 function isNativeBindingUnavailable(error) {
   const message = String(error?.message || error);
   return (
-    message.includes("NODE_MODULE_VERSION") || message.includes("Could not locate the bindings file")
+    message.includes("NODE_MODULE_VERSION") ||
+    message.includes("Could not locate the bindings file")
   );
 }
 
@@ -98,9 +99,7 @@ test("rows inserted outside the app get a client_dict_id from the schema", (t) =
   db.setDictionary(["OpenWhispr"]);
   db.db.prepare("INSERT INTO custom_dictionary (word) VALUES (?)").run("Contact Name");
 
-  const row = db.db
-    .prepare("SELECT * FROM custom_dictionary WHERE word = 'Contact Name'")
-    .get();
+  const row = db.db.prepare("SELECT * FROM custom_dictionary WHERE word = 'Contact Name'").get();
   assert.match(row.client_dict_id, UUID_V4);
 
   const pending = db.getPendingDictionary().find((r) => r.word === "Contact Name");
@@ -268,7 +267,10 @@ test("removing words hard-deletes unsynced rows and tombstones synced ones", (t)
   assert.equal(result.removed, 2);
   assert.deepEqual(db.getDictionary(), ["OpenWhispr"]);
 
-  assert.equal(db.db.prepare("SELECT * FROM custom_dictionary WHERE word = 'Temp'").get(), undefined);
+  assert.equal(
+    db.db.prepare("SELECT * FROM custom_dictionary WHERE word = 'Temp'").get(),
+    undefined
+  );
   const tombstone = db.db.prepare("SELECT * FROM custom_dictionary WHERE word = 'Synced'").get();
   assert.ok(tombstone.deleted_at);
   assert.equal(tombstone.sync_status, "pending");
@@ -406,4 +408,30 @@ test("case-variant adds do not create duplicate rows", (t) => {
     .prepare("SELECT * FROM custom_dictionary WHERE lower(word) = 'alice' AND deleted_at IS NULL")
     .all();
   assert.equal(rows.length, 1);
+});
+
+// rtech-whisper#244: two cloud rows for one word whose stamps tie at the
+// millisecond must settle on the same row on every device, whichever it held.
+test("a word-only match that ties at the millisecond goes to the lower cloud id", (t) => {
+  const low = { id: "cloud-a", client_dict_id: "c-a", word: "Kubernetes", source: "manual" };
+  const high = { id: "cloud-b", client_dict_id: "c-b", word: "Kubernetes", source: "manual" };
+  const stampA = "2026-09-20T12:00:00.000100Z";
+  const stampB = "2026-09-20T12:00:00.000500Z";
+  for (const [first, second] of [
+    [
+      { ...low, updated_at: stampA },
+      { ...high, updated_at: stampB },
+    ],
+    [
+      { ...high, updated_at: stampB },
+      { ...low, updated_at: stampA },
+    ],
+  ]) {
+    const db = createDb(t);
+    if (!db) return;
+    db.upsertDictionaryFromCloud(first);
+    db.upsertDictionaryFromCloud(second);
+    const rows = db.db.prepare("SELECT cloud_id FROM custom_dictionary").all();
+    assert.deepEqual(rows, [{ cloud_id: "cloud-a" }], `held ${first.id} first`);
+  }
 });

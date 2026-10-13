@@ -1,3 +1,5 @@
+const AUTO_END_ACTIONS = new Set(["keep", "stop", "restart", "dismiss"]);
+
 const isValidSessionId = (sessionId) =>
   typeof sessionId === "string" && sessionId.trim().length > 0;
 
@@ -15,7 +17,7 @@ function respondToMeetingAutoEndNotification(engine, sessionId, action, sender) 
   if (!isValidSessionId(sessionId)) {
     return { success: false, reason: "invalid-session" };
   }
-  if (action !== "restart" && action !== "dismiss") {
+  if (!AUTO_END_ACTIONS.has(action)) {
     return { success: false, reason: "invalid-action" };
   }
   if (engine?.respondToAutoEndNotification(sessionId, action, sender) !== true) {

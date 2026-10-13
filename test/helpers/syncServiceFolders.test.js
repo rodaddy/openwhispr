@@ -69,7 +69,10 @@ function shift(iso, hours) {
   return new Date(Date.parse(iso) + hours * 3600_000).toISOString();
 }
 
-test("a note in a folder with no cloud mapping pushes folder_id undefined, not the local row id", async (t) => {
+// A note in a folder the cloud has not accepted waits for it: pushing it with
+// folder_id null would file it nowhere on every other device (review of
+// #107-#118), and the local integer id must never leak either.
+test("a note in a folder with no cloud mapping waits for the folder, never pushing unfiled", async (t) => {
   const ctx = await setup(t);
   if (!ctx) return;
   const { db, cloud } = ctx;
@@ -81,18 +84,14 @@ test("a note in a folder with no cloud mapping pushes folder_id undefined, not t
 
   await (await newSyncService(t)).syncAll(true);
 
-  const [batch] = cloud.logFor("/api/notes/batch-create");
-  assert.ok(batch, "the note must still be pushed even though the folder push failed");
-  const sent = batch.body.notes[0];
-  assert.equal(sent.client_note_id, saved.note.client_note_id);
-  assert.equal(
-    sent.folder_id,
-    null,
-    "an unmapped folder must null the reference, never leak the local integer id"
-  );
-  assert.notEqual(sent.folder_id, work.id);
-  assert.equal(cloud.notes()[0].folder_id, null);
-  assert.equal(db.getNote(saved.note.id).sync_status, "synced");
+  const sent = cloud
+    .logFor("/api/notes/batch-create")
+    .flatMap((c) => c.body.notes)
+    .filter((n) => n.client_note_id === saved.note.client_note_id);
+  assert.deepEqual(sent, [], "the note must wait for its folder, not push unfiled");
+  assert.equal(cloud.notes().length, 0);
+  assert.equal(db.getNote(saved.note.id).cloud_id, null);
+  assert.equal(db.getNote(saved.note.id).sync_status, "pending");
 });
 
 test("pulled notes map cloud folder ids back to local ids and park the row when the folder is unknown", async (t) => {
@@ -163,13 +162,15 @@ test("a fresh device adopts the cloud's default folders by name instead of pushi
   const [batch] = cloud.logFor("/api/folders/batch-create");
   assert.deepEqual(
     batch.body.folders.map((f) => f.name),
-    ["Videos"],
+    // Grill and Life Story are seeded non-default (grillFolders.js), so
+    // adoption never matches them and they push as new folders.
+    ["Grill", "Life Story", "Videos"],
     "adopted defaults must be gone from the push, or the cloud forks a second Personal"
   );
 
-  assert.equal(cloud.folders().length, 3);
+  assert.equal(cloud.folders().length, 5);
   assert.equal(cloud.folders().filter((f) => f.name === "Personal").length, 1);
-  assert.equal(allFolders(db).length, 3, "adoption must not add a local row either");
+  assert.equal(allFolders(db).length, 5, "adoption must not add a local row either");
 
   const personal = folderByName(db, "Personal");
   assert.equal(personal.client_folder_id, "cf-personal");
@@ -192,7 +193,7 @@ test("pushPendingFolders sends name/client_folder_id/is_default/sort_order in ro
   const sent = calls[0].body.folders;
   assert.deepEqual(
     sent.map((f) => f.name),
-    ["Meetings", "Personal", "Videos"],
+    ["Grill", "Life Story", "Meetings", "Personal", "Videos"],
     "input order is what pairs created[i] with fresh[i] during identity adoption"
   );
   for (const folder of sent) {
@@ -202,13 +203,18 @@ test("pushPendingFolders sends name/client_folder_id/is_default/sort_order in ro
       "name",
       "sort_order",
     ]);
-    assert.equal(folder.is_default, true, "SQLite's 1 must be coerced to a boolean on the wire");
     assert.equal(typeof folder.sort_order, "number");
     assert.equal(typeof folder.client_folder_id, "string");
   }
+  // SQLite's 1/0 must be coerced to a boolean on the wire; the grill folders
+  // are seeded non-default (grillFolders.js).
+  assert.deepEqual(
+    sent.map((f) => f.is_default),
+    [false, false, true, true, true]
+  );
   assert.deepEqual(
     sent.map((f) => f.sort_order),
-    [1, 0, 2]
+    [3, 4, 1, 0, 2]
   );
 
   for (const local of allFolders(db)) {
@@ -238,7 +244,7 @@ test("a renamed linked folder PATCHes /api/folders/update instead of creating a 
   const patches = cloud.logFor("/api/folders/update");
   assert.equal(patches.length, 1);
   assert.equal(patches[0].method, "PATCH");
-  assert.deepEqual(patches[0].body, { id: cloudId, name: "Work Renamed", sort_order: 3 });
+  assert.deepEqual(patches[0].body, { id: cloudId, name: "Work Renamed", sort_order: 5 });
 
   assert.equal(cloud.folder(cloudId).name, "Work Renamed");
   assert.equal(
@@ -276,8 +282,8 @@ test("a failed folder PATCH leaves that folder pending and does not abort the re
     2,
     "the second folder must still be attempted after the first threw"
   );
-  assert.deepEqual(patches[0].body, { id: alphaCloudId, name: "Alpha Renamed", sort_order: 3 });
-  assert.deepEqual(patches[1].body, { id: betaCloudId, name: "Beta Renamed", sort_order: 4 });
+  assert.deepEqual(patches[0].body, { id: alphaCloudId, name: "Alpha Renamed", sort_order: 5 });
+  assert.deepEqual(patches[1].body, { id: betaCloudId, name: "Beta Renamed", sort_order: 6 });
 
   assert.equal(
     folderByName(db, "Alpha Renamed").sync_status,

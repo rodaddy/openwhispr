@@ -3,23 +3,12 @@ import { useTranslation } from "react-i18next";
 import App from "./App.jsx";
 import AgentDictationPillOverlay from "./components/dictation/AgentDictationPillOverlay.tsx";
 import MeetingNotificationOverlay from "./components/MeetingNotificationOverlay.tsx";
-import ReauthenticationScreen from "./components/ReauthenticationScreen.tsx";
 import UpdateNotificationOverlay from "./components/UpdateNotificationOverlay.tsx";
 import BackgroundModelDownloadTray from "./components/onboarding/BackgroundModelDownloadTray.tsx";
-import { LEGACY_ONBOARDING_STEP_KEY, ONBOARDING_SESSION_KEY } from "./components/onboarding/flow";
-import { useAuth } from "./hooks/useAuth";
 import { useControlPanelWindowDrag } from "./hooks/useControlPanelWindowDrag";
 import { useTheme } from "./hooks/useTheme";
-import { mirrorActiveAccountScope } from "./lib/accountScopeMirror";
-import { usePolicyStore } from "./stores/policyStore";
 import { resolveSettledControlPanelWindowMode } from "./utils/controlPanelWindowMode.ts";
 import { isControlPanelWindow } from "./utils/windowContext.ts";
-
-// Either marker means the flow is mid-way: the legacy step key is kept for
-// back-compat, the v2 session is what the rebuilt flow actually persists.
-const isOnboardingInProgress = () =>
-  localStorage.getItem(LEGACY_ONBOARDING_STEP_KEY) !== null ||
-  localStorage.getItem(ONBOARDING_SESSION_KEY) !== null;
 
 const ControlPanel = React.lazy(() => import("./components/ControlPanel.tsx"));
 const OnboardingFlow = React.lazy(() => import("./components/OnboardingFlow.tsx"));
@@ -44,24 +33,13 @@ export default function AppRouter() {
 }
 
 function MainApp() {
-  const { isSignedIn, isGracePeriodOnly, isLoaded: authLoaded } = useAuth();
-  const policyStatus = usePolicyStore((state) => state.status);
-  const policyResolved =
-    !isSignedIn ||
-    policyStatus === "managed" ||
-    policyStatus === "unmanaged" ||
-    policyStatus === "error";
-  const isWaitingForPolicyStart = isSignedIn && !policyResolved;
-  const autoSyncReady = authLoaded && policyResolved;
-
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [needsReauth, setNeedsReauth] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [postOnboardingSettingsSection, setPostOnboardingSettingsSection] = useState(undefined);
 
   const isControlPanel = isControlPanelWindow();
   const isDictationPanel = !isControlPanel;
-  // Covers every surface this window hosts: onboarding, reauth, the panel.
+  // Covers every surface this window hosts: onboarding and the panel.
   useControlPanelWindowDrag(isControlPanel);
 
   useEffect(() => {
@@ -73,79 +51,42 @@ function MainApp() {
       }
     }
 
-    // Sync starts only after auth settles, so a new bearer token cannot touch
-    // the previous account's rows while validation is still running. A failed
-    // (guest/offline) resolution also counts as settled: canSync() then no-ops
-    // because no validated auth context exists.
-    if (autoSyncReady) {
-      import("./services/SyncService.js")
-        .then(({ syncService }) => syncService.startAutoSync())
-        .catch(() => {});
-    }
-  }, [autoSyncReady, isControlPanel]);
+    // Auto-sync runs in every window this component hosts, as upstream did;
+    // the throttle and Web Lock dedupe across windows. Outside hub mode there
+    // is no consent, so every pass it requests is a no-op (rtech-whisper#101).
+    import("./services/SyncService.js")
+      .then(({ syncService }) => syncService.startAutoSync())
+      .catch(() => {});
+  }, [isControlPanel]);
 
   useEffect(() => {
-    // The dictation window cannot resolve a session (see mirrorActiveAccountScope),
-    // so its policy and managed identity follow the main process's account scope.
-    if (!isDictationPanel) return;
-    return mirrorActiveAccountScope();
-  }, [isDictationPanel]);
-
-  useEffect(() => {
-    if (!authLoaded) return;
-
     const onboardingCompleted = localStorage.getItem("onboardingCompleted") === "true";
-    const authSkipped =
-      localStorage.getItem("authenticationSkipped") === "true" ||
-      localStorage.getItem("skipAuth") === "true";
-    const onboardingInProgress = isOnboardingInProgress();
-    const isReturningUser =
-      !onboardingCompleted && isSignedIn && !isGracePeriodOnly && !onboardingInProgress;
 
-    if (isReturningUser) {
-      localStorage.setItem("onboardingCompleted", "true");
-    }
+    if (isControlPanel && !onboardingCompleted) setShowOnboarding(true);
 
-    const resolved = localStorage.getItem("onboardingCompleted") === "true";
-
-    if (isControlPanel) {
-      if (!resolved) {
-        setShowOnboarding(true);
-      } else if (!isSignedIn && !authSkipped) {
-        setNeedsReauth(true);
-      }
-    }
-
-    if (isDictationPanel && !resolved) {
+    if (isDictationPanel && !onboardingCompleted) {
       // Keep the dictation overlay hidden during onboarding — OnboardingFlow
       // shows it explicitly when the user reaches the activation step.
       window.electronAPI?.hideWindow?.();
     }
 
     setIsLoading(false);
-  }, [authLoaded, isControlPanel, isDictationPanel, isGracePeriodOnly, isSignedIn]);
+  }, [isControlPanel, isDictationPanel]);
 
   useEffect(() => {
-    if (!isControlPanel || !authLoaded) return;
-    // Fast path: a user who already finished onboarding can never enter the
-    // compact flow only when their session or guest choice is still valid.
-    // Signed-out account users fall through so reauthentication can select the
-    // compact window without first flashing restored control-panel dimensions.
+    if (!isControlPanel) return;
     const completed = localStorage.getItem("onboardingCompleted") === "true";
-    const authSkipped =
-      localStorage.getItem("authenticationSkipped") === "true" ||
-      localStorage.getItem("skipAuth") === "true";
-    if (completed && !isOnboardingInProgress() && (isSignedIn || authSkipped)) {
+    if (completed) {
       void window.electronAPI?.setOnboardingWindowMode?.("restore");
     }
-  }, [authLoaded, isControlPanel, isSignedIn]);
+  }, [isControlPanel]);
 
   const settledControlPanelWindowMode = resolveSettledControlPanelWindowMode({
     isControlPanel,
     isLoading,
-    isWaitingForPolicyStart,
+    isWaitingForPolicyStart: false,
     showOnboarding,
-    needsReauth,
+    needsReauth: false,
   });
 
   useEffect(() => {
@@ -157,16 +98,15 @@ function MainApp() {
   }, [settledControlPanelWindowMode]);
 
   useEffect(() => {
-    if (isLoading || isWaitingForPolicyStart) return;
+    if (isLoading) return;
 
     const onboardingCompleted = localStorage.getItem("onboardingCompleted") === "true";
-    const normalAppVisible =
-      onboardingCompleted && (!isControlPanel || (!showOnboarding && !needsReauth));
+    const normalAppVisible = onboardingCompleted && (!isControlPanel || !showOnboarding);
     // Main starts fail-closed. Only a renderer that has resolved the route and
     // actually committed the normal app may release global hotkeys and popup
     // surfaces; fresh installs and onboarding reloads keep them suppressed.
     void window.electronAPI?.setOnboardingActive?.(!normalAppVisible);
-  }, [isControlPanel, isLoading, isWaitingForPolicyStart, needsReauth, showOnboarding]);
+  }, [isControlPanel, isLoading, showOnboarding]);
 
   const handleOnboardingComplete = (options) => {
     if (options?.openSettings) {
@@ -176,10 +116,7 @@ function MainApp() {
     localStorage.setItem("onboardingCompleted", "true");
   };
 
-  // isLoading clears once the onboarding effect has run, which itself waits
-  // for authLoaded — and authLoaded terminates even when the session cannot
-  // resolve (guest/offline presents as signed out).
-  if (isLoading || isWaitingForPolicyStart) {
+  if (isLoading) {
     return <LoadingFallback />;
   }
 
@@ -189,19 +126,6 @@ function MainApp() {
         <OnboardingFlow onComplete={handleOnboardingComplete} />
         <BackgroundModelDownloadTray />
       </Suspense>
-    );
-  }
-
-  if (isControlPanel && needsReauth) {
-    return (
-      <ReauthenticationScreen
-        onContinueWithoutAccount={() => {
-          localStorage.setItem("authenticationSkipped", "true");
-          localStorage.setItem("skipAuth", "true");
-          setNeedsReauth(false);
-        }}
-        onAuthComplete={() => setNeedsReauth(false)}
-      />
     );
   }
 
@@ -225,7 +149,7 @@ function LoadingFallback({ message }) {
         <svg
           viewBox="0 0 1024 1024"
           className="w-12 h-12 drop-shadow-[0_2px_8px_rgba(37,99,235,0.18)] dark:drop-shadow-[0_2px_12px_rgba(100,149,237,0.25)]"
-          aria-label="OpenWhispr"
+          aria-label="rTech Whisper"
         >
           <rect width="1024" height="1024" rx="241" fill="#2056DF" />
           <circle cx="512" cy="512" r="314" fill="#2056DF" stroke="white" strokeWidth="74" />

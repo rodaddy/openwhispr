@@ -4,7 +4,7 @@
       "sectionTitle": "语言",
       "sectionDescription": "分别设置界面语言和转录语言",
       "uiLabel": "界面语言",
-      "uiDescription": "选择 OpenWhispr 界面使用的语言",
+      "uiDescription": "选择 rTech Whisper 界面使用的语言",
       "transcriptionLabel": "转录语言",
       "transcriptionDescription": "选择你说话的语言，以提高转录准确率",
       "chineseScriptLabel": "中文书写（听写）",
@@ -55,21 +55,61 @@
         "title": "识别并标记发言者",
         "description": "关闭后，转写会显示\"你\"和\"其他人\""
       }
+    },
+    "grillQuestions": {
+      "title": "Grill questions",
+      "description": "The questions a grill asks. Edit the text, reorder, retire, or add your own; changes apply to the next grill.",
+      "standard": "Daily questions",
+      "dayTemplates": "Day question templates",
+      "chapters": "Life Story chapters",
+      "questionLabel": "Question text",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "retire": "Retire",
+      "restore": "Restore",
+      "history": "History",
+      "noHistory": "No changes yet",
+      "historyEntry": "{{date}} · {{field}}: {{from}} -> {{to}}",
+      "source": "Source: {{source}}",
+      "add": "Add question",
+      "addPlaceholder": "New question",
+      "flow": "Flow",
+      "maxDayQuestions": "Day questions per daily grill",
+      "maxFeedQuestions": "Feed questions per daily grill",
+      "tag": "Tag (vote)",
+      "tagLabel": "Tag this question with a vote",
+      "tagHint": "A tag is a vote on the question. It does not retire it; Retire acts now.",
+      "tagMarks": {
+        "good": "Good",
+        "weak": "Weak",
+        "retire": "Retire vote"
+      },
+      "markCounts": "Votes: {{good}} good · {{weak}} weak · {{retire}} retire",
+      "retireHint": "Retire now: takes the question out of rotation immediately"
     }
   },
   "tray": {
+    "microphone": {
+      "input": "Input: {{device}}",
+      "inputUnknown": "Input Device",
+      "automatic": "Automatic",
+      "resumeAutomatic": "Resume Automatic",
+      "systemDefault": "System Default",
+      "builtIn": "Built-in",
+      "unavailable": "Microphones unavailable"
+    },
     "toggleDictation": {
       "show": "显示听写面板",
       "hide": "隐藏听写面板"
     },
     "openControlPanel": "打开控制面板",
     "hideControlPanel": "隐藏控制面板",
-    "quit": "退出 OpenWhispr",
-    "tooltip": "OpenWhispr - 语音听写"
+    "quit": "退出 rTech Whisper",
+    "tooltip": "rTech Whisper - 语音听写"
   },
   "menu": {
-    "appLabel": "OpenWhispr",
-    "quit": "退出 OpenWhispr",
+    "appLabel": "rTech Whisper",
+    "quit": "退出 rTech Whisper",
     "speech": "语音",
     "settings": "设置...",
     "help": "帮助",
@@ -87,8 +127,8 @@
       "message": "无法在浏览器中打开该链接：\n{{url}}\n\n错误：{{error}}"
     },
     "loadFailure": {
-      "title": "OpenWhispr 加载失败",
-      "message": "OpenWhispr 无法加载其界面。",
+      "title": "rTech Whisper 加载失败",
+      "message": "rTech Whisper 无法加载其界面。",
       "detail": {
         "window": "窗口：{{windowName}}",
         "error": "错误 {{errorCode}}：{{errorDescription}}",
@@ -99,18 +139,41 @@
   },
   "startup": {
     "error": {
-      "title": "OpenWhispr 启动错误",
-      "message": "应用启动失败：\n\n{{error}}\n\n请反馈此问题。"
+      "title": "rTech Whisper 启动错误",
+      "message": "应用启动失败：\n\n{{error}}\n\n请反馈此问题。",
+      "messageWithBackup": "应用启动失败：\n\n{{error}}\n\n此版本应用首次启动时创建的数据库副本位于：\n{{backupPath}}\n\n其中不包含此后保存的任何内容。未自动恢复任何内容。\n\n请反馈此问题。"
     },
     "globeHotkey": {
       "title": "Globe 快捷键不可用",
-      "message": "OpenWhispr 无法激活 Globe 键快捷键。",
+      "message": "rTech Whisper 无法激活 Globe 键快捷键。",
       "details": {
         "unknown": "启动 Globe 监听器时发生未知错误。",
         "fallback": "Globe 键快捷键将保持禁用状态；现有的键盘快捷键仍可正常使用。",
         "devHint": "运行 `npm run compile:globe` 并重新构建应用以重新生成监听器。",
-        "reinstallHint": "请尝试重新安装 OpenWhispr，如果问题仍然存在请联系技术支持。"
+        "reinstallHint": "请尝试重新安装 rTech Whisper，如果问题仍然存在请联系技术支持。"
       }
+    }
+  },
+  "dataFolderDialog": {
+    "title": "rTech Whisper 数据文件夹",
+    "reason": {
+      "missing": "找不到数据文件夹。驱动器是否已连接？",
+      "notWritable": "数据文件夹存在，但无法写入。",
+      "noMarker": "数据文件夹是空的。数据是否已被移动或清除？rTech Whisper 不会在那里新建存储。",
+      "mismatch": "数据文件夹中的 rTech Whisper 存储与此应用使用的不是同一个。",
+      "pointerCorrupt": "无法读取数据文件夹设置。"
+    },
+    "folderDetail": "数据文件夹：{{path}}",
+    "retry": "重试",
+    "choose": "选择文件夹…",
+    "quit": "退出",
+    "chooseTitle": "选择现有的 rTech Whisper 数据文件夹",
+    "refused": {
+      "missing": "找不到该文件夹。",
+      "notWritable": "无法写入该文件夹。",
+      "noMarker": "该文件夹中没有 rTech Whisper 数据。要将数据移动到新文件夹，请启动应用并前往 设置 > 系统 > 数据文件夹。",
+      "channelMismatch": "该文件夹包含 {{channel}} 版本的数据，无法在此使用。",
+      "writeFailed": "无法将该文件夹保存为数据文件夹：{{error}}"
     }
   },
   "hotkey": {
@@ -118,6 +181,7 @@
       "callbackRequired": "设置快捷键需要回调函数",
       "globeOnlyMac": "Globe 键仅在 macOS 上可用。",
       "fnCombinationUnsupported": "Globe/Fn 键只能单独使用。",
+      "pasteLastOrdinaryOnly": "粘贴上一次听写需要使用普通的按键组合。",
       "mouseButtonOnlyMac": "鼠标按键快捷键目前仅在 macOS 上受支持。",
       "alreadyRegistered": "\"{{hotkey}}\" 已被其他应用注册。",
       "osReserved": "\"{{hotkey}}\" 可能被系统保留。",
@@ -171,6 +235,7 @@
     "download": "下载",
     "cancel": "取消",
     "recommended": "推荐",
+    "ramEstimate": "约 {{ram}} 内存",
     "active": "已激活",
     "managedByOrg": "由您的组织管理",
     "freeAccountRequired": "需要免费账户",
@@ -204,12 +269,13 @@
     "policyTranscriptionRestricted": "转录已被您的组织限制。",
     "managedConfigLoading": "正在检查您组织的托管设置。请稍候再试。",
     "managedConfigUnavailable": "托管企业访问不可用。请重新登录或联系管理员。",
-    "managedPolicyConflict": "托管访问已被您工作区的策略阻止。请联系管理员。"
+    "managedPolicyConflict": "托管访问已被您工作区的策略阻止。请联系管理员。",
+    "hybrid": "Both"
   },
   "onboarding": {
     "rehaul": {
       "permissions": {
-        "title": "3 分钟完成 OpenWhispr 设置",
+        "title": "3 分钟完成 rTech Whisper 设置",
         "microphoneDescription": "将语音转换为文本。",
         "accessibilityDescription": "将文本粘贴到当前应用。",
         "systemAudioTitle": "系统音频",
@@ -222,7 +288,7 @@
         "title": "你会说哪些语言？",
         "titleLineOne": "你会说",
         "titleLineTwo": "哪些语言？",
-        "description": "选择所有适用的语言。这有助于 OpenWhispr 更准确地识别语言切换。"
+        "description": "选择所有适用的语言。这有助于 rTech Whisper 更准确地识别语言切换。"
       },
       "dictationHotkey": {
         "title": "设置键盘快捷键",
@@ -231,10 +297,10 @@
         "description": "选择一个键盘快捷键，随时开始和停止听写。"
       },
       "assistantHotkey": {
-        "title": "设置 OpenWhispr Assistant",
+        "title": "设置 rTech Whisper Assistant",
         "titleLineOne": "设置",
-        "titleLineTwo": "OpenWhispr Assistant",
-        "description": "说出你的需求，OpenWhispr Assistant 就会为你写好结果。"
+        "titleLineTwo": "rTech Whisper Assistant",
+        "description": "说出你的需求，rTech Whisper Assistant 就会为你写好结果。"
       },
       "hotkey": {
         "capture": "请按下你想使用的按键",
@@ -246,16 +312,16 @@
         "title": "试试第一次听写",
         "titleLineOne": "试试你的",
         "titleLineTwo": "第一次听写",
-        "description": "按 {{hotkey}} 开始说话，OpenWhispr 会把你的语音转成文字。",
-        "founder": "你好，我是 Gabe，OpenWhispr 的创始人",
+        "description": "按 {{hotkey}} 开始说话，rTech Whisper 会把你的语音转成文字。",
+        "founder": "你好，我是 Gabe，rTech Whisper 的创始人",
         "prompt": "试着说：“我第一次测试听写功能。”",
         "placeholder": "你的听写结果会显示在这里…"
       },
       "assistantDemo": {
-        "title": "认识 OpenWhispr Assistant",
+        "title": "认识 rTech Whisper Assistant",
         "titleLineOne": "认识一下",
-        "titleLineTwo": "OpenWhispr Assistant",
-        "description": "说出你的需求，OpenWhispr Assistant 就会为你写好结果。",
+        "titleLineTwo": "rTech Whisper Assistant",
+        "description": "说出你的需求，rTech Whisper Assistant 就会为你写好结果。",
         "senderName": "Eren Lauren",
         "senderEmail": "eren32@gmail.com",
         "recipientLabel": "发送给 John Doe",
@@ -270,13 +336,13 @@
         "typing": "正在输入…"
       },
       "notes": {
-        "title": "用 OpenWhispr Notes 录制会议，无需机器人加入",
+        "title": "用 rTech Whisper Notes 录制会议，无需机器人加入",
         "titleLineOne": "无需机器人即可录制会议",
-        "titleLineTwoPrefix": "使用 OpenWhispr",
+        "titleLineTwoPrefix": "使用 rTech Whisper",
         "titleLineTwoBrand": "Notes",
-        "description": "OpenWhispr 把你的对话变成清晰的笔记。不会有会议机器人加入你的通话。",
+        "description": "rTech Whisper 把你的对话变成清晰的笔记。不会有会议机器人加入你的通话。",
         "hero": {
-          "description": "录制会议，让 OpenWhispr 把对话整理成清晰有条理的笔记。",
+          "description": "录制会议，让 rTech Whisper 把对话整理成清晰有条理的笔记。",
           "chat": "与会议笔记对话",
           "transcript": "查看完整转录",
           "speakers": "查看谁说了什么"
@@ -292,9 +358,9 @@
         }
       },
       "setupChoice": {
-        "title": "选择你的 OpenWhispr 设置",
+        "title": "选择你的 rTech Whisper 设置",
         "titleLineOne": "选择你的",
-        "titleLineTwo": "OpenWhispr 设置",
+        "titleLineTwo": "rTech Whisper 设置",
         "description": "选择最适合你工作方式的方案。",
         "unavailable": {
           "title": "没有可用的设置选项",
@@ -451,14 +517,14 @@
       "accessibilityTitle": "辅助功能",
       "accessibilityDescription": "将完成的文字直接输入到你正在使用的应用中 — 文档、邮件、聊天。",
       "testAndGrant": "测试并授权",
-      "requiredForApp": "OpenWhispr 运行所必需的权限",
+      "requiredForApp": "rTech Whisper 运行所必需的权限",
       "microphoneRequired": "需要麦克风访问权限",
       "openSystemSettings": "打开系统设置",
       "systemAudioTitle": "系统音频",
       "systemAudioDescription": "让会议录音机听到通话另一方的声音 — 会议、讲座、播客。你可以稍后在“设置”中开启。",
       "optional": "可选",
       "recommended": "推荐",
-      "accessibilityTroubleshooting": "在系统设置 → 辅助功能中，将 OpenWhispr 的开关关闭再重新打开。如果列表中根本没有 OpenWhispr，请点按 + 并从“应用程序”文件夹中添加。还是不行？请发邮件至 support@openwhispr.com。"
+      "accessibilityTroubleshooting": "在系统设置 → 辅助功能中，将 rTech Whisper 的开关关闭再重新打开。如果列表中根本没有 rTech Whisper，请点按 + 并从“应用程序”文件夹中添加。还是不行？请发邮件至 support@openwhispr.com。"
     },
     "transcription": {
       "title": "转录设置",
@@ -475,7 +541,8 @@
       "test": "测试",
       "hotkeyToStartStop": "{{hotkey}} 开始/停止",
       "holdHotkey": "按住 {{hotkey}}",
-      "textareaPlaceholder": "点击此处，然后使用快捷键进行听写..."
+      "textareaPlaceholder": "点击此处，然后使用快捷键进行听写...",
+      "hybridDescription": "Tap to keep it on, hold to talk"
     },
     "voiceAgent": {
       "title": "语音助手设置",
@@ -500,12 +567,12 @@
       "continue": "仍然继续"
     },
     "useCase": {
-      "title": "你会如何使用 OpenWhispr？",
+      "title": "你会如何使用 rTech Whisper？",
       "titleLineOne": "你会如何使用",
-      "titleLineTwo": "OpenWhispr？",
+      "titleLineTwo": "rTech Whisper？",
       "description": "选择所有适用项，我们会据此为你定制设置。",
       "noteLabel": "还有什么想告诉我们的吗？",
-      "notePlaceholder": "告诉我们你打算如何使用 OpenWhispr（可选）",
+      "notePlaceholder": "告诉我们你打算如何使用 rTech Whisper（可选）",
       "proceedToSetup": "继续设置",
       "options": {
         "dictation": {
@@ -538,7 +605,7 @@
     "meeting": {
       "title": "会议笔记",
       "description": "捕捉并总结你的会议",
-      "autoDetect": "OpenWhispr 会自动检测你是否在开会，并提议开始记录 — 未经你确认不会录制任何内容。",
+      "autoDetect": "rTech Whisper 会自动检测你是否在开会，并提议开始记录 — 未经你确认不会录制任何内容。",
       "hotkeyLabel": "会议快捷键",
       "hotkeyHint": "可选 — 在任何会议中按下即可立即开始记录。"
     },
@@ -591,7 +658,7 @@
   "controlPanel": {
     "updateRequiredByOrg": {
       "title": "需要更新",
-      "description": "您的组织要求使用 OpenWhispr {{version}} 或更高版本。请更新应用。"
+      "description": "您的组织要求使用 rTech Whisper {{version}} 或更高版本。请更新应用。"
     },
     "update": {
       "readyTitle": "更新已准备就绪",
@@ -599,7 +666,7 @@
       "problemTitle": "更新遇到问题",
       "problemDescription": "无法完成更新，请稍后再试。",
       "installTitle": "安装更新",
-      "installDescription": "OpenWhispr 将重启以应用更新。当前进行中的工作将被保存。",
+      "installDescription": "rTech Whisper 将重启以应用更新。当前进行中的工作将被保存。",
       "couldNotInstallTitle": "无法安装更新",
       "couldNotInstallDescription": "出了点问题，请重试。",
       "couldNotDownloadTitle": "无法下载更新",
@@ -614,7 +681,7 @@
     },
     "accessibilityMissing": {
       "title": "需要辅助功能权限",
-      "description": "我们检测到 OpenWhispr 需要辅助功能权限才能正常工作。请在下方启用。"
+      "description": "我们检测到 rTech Whisper 需要辅助功能权限才能正常工作。请在下方启用。"
     },
     "billing": {
       "pastDueTitle": "我们无法处理你的付款",
@@ -681,8 +748,8 @@
       "retryTranslationMode": "翻译模式"
     },
     "cloudMigration": {
-      "title": "欢迎使用 OpenWhispr 云端",
-      "description": "我们已将转录切换到 OpenWhispr 云端，以获得更快、更准确的结果。你之前的设置已保存——随时可以在设置中切换回去。",
+      "title": "欢迎使用 rTech Whisper 云端",
+      "description": "我们已将转录切换到 rTech Whisper 云端，以获得更快、更准确的结果。你之前的设置已保存——随时可以在设置中切换回去。",
       "viewSettings": "查看设置"
     },
     "aiCta": {
@@ -793,7 +860,7 @@
           "modelNotFound": "AWS Bedrock 在区域 {{region}} 中找不到所选模型。请检查模型 ID 以及该模型是否在此区域可用。",
           "configurationRejected": "AWS Bedrock 拒绝了区域 {{region}} 的模型配置。请检查模型 ID、推理配置文件和区域。",
           "notConfigured": "AWS Bedrock 配置不正确。请检查区域和 AWS 凭证。",
-          "serviceUnavailable": "由于需求过高，AWS Bedrock 暂时不可用。这是 AWS 服务问题，并非 OpenWhispr 中断。请几分钟后重试。",
+          "serviceUnavailable": "由于需求过高，AWS Bedrock 暂时不可用。这是 AWS 服务问题，并非 rTech Whisper 中断。请几分钟后重试。",
           "throttled": "由于收到的请求过多，AWS Bedrock 正在暂时限制请求。请稍候再试。如果问题持续，请让 AWS 管理员检查 Bedrock 使用量和配额。",
           "timeout": "AWS Bedrock 未及时响应。请重试。如果问题持续，请检查互联网连接和 AWS Bedrock 服务状态。",
           "network": "无法连接到 AWS Bedrock。请检查互联网连接并重试。",
@@ -917,14 +984,23 @@
         "failedTitle": "翻译失败",
         "failedDescription": "已粘贴原始文本。你可以在历史记录中重试。"
       },
+      "autoSubmit": {
+        "withheldTitle": "已粘贴，未按 Return",
+        "withheldDescription": "文本在命令行中，尚未发送。请按 Return 键，或在下次听写前清空该行。"
+      },
       "selectionEditing": {
         "notAppliedTitle": "未应用选中文本编辑",
         "changed": "处理期间，选中的文本或目标应用已发生变化。未替换任何内容。",
         "expired": "选中文本编辑已过期。请重新选择文本后再试。",
-        "pasteFailed": "OpenWhispr 已生成编辑结果，但无法替换选中的文本。",
-        "unavailable": "OpenWhispr 无法安全读取选中的文本。请检查辅助功能或输入自动化权限。",
+        "pasteFailed": "rTech Whisper 已生成编辑结果，但无法替换选中的文本。",
+        "unavailable": "rTech Whisper 无法安全读取选中的文本。请检查辅助功能或输入自动化权限。",
         "tooLarge": "选中的内容过长。请选择不超过 6,000 个字符。",
         "reasoningFailed": "AI 无法完成选中文本编辑。原始文本未被更改。"
+      },
+      "meetingHighlight": {
+        "savedTitle": "重点已保存",
+        "failedTitle": "重点未保存",
+        "failedDescription": "会议录制已结束，因此无法将重点添加到笔记。"
       }
     },
     "clipboard": {
@@ -997,7 +1073,7 @@
       "micErrors": {
         "accessFailed": "麦克风访问失败，请重试。",
         "noMicrophones": "未检测到麦克风。请在 {{settingsPath}} 中连接或选择麦克风。",
-        "permissionDenied": "权限被拒绝。请打开 {{privacyPath}} 并允许 OpenWhispr。",
+        "permissionDenied": "权限被拒绝。请打开 {{privacyPath}} 并允许 rTech Whisper。",
         "couldNotStart": "无法启动所选麦克风。请在 {{settingsPath}} 中选择输入设备，然后重新测试。",
         "noActiveInput": "未找到活跃的音频输入。请在 {{settingsPath}} 中选择麦克风。",
         "unknown": "麦克风访问失败：{{error}}。请选择其他输入设备后重试。",
@@ -1026,8 +1102,8 @@
         "accessibilityNeeded": "请在系统设置中授予辅助功能权限，以启用自动粘贴。",
         "windowsReady": "Windows 无需特殊权限即可自动粘贴，一切就绪！",
         "linuxReadyWithMethod": "可使用 {{method}} 进行自动粘贴，一切就绪！",
-        "waylandClipboardMode": "此 Wayland 会话不支持自动粘贴。OpenWhispr 会将文本复制到剪贴板，你可以使用 Ctrl+V 粘贴。",
-        "optionalPasteTool": "如需自动粘贴功能，请安装 {{tool}}：\n\n{{installCmd}}{{waylandNote}}\n\n即使不安装，你仍然可以使用 OpenWhispr——文本会被复制到剪贴板，你可以使用 Ctrl+V 粘贴。"
+        "waylandClipboardMode": "此 Wayland 会话不支持自动粘贴。rTech Whisper 会将文本复制到剪贴板，你可以使用 Ctrl+V 粘贴。",
+        "optionalPasteTool": "如需自动粘贴功能，请安装 {{tool}}：\n\n{{installCmd}}{{waylandNote}}\n\n即使不安装，你仍然可以使用 rTech Whisper——文本会被复制到剪贴板，你可以使用 Ctrl+V 粘贴。"
       },
       "alerts": {
         "accessibilityNeeded": "需要辅助功能权限！请在系统设置中授权。"
@@ -1040,7 +1116,7 @@
         "defaultPasteTool": "xdotool",
         "xdotoolXwayland": "xdotool（XWayland 应用）"
       },
-      "accessibilityTestText": "OpenWhispr 辅助功能测试",
+      "accessibilityTestText": "rTech Whisper 辅助功能测试",
       "warning": {
         "messages": {
           "macos": "请检查声音设置以选择输入设备",
@@ -1115,7 +1191,7 @@
       "emailRequired": "输入您的工作邮箱以使用 SSO。",
       "failed": "单点登录失败，请重试。",
       "companySignInTitle": "使用公司登录",
-      "requiredDescription": "{{domain}} 要求通过 SSO 登录 OpenWhispr。",
+      "requiredDescription": "{{domain}} 要求通过 SSO 登录 rTech Whisper。",
       "availableDescription": "您的 {{domain}} 账户已可使用公司 SSO。",
       "useEmailInstead": "改用邮箱和密码"
     },
@@ -1127,7 +1203,7 @@
       "protocolUnavailable": "无法通过浏览器登录 — 请在系统的“默认应用”设置中重新注册 openwhispr:// 协议。"
     },
     "welcomeSubtitle": "用语音完成一切",
-    "welcomeTitle": "欢迎使用 OpenWhispr",
+    "welcomeTitle": "欢迎使用 rTech Whisper",
     "sessionExpired": "会话已过期，请重新登录。"
   },
   "cleanupPrompt": "文本整理",
@@ -1139,6 +1215,12 @@
       "label": "Debug 模式"
     },
     "description": "捕获详细日志以帮助诊断问题",
+    "logFiles": {
+      "clear": "清除",
+      "empty": "没有日志文件",
+      "label": "日志文件",
+      "usage": "{{count}} 个文件，{{size}}"
+    },
     "openLogsFolder": "打开日志文件夹",
     "performanceNote": {
       "description": "Debug 日志会持续写入磁盘，可能略微影响性能。不排查问题时请关闭。",
@@ -1304,6 +1386,20 @@
     "searchPlaceholder": "搜索语言"
   },
   "microphoneSettings": {
+    "automatic": "Automatic",
+    "none": "None",
+    "preferred": {
+      "label": "Preferred microphone",
+      "description": "Automatic uses this microphone whenever it is available"
+    },
+    "fallback": {
+      "label": "Fallback microphone",
+      "description": "Automatic uses this microphone when the preferred one is unavailable"
+    },
+    "disconnected": {
+      "title": "Microphone disconnected",
+      "description": "Recording stopped. Captured audio is being saved. Start a new recording on the fallback microphone."
+    },
     "builtIn": "（内置）",
     "errors": {
       "unableToAccess": "无法访问麦克风，请检查权限设置。"
@@ -1351,10 +1447,10 @@
     "recheckChecking": "检查中...",
     "title": "自动粘贴",
     "usingMethodPrefix": "使用",
-    "waylandClipboardDescription": "此 Wayland 会话不支持自动粘贴。OpenWhispr 会将文本复制到剪贴板，你可以使用 Ctrl+V 手动粘贴。",
+    "waylandClipboardDescription": "此 Wayland 会话不支持自动粘贴。rTech Whisper 会将文本复制到剪贴板，你可以使用 Ctrl+V 手动粘贴。",
     "waylandClipboardTitle": "Wayland 上的剪贴板模式",
     "windowsReady": "Windows 原生支持自动粘贴，无需额外设置！",
-    "withoutToolPrefix": "如果不安装此工具，OpenWhispr 会将文本复制到剪贴板，你可以使用 Ctrl+V 手动粘贴。",
+    "withoutToolPrefix": "如果不安装此工具，rTech Whisper 会将文本复制到剪贴板，你可以使用 Ctrl+V 手动粘贴。",
     "wtypeFallbackDescription": "wtype 是此 wlroots 合成器上的首选自动粘贴方式。有备用方案可用，但可能不太可靠。",
     "xwaylandAppsOnly": "自动粘贴仅适用于 XWayland 应用"
   },
@@ -1668,7 +1764,7 @@
         "button": "删除我的账户",
         "deleting": "正在删除...",
         "title": "删除您的账户？",
-        "description": "这将永久删除您的 OpenWhispr 账户和个人数据。工作区所有的内容及其他本地用户的数据会保留在此设备上。",
+        "description": "这将永久删除您的 rTech Whisper 账户和个人数据。工作区所有的内容及其他本地用户的数据会保留在此设备上。",
         "confirmText": "删除账户",
         "eraseDeviceLabel": "同时清除此设备上的所有数据",
         "eraseDeviceDescription": "删除所有本地用户的笔记和工作区缓存、已下载模型、设置、日历连接、凭据和录音。",
@@ -1762,8 +1858,8 @@
       "title": "AI 文本增强",
       "toasts": {
         "switchedCloud": {
-          "description": "文本增强将使用 OpenWhispr 云端服务。",
-          "title": "已切换到 OpenWhispr 云端"
+          "description": "文本增强将使用 rTech Whisper 云端服务。",
+          "title": "已切换到 rTech Whisper 云端"
         },
         "switchedCustom": {
           "description": "请配置你的服务商和 API Key。",
@@ -1794,7 +1890,13 @@
         "availableTitle": "可使用组织配置",
         "availableDescription": "使用 {{provider}}，无需管理凭据。",
         "useManaged": "使用托管配置"
-      }
+      },
+      "removeFillerWords": "Remove filler words",
+      "removeFillerWordsDescription": "Automatically remove filler sounds like um, uh, er from transcriptions",
+      "fillerWordsLabel": "Filler words to remove:",
+      "fillerWordsAdd": "Add",
+      "fillerWordsReset": "Reset",
+      "fillerWordsPlaceholder": "Add word"
     },
     "developer": {
       "clearCache": "清除缓存",
@@ -1823,7 +1925,17 @@
         "title": "重置所有应用数据"
       },
       "resetAppData": "重置应用数据",
-      "resetAppDataDescription": "永久删除所有本地设置、转录、音频录制、下载的模型和缓存数据"
+      "resetAppDataDescription": "永久删除所有本地设置、转录、音频录制、下载的模型和缓存数据",
+      "dataFolder": {
+        "label": "数据文件夹",
+        "move": "移动…",
+        "previous": "之前的数据文件夹：{{path}}",
+        "previousHint": "移动后会保留。不再需要时请自行删除。",
+        "reveal": "显示",
+        "removeOld": "Remove old copy",
+        "removeOldConfirm": "Delete the old copy ({{size}})? The live data folder is not touched.",
+        "removeOldFailed": "Could not remove the old copy: {{reason}}"
+      }
     },
     "dictionary": {
       "title": "自定义词典",
@@ -1851,7 +1963,7 @@
       "appearance": {
         "auto": "自动",
         "dark": "深色",
-        "description": "控制 OpenWhispr 的外观",
+        "description": "控制 rTech Whisper 的外观",
         "light": "浅色",
         "theme": "主题",
         "themeDescription": "选择浅色、深色或跟随系统",
@@ -1879,8 +1991,8 @@
         "linuxPttSetupDescription": "您的用户需要访问键盘输入设备的权限。",
         "linuxPttSetupNote": "运行命令后，请注销并重新登录。",
         "hyprlandConfigWriteWarningTitle": "Hyprland 键绑定不会持久保存",
-        "hyprlandConfigWriteWarningDescription": "OpenWhispr 无法写入 {{path}}，因此键绑定不会在 Hyprland 配置重新加载后保留。请确保该文件存在且可写。",
-        "hyprlandUnbindDescription": "在 Hyprland 上，OpenWhispr 会占用所选快捷键。OpenWhispr 注册快捷键时，任何使用相同组合键的现有 Hyprland 绑定都会被解除。"
+        "hyprlandConfigWriteWarningDescription": "rTech Whisper 无法写入 {{path}}，因此键绑定不会在 Hyprland 配置重新加载后保留。请确保该文件存在且可写。",
+        "hyprlandUnbindDescription": "在 Hyprland 上，rTech Whisper 会占用所选快捷键。rTech Whisper 注册快捷键时，任何使用相同组合键的现有 Hyprland 绑定都会被解除。"
       },
       "meetingHotkey": {
         "title": "会议模式快捷键",
@@ -1892,6 +2004,10 @@
       "voiceAgentHotkey": {
         "title": "语音助手快捷键",
         "description": "说出指令，助手会使用你的笔记、日历和网页工具。回答会粘贴到已聚焦的可编辑光标处、替换选中文本，或在悬浮面板中打开。"
+      },
+      "pasteLastHotkey": {
+        "title": "粘贴上一次听写",
+        "description": "将你最近一次的听写按原话再次粘贴到光标所在位置，不会按下回车键。在你选择之前不会设置任何按键。文本仅保存在内存中，退出应用后即消失。"
       },
       "microphone": {
         "description": "选择用于听写的输入设备",
@@ -1906,13 +2022,16 @@
       },
       "notifications": {
         "title": "通知",
-        "description": "设置 OpenWhispr 可以显示哪些通知",
+        "description": "设置 rTech Whisper 可以显示哪些通知",
         "disableAll": "禁用所有通知",
         "disableAllDescription": "静音除错误消息外的所有内容",
         "meetingDetection": "会议检测",
         "meetingDetectionDescription": "检测到会议时通知您以便开始录音",
         "calendarReminders": "日历提醒",
         "calendarRemindersDescription": "预定会议即将开始时通知您",
+        "grillEventPrefixes": "Grill 会话标题",
+        "grillEventPrefixesDescription": "标题以其中任一词开头的日历时段会提示开始 Grill 会话。用逗号分隔；留空则关闭。",
+        "grillEventPrefixesPlaceholder": "Grill, Life Story",
         "updates": "应用更新",
         "updatesDescription": "有新版本可用时通知您"
       },
@@ -1921,18 +2040,42 @@
         "autoPaste": "自动粘贴",
         "autoPasteDescription": "听写结束后自动将转录文本粘贴到当前活动的应用中",
         "keepInClipboard": "将转录内容保留在剪贴板",
-        "keepInClipboardDescription": "将听写文本保留在剪贴板中，以便在需要时手动粘贴"
+        "keepInClipboardDescription": "将听写文本保留在剪贴板中，以便在需要时手动粘贴",
+        "appFormatting": "根据听写的目标应用调整格式",
+        "appFormattingDescription": "粘贴到终端或代码编辑器的听写内容会去掉末尾的英文句点（.），并把弯引号改为直引号；在终端中，首个单词如果是已知命令（例如 ls 或 git），还会改为小写。粘贴到聊天应用的单句会去掉末尾的英文句点（.）。其他应用保持不变。",
+        "appProfiles": {
+          "title": "使用自定义格式的应用",
+          "description": "填写应用名称，并选择粘贴到该应用的听写内容采用哪种格式。这些设置优先于内置列表。",
+          "appPlaceholder": "应用名称，例如 Ghostty",
+          "profiles": {
+            "terminal": "终端",
+            "editor": "代码编辑器",
+            "chat": "聊天",
+            "prose": "纯文本"
+          },
+          "add": "添加应用",
+          "remove": "移除",
+          "limit": "最多 20 个应用。"
+        },
+        "autoSubmit": "听写到终端后按下 Return 键",
+        "autoSubmitDescription": "听写内容粘贴到“终端”或 iTerm2 后按下 Return 键，让说出的提示词自动发送。默认关闭，需要你手动开启。它无法得知终端里正在运行什么：编辑器、分页器或密码提示同样会收到 Return。它无法区分同一窗口中的两个标签页。如果粘贴过程中窗口发生变化，文本会留在该行，由你自己按 Return 键。",
+        "autoSubmitMinWords": "会被发送的最短听写",
+        "autoSubmitMinWordsDescription": "词数更少的听写只粘贴，不按 Return 键。",
+        "autoSubmitMinWordsOption_one": "{{count}} 个词",
+        "autoSubmitMinWordsOption_other": "{{count}} 个词",
+        "showLatency": "显示听写延迟",
+        "showLatencyDescription": "每次听写粘贴后，听写胶囊会短暂显示从松开快捷键到粘贴所用的时间，以及最近 10 次的平均值。开启实时预览时，这些数值也会显示在预览面板底部。"
       },
       "startup": {
         "launchAtLogin": "登录时启动",
-        "launchAtLoginDescription": "登录时在后台启动 OpenWhispr",
+        "launchAtLoginDescription": "登录时在后台启动 rTech Whisper",
         "title": "启动",
-        "description": "控制 OpenWhispr 启动时的行为",
+        "description": "控制 rTech Whisper 启动时的行为",
         "startMinimized": "启动时最小化",
         "startMinimizedDescription": "启动时不显示控制面板窗口",
         "needsApproval": {
           "title": "需要在系统设置中批准",
-          "description": "macOS 已将 OpenWhispr 注册为登录项，但仍在等待你在“登录项”中允许它。",
+          "description": "macOS 已将 rTech Whisper 注册为登录项，但仍在等待你在“登录项”中允许它。",
           "action": "打开登录项"
         }
       },
@@ -1984,7 +2127,7 @@
           "group": {
             "step1Title": "将你的用户添加到 input 组",
             "step2Title": "注销并重新登录",
-            "step2Desc": "组更改仅在新会话后生效。从桌面注销，重新登录，然后重新打开 OpenWhispr。"
+            "step2Desc": "组更改仅在新会话后生效。从桌面注销，重新登录，然后重新打开 rTech Whisper。"
           },
           "service": {
             "step1Title": "创建服务目录",
@@ -2008,7 +2151,7 @@
           "manualTitle": "将以下内容添加到您的配置中",
           "manualDesc": "自行配置后重新构建。",
           "flakeTitle": "通过我们的 flake 安装？",
-          "flakeDesc": "如果您通过 flake 安装 OpenWhispr，programs.openwhispr.enable 会自动为您启用 ydotool、uinput 模块以及相应的用户组权限。",
+          "flakeDesc": "如果您通过 flake 安装 rTech Whisper，programs.openwhispr.enable 会自动为您启用 ydotool、uinput 模块以及相应的用户组权限。",
           "rebuildNote": "运行 sudo nixos-rebuild switch，然后注销并重新登录，使组变更和 /dev/uinput 规则生效。将 <you> 替换为您的用户名。"
         }
       },
@@ -2041,7 +2184,7 @@
           },
           "installUpdate": {
             "confirmText": "安装并重启",
-            "description": "OpenWhispr 将重启以应用更新。",
+            "description": "rTech Whisper 将重启以应用更新。",
             "title": "安装更新"
           },
           "noUpdates": {
@@ -2071,18 +2214,31 @@
       "translationHotkey": {
         "title": "翻译快捷键",
         "description": "用任何语言听写——粘贴的文本会自动翻译"
+      },
+      "grillVoices": {
+        "title": "Grill voices",
+        "description": "The voice a spoken grill asks its questions in. A new voice needs a WAV clip and the exact words spoken in it.",
+        "voice": "Grill voice",
+        "remove": "Remove",
+        "addTitle": "Add a voice",
+        "namePlaceholder": "Voice name",
+        "chooseClip": "Choose WAV clip",
+        "clipChosen": "Clip chosen",
+        "noClip": "No clip chosen",
+        "transcriptPlaceholder": "Exact words spoken in the clip",
+        "add": "Add voice"
       }
     },
     "permissions": {
       "accessibilityDescription": "转录后自动粘贴需要此权限",
       "accessibilityTitle": "辅助功能",
-      "description": "测试和管理 OpenWhispr 正常运行所需的系统权限",
+      "description": "测试和管理 rTech Whisper 正常运行所需的系统权限",
       "microphoneDescription": "录制您的声音用于听写和转录",
       "microphoneTitle": "麦克风",
       "resetAccessibility": {
-        "description": "这将从辅助功能权限中移除 OpenWhispr。你需要在系统设置 > 隐私与安全 > 辅助功能中重新授权。",
+        "description": "这将从辅助功能权限中移除 rTech Whisper。你需要在系统设置 > 隐私与安全 > 辅助功能中重新授权。",
         "label": "重置辅助功能权限",
-        "rowDescription": "重新安装或重新构建应用后，通过在系统设置中移除并重新添加 OpenWhispr 来解决问题",
+        "rowDescription": "重新安装或重新构建应用后，通过在系统设置中移除并重新添加 rTech Whisper 来解决问题",
         "title": "重置辅助功能权限"
       },
       "optional": "可选",
@@ -2094,6 +2250,32 @@
       "title": "权限",
       "troubleshoot": "排查问题",
       "troubleshootingTitle": "问题排查"
+    },
+    "hubSync": {
+      "title": "Sync hub",
+      "description": "Connect this device to your rTech Whisper hub. Saving a device key turns sync on right away and uploads your notes to the hub, so test the connection before you save the key.",
+      "url": "Hub URL",
+      "urlHint": "Clear and save the URL, or clear the device key, to turn sync off.",
+      "switchTitle": "Switch hubs?",
+      "switchDescription": "Switching hubs restarts the app.",
+      "switchConfirm": "Restart",
+      "loadFailed": "Could not read the saved hub settings. Enter the hub URL again.",
+      "urlInvalid": "Enter an https URL without a query or fragment.",
+      "urlInsecure": "中心 URL 必须使用 https://。普通 http:// 仅适用于 localhost、127.0.0.1 或 ::1。修正之前同步保持关闭。",
+      "deviceKey": "Device key",
+      "keySaved": "Saved",
+      "keyNotSet": "Not set",
+      "keyStateUnknown": "Key state unavailable",
+      "keySaveFailed": "The device key was not saved. Try again.",
+      "keyPlaceholder": "Paste device key",
+      "saveKey": "Save",
+      "clearKey": "Clear",
+      "test": "Test connection",
+      "testOk": "Connected as {{name}}",
+      "testNoUrl": "Set the hub URL first.",
+      "testNoKey": "Save a device key first.",
+      "testUnauthorized": "The hub rejected this device key.",
+      "testError": "Connection failed: {{error}}"
     },
     "privacy": {
       "cloudBackup": "云端备份",
@@ -2108,7 +2290,7 @@
       "insightsSyncRequiresAccount": "登录后即可在设备之间同步不含内容的统计数据。",
       "insightsSyncRequiresHistory": "开启数据保留后才会记录统计，之后才能跨设备同步。",
       "usageAnalytics": "使用分析",
-      "usageAnalyticsDescription": "通过分享匿名性能数据帮助我们改进 OpenWhispr。我们绝不发送转录内容——仅发送计时和错误数据。",
+      "usageAnalyticsDescription": "通过分享匿名性能数据帮助我们改进 rTech Whisper。我们绝不发送转录内容——仅发送计时和错误数据。",
       "dataRetention": "数据保留",
       "dataRetentionDescription": "将转录和音频本地保存到历史记录中。禁用后，转录内容会被粘贴但不会被保存。",
       "transcriptRetention": "转录保留",
@@ -2164,7 +2346,7 @@
     "transcription": {
       "customSetup": "自定义设置",
       "customSetupDescription": "使用你自己的服务商和 API Key。",
-      "description": "选择 OpenWhispr 转录语音的方式",
+      "description": "选择 rTech Whisper 转录语音的方式",
       "modes": {
         "openwhispr": "OpenWhispr Cloud",
         "providers": "云服务商",
@@ -2182,8 +2364,8 @@
       "title": "语音转文字",
       "toasts": {
         "switchedCloud": {
-          "description": "转录将使用 OpenWhispr 云端服务。",
-          "title": "已切换到 OpenWhispr 云端"
+          "description": "转录将使用 rTech Whisper 云端服务。",
+          "title": "已切换到 rTech Whisper 云端"
         },
         "switchedCustom": {
           "description": "请配置你的服务商和 API Key。",
@@ -2218,6 +2400,9 @@
       },
       "transcriptionPreview": "实时转录预览",
       "transcriptionPreviewDescription": "在浮动窗口中显示转录结果，然后再进行文本整理",
+      "previewLayout": "预览布局",
+      "previewLayoutGrow": "自动扩展",
+      "previewLayoutFixed": "固定 2 行",
       "vad": {
         "title": "语音活动检测",
         "description": "配置 Silero VAD 如何为本地 Whisper 转录检测并切分语音",
@@ -2693,7 +2878,7 @@
     },
     "tryAgain": "重试",
     "card": {
-      "brand": "OpenWhispr",
+      "brand": "rTech Whisper",
       "signalId": "Signal ID",
       "audioSignature": "你的声纹签名",
       "stop": "停止",
@@ -2825,7 +3010,7 @@
     },
     "structureIntro": {
       "title": "笔记存放在哪里",
-      "description": "OpenWhispr 将个人想法与协作内容分开，让合适的人看到合适的笔记。",
+      "description": "rTech Whisper 将个人想法与协作内容分开，让合适的人看到合适的笔记。",
       "personal": {
         "title": "个人空间",
         "description": "只有你能看到这里的文件夹和笔记。"
@@ -3163,6 +3348,40 @@
       "author": {
         "you": "你"
       }
+    },
+    "crm": {
+      "updateTitle": "更新 GoHighLevel 笔记",
+      "syncTitle": "将笔记同步到 GoHighLevel",
+      "description": "选择一个 GoHighLevel 联系人及其一个商机。",
+      "syncedAt": "已同步 {{time}}",
+      "open": "在 GoHighLevel 中打开",
+      "search": "搜索 GoHighLevel 联系人",
+      "noMatches": "没有匹配的联系人",
+      "opportunity": "商机",
+      "noOpportunities": "该联系人在 GoHighLevel 中没有商机。",
+      "status": {
+        "open": "进行中",
+        "won": "已赢单",
+        "lost": "已丢单",
+        "abandoned": "已放弃"
+      },
+      "update": "更新 GoHighLevel 笔记",
+      "sync": "同步到 GoHighLevel",
+      "configureFirst": "请先在“设置 > 集成”中添加您的 GoHighLevel 令牌。",
+      "synced": "已同步"
+    },
+    "pipeline": {
+      "send": "Send to pipeline",
+      "resend": "Re-send to pipeline",
+      "sent_one": "Sent to pipeline · {{count}} piece added",
+      "sent_other": "Sent to pipeline · {{count}} pieces added",
+      "failed": "Not sent to pipeline: {{reason}}",
+      "configureFirst": "Configure the pipeline in Integrations first",
+      "synced": "Sent",
+      "notSent": "Not sent"
+    },
+    "highlight": {
+      "label": "重点"
     }
   },
   "dictionary": {
@@ -3171,7 +3390,7 @@
     "clearAll": "全部清除",
     "clearTitle": "清空词典？",
     "clearDescription": "这将删除自定义词典中的所有词汇，此操作无法撤销。",
-    "addPlaceholder": "用逗号分隔添加多个词——OpenWhispr、Supabase、ARR",
+    "addPlaceholder": "用逗号分隔添加多个词——rTech Whisper、Supabase、ARR",
     "add": "添加",
     "importWords": "导入词语",
     "importPlaceholder": "粘贴以逗号或换行分隔的词语...",
@@ -3185,23 +3404,23 @@
     "wordsReady_one": "{{count}} 个词语就绪",
     "noMatches": "无匹配项 — 按 Enter 添加“{{word}}”",
     "tabDictionary": "词典",
-    "tabSnippets": "片段",
+    "tabSnippets": "更正",
     "snippets": {
-      "title": "片段",
+      "title": "更正",
       "edit": "编辑 {{trigger}}",
       "remove": "删除 {{trigger}}",
-      "editTitle": "编辑片段",
+      "editTitle": "编辑更正",
       "dialogDescription": "当你说出触发词时，它会被替换为你保存的文本。",
       "triggerLabel": "触发词",
       "triggerPlaceholder": "例如：我的日程链接",
       "replacementLabel": "替换文本",
       "replacementPlaceholder": "说出触发词时插入的文本…",
-      "create": "创建片段",
-      "duplicate": "已存在使用此触发词的片段",
+      "create": "创建更正",
+      "duplicate": "已存在使用此触发词的更正",
       "emptyTitle": "同样的话，只说",
       "emptyTitleAccent": "一遍",
-      "emptyDescription": "说出触发词，OpenWhispr 会把它替换为你保存的内容：链接、开场白、签名、提示词。",
-      "new": "新建片段",
+      "emptyDescription": "说出触发词，rTech Whisper 会把它替换为你保存的内容：链接、开场白、签名、提示词。",
+      "new": "新建更正",
       "examples": {
         "linkedinTrigger": "我的 LinkedIn",
         "linkedinText": "linkedin.com/in/you",
@@ -3218,7 +3437,27 @@
     "emptyDescription": "添加希望{{agentName}}始终识别正确的词：名字、工具、缩写。",
     "addFirstWord": "添加第一个词",
     "importList": "导入列表",
-    "agentDefault": "默认添加"
+    "agentDefault": "默认添加",
+    "trainer": {
+      "open": "训练单词",
+      "title": "训练单词",
+      "description": "把这个单词说几遍。每个识别错误的录音都会成为一条更正。点击保存之前不会保存任何内容。",
+      "wordLabel": "要训练的单词",
+      "takes": "录音次数：",
+      "take": "录音 {{n}}",
+      "record": "录音",
+      "stop": "停止",
+      "redo": "重录",
+      "listening": "正在聆听…",
+      "discarded": "已丢弃，听写已启动。请重录这一条。",
+      "noSpeech": "未检测到语音",
+      "dictationRunning": "听写正在进行。请先停止，再重录这一条。",
+      "failed": "录音失败：{{error}}",
+      "willSave": "将要保存的更正",
+      "alreadyRight": "录音 {{n}} 已识别正确，无需保存。",
+      "nothingUsable": "录音 {{n}} 没有可用内容，无需保存。",
+      "saved": "已添加 {{added}} 条，已替换 {{replaced}} 条。"
+    }
   },
   "insights": {
     "title": "统计",
@@ -3257,7 +3496,14 @@
     "enableDescription_other": "本设备上已记录的 {{count}} 次听写将上传到你的账户。Insights 同步只会发送字数、记录的日期和精确时间、时长和模型类型，不会发送转录内容。",
     "emptyTitle": "还没有听写记录",
     "emptyBody": "开始听写后，你的字数、连续记录和每日活动会显示在这里。",
-    "loadError": "无法从本设备读取 Insights。"
+    "loadError": "无法从本设备读取 Insights。",
+    "latency": {
+      "title": "听写延迟",
+      "value": "{{ms}} ms",
+      "detail_one": "最近 7 天的中位数，共 {{count}} 次听写",
+      "detail_other": "最近 7 天的中位数，共 {{count}} 次听写",
+      "unknownModel": "未知模型"
+    }
   },
   "sidebar": {
     "insights": "统计",
@@ -3278,16 +3524,23 @@
     "upgradeEnterpriseSecurity": "企业级安全 SOC 2 Type II, HIPAA, ISO27001",
     "learnMore": "了解更多",
     "integrations": "集成",
+    "grilling": "Grilling",
     "defaultUser": "用户",
     "notSignedIn": "未登录",
     "chat": "聊天",
     "collapse": "折叠侧边栏",
-    "expand": "展开侧边栏"
+    "expand": "展开侧边栏",
+    "brainDumps": "Brain dumps"
   },
   "chat": {
     "newChat": "新对话",
+    "spokenReplies": "语音回复",
+    "spokenRepliesOn": "Skippy 开口",
+    "spokenRepliesOff": "Skippy 静音",
     "search": "搜索对话...",
     "archived": "已归档",
+    "chatsTab": "Chats",
+    "grillsTab": "Grills",
     "noConversations": "开始你的第一个对话",
     "selectChat": "选择一个对话或开始新的对话",
     "noResults": "没有匹配的对话",
@@ -3304,7 +3557,81 @@
     "searchChats": "搜索聊天",
     "searchTitle": "搜索对话",
     "searchDescription": "搜索所有对话",
-    "newChatEmpty": "询问关于笔记、转录或其他任何内容"
+    "newChatEmpty": "询问关于笔记、转录或其他任何内容",
+    "grill": {
+      "start": "Start grill",
+      "daily": "Daily grill",
+      "lifetime": "Lifetime chapter",
+      "chapter": "{{number}}. {{title}}",
+      "end": "End grill",
+      "saved": "Grill saved",
+      "notSaved": "Grill not saved: {{reason}}",
+      "contextFailed": "Couldn't read your calendar or notes; starting with standard questions.",
+      "startFailed": "Could not start the grill",
+      "savedWithoutTurns": "Grill saved without its turns; the connector can't send it until you re-save",
+      "draftFound": "Unsaved grill: {{title}}",
+      "resumeDraft": "Resume unsaved grill",
+      "saveDraft": "Save it",
+      "draftPending": "Resume or save your unsaved grill first",
+      "feedFailed": "Couldn't reach the pipeline; starting without feed questions.",
+      "alreadyRunning": "已有一个 Grill 正在进行",
+      "voice": {
+        "speaking": "Speaking",
+        "listening": "Listening",
+        "transcribing": "Transcribing",
+        "thinking": "Thinking",
+        "paused": "Paused",
+        "waiting": "Push to talk: dictate or type",
+        "failed": "Answer not transcribed",
+        "retry": "Retry",
+        "pause": "Pause",
+        "resume": "Resume",
+        "skip": "Skip question",
+        "mute": "Mute voice",
+        "pushToTalk": "Push to talk",
+        "pushToTalkHint": "Turns auto-listen off. Use your dictation hotkey, then press Enter.",
+        "speechFailed": "Couldn't speak the question ({{error}}). It's on screen; listening for your answer.",
+        "listenFailed": "Couldn't open the microphone ({{error}}). Dictate or type your answer.",
+        "transcriptionFailed": "Couldn't transcribe your answer ({{error}}). Retry, or type it.",
+        "stillThere": "Still there?",
+        "stillThereNotice": "Still there? Paused. Press Resume when you're ready.",
+        "answerNotSent": "Your answer was not sent: {{text}}",
+        "answerSkipped": "已跳过回答",
+        "unknownError": "unknown error",
+        "answerLost": "有一条回答无法转写",
+        "answerLostPath": "音频保存在 {{path}}",
+        "discard": "Discard grill",
+        "discardConfirm": "Discard this grill? Nothing from it is saved.",
+        "discardConfirmButton": "Discard",
+        "backToScript": "Back to script",
+        "backToScriptHint": "Put the interviewer back on its scripted questions"
+      },
+      "turn": {
+        "edit": "Edit",
+        "remove": "Remove",
+        "save": "Save",
+        "cancel": "Cancel",
+        "editLabel": "Edit this answer",
+        "removeTitle": "Remove this turn?",
+        "removeConfirm": "It will not be saved or sent.",
+        "removeConfirmButton": "Remove"
+      }
+    },
+    "grillMarks": {
+      "label": "Mark this question",
+      "good": "Good",
+      "weak": "Weak",
+      "retire": "Retire",
+      "goodHint": "A good question: keep asking it",
+      "weakHint": "A weak question: it needs work",
+      "retireHint": "Vote to retire this question. It keeps being asked until you approve the retirement.",
+      "addNote": "Add note",
+      "editNote": "Edit note",
+      "noteLabel": "Note on this mark",
+      "notePlaceholder": "Why? (optional)",
+      "saveNote": "Save note",
+      "cancel": "Cancel"
+    }
   },
   "support": {
     "documentation": "文档",
@@ -3313,7 +3640,7 @@
     "submitBug": "提交 Bug"
   },
   "postMigration": {
-    "title": "欢迎回到 OpenWhispr",
+    "title": "欢迎回到 rTech Whisper",
     "description": "您的笔记和设置已从此前的版本中保留下来。不过 macOS 会将其视为一款全新的应用，因此需要您重新授予一些权限。",
     "done": "完成",
     "remindLater": "稍后提醒我"
@@ -3336,8 +3663,8 @@
     "ready": "GPU 加速已就绪",
     "activating": "正在激活 GPU...",
     "activationFailed": "GPU 加速不可用",
-    "activationFailedDescription": "OpenWhispr 已切换为 CPU 转录。",
-    "reasoningActivationFailedDescription": "OpenWhispr 已切换为 CPU 处理。",
+    "activationFailedDescription": "rTech Whisper 已切换为 CPU 转录。",
+    "reasoningActivationFailedDescription": "rTech Whisper 已切换为 CPU 处理。",
     "retryActivation": "重试 GPU 加速",
     "remove": "移除",
     "dismiss": "暂不启用",
@@ -3357,11 +3684,11 @@
       "undo": "撤消",
       "accessibilityMissing": {
         "title": "需要辅助功能权限",
-        "description": "OpenWhispr 需要辅助功能权限来检测快捷键和粘贴文本。请在控制面板中启用。"
+        "description": "rTech Whisper 需要辅助功能权限来检测快捷键和粘贴文本。请在控制面板中启用。"
       },
       "gpuFallback": {
         "title": "GPU 加速不可用",
-        "description": "OpenWhispr 已切换为 CPU 转录。",
+        "description": "rTech Whisper 已切换为 CPU 转录。",
         "retry": "重试 GPU"
       },
       "gpuPackMigration": {
@@ -3404,11 +3731,34 @@
       "visionModelDescription": "将带截图的命令转发给另一个支持图像的模型。",
       "permissionTitle": "屏幕录制",
       "permissionDescription": "macOS 需要屏幕录制权限才能截取屏幕。",
-      "relaunchHint": "屏幕录制权限是在 OpenWhispr 运行期间授予的。请退出并重新打开 OpenWhispr 以开始捕获屏幕截图。"
+      "relaunchHint": "屏幕录制权限是在 rTech Whisper 运行期间授予的。请退出并重新打开 rTech Whisper 以开始捕获屏幕截图。"
+    },
+    "speechProvider": {
+      "title": "{{agentName}} 的语音运行于",
+      "description": "生成语音回复的位置。",
+      "options": {
+        "hub": "Hub",
+        "local": "本地",
+        "auto": "自动",
+        "hubDescription": "你网络中的语音服务器。需要与它建立连接。",
+        "localDescription": "这台电脑。离开你的网络也能使用。语音模型大约需要 1 GB 内存。",
+        "autoDescription": "优先使用 Hub。无法连接时，使用这台电脑。"
+      },
+      "localMissing": "这台电脑尚未安装本地语音，因此无法使用。",
+      "engineMissing": "此版本不包含本地语音引擎。",
+      "weightsMissing": "本地语音需要其模型文件 (945 MB)。只需下载一次，并保存在这台 Mac 上。权重采用 CC BY-NC 4.0 许可。",
+      "downloadWeights": "下载本地语音",
+      "downloading": "正在下载本地语音：{{percentage}}%",
+      "cancelDownload": "取消",
+      "errors": {
+        "diskFull": "磁盘可用空间不足，无法下载本地语音。",
+        "checksum": "下载的文件已损坏。请重试。",
+        "failed": "下载未完成。请重试；将从中断处继续。"
+      }
     },
     "modes": {
       "openwhispr": "OpenWhispr Cloud",
-      "openwhisprDesc": "使用 OpenWhispr 托管的助手，无需 API Key。",
+      "openwhisprDesc": "使用 rTech Whisper 托管的助手，无需 API Key。",
       "providers": "使用自己的 API Key",
       "providersDesc": "用你自己的 API Key 连接 OpenAI、Anthropic、Gemini 或 Groq。",
       "local": "本地",
@@ -3476,6 +3826,41 @@
       "invalidArgs": "{{name}} 的工具参数无效"
     }
   },
+  "assistantSpeechSetup": {
+    "bundle": {
+      "export": "导出语音包",
+      "import": "导入语音包",
+      "exported": "语音包已保存。",
+      "errors": {
+        "no-profile": "请先设置语音，然后再导出。",
+        "not-a-bundle": "该文件不是语音包。",
+        "unsupported-format": "此语音包的格式不受支持，或文件已损坏。",
+        "corrupt": "语音包已损坏。",
+        "too-large": "语音包过大。",
+        "not-wav": "语音包中的音频不是 WAV 文件。",
+        "failed": "无法使用该语音包。"
+      }
+    },
+    "reference": {
+      "choose": "选择 WAV",
+      "save": "保存",
+      "transcribing": "正在转写片段...",
+      "chosen": "片段：{{name}}",
+      "window": "使用第 {{index}} 个 15 秒窗口，共 {{count}} 个（{{start}} 到 {{end}} 秒）",
+      "notTranscribed": "无法转写该片段。请输入其中的确切词句。",
+      "errors": {
+        "not-audio": "无法将此文件读取为音频。",
+        "too-short": "片段短于 3 秒。请使用更长的片段。",
+        "too-long": "片段长于 75 秒。请裁剪后重试。",
+        "transcription-failed": "无法转写该片段。请使用 20 秒以内的片段并输入其中的词句。",
+        "failed": "无法使用该片段。"
+      }
+    },
+    "seed": {
+      "label": "种子",
+      "description": "1 到 1000 之间的整数。相同的种子每次都会得到相同的语气。"
+    }
+  },
   "assistant": {
     "panel": {
       "selectionHint": "选择要编辑的文本，然后按",
@@ -3515,7 +3900,7 @@
       "disconnectConfirm": "断开 {{email}}？",
       "disconnectDescription": "将不再从此日历记录会议笔记。",
       "systemAudioRequired": "需要系统音频权限",
-      "systemAudioDescription": "要转录会议，OpenWhispr 需要系统音频权限来录制其他参与者的音频。我们绝不会录制您的屏幕。您将被引导至系统设置以启用此权限。",
+      "systemAudioDescription": "要转录会议，rTech Whisper 需要系统音频权限来录制其他参与者的音频。我们绝不会录制您的屏幕。您将被引导至系统设置以启用此权限。",
       "openSettings": "打开系统设置",
       "connectFailed": "连接失败",
       "connectFailedDescription": "连接 Google Calendar 时出错。请重试。"
@@ -3545,16 +3930,18 @@
       "disconnectConfirm": "断开 Apple 日历？",
       "disconnectDescription": "将不再从 Apple 日历记录会议笔记。",
       "permissionDenied": "需要日历访问权限",
-      "permissionDeniedDescription": "OpenWhispr 需要日历访问权限来检测会议。请在系统设置的「隐私与安全性」→「日历」中启用 OpenWhispr。",
+      "permissionDeniedDescription": "rTech Whisper 需要日历访问权限来检测会议。请在系统设置的「隐私与安全性」→「日历」中启用 rTech Whisper。",
       "openSettings": "打开系统设置",
       "connectFailed": "连接失败",
-      "connectFailedDescription": "连接 Calendar.app 时出错。请重启 OpenWhispr 后重试。"
+      "connectFailedDescription": "连接 Calendar.app 时出错。请重启 rTech Whisper 后重试。"
     },
     "sections": {
       "calendar": "日历",
       "api": "API",
       "mcp": "MCP",
-      "cli": "CLI"
+      "cli": "CLI",
+      "crm": "GoHighLevel",
+      "pipeline": "Pipeline"
     },
     "api": {
       "title": "API 密钥",
@@ -3566,15 +3953,16 @@
     },
     "mcp": {
       "title": "将笔记带到你的 AI 工具中",
-      "description": "在 Claude、ChatGPT 和 Cursor 中与你的笔记一起聊天、搜索和工作。",
-      "step1": "在你的 AI 工具中，使用公开 URL 添加 OpenWhispr MCP",
-      "step2": "在上方创建具有所需权限的 API 密钥。",
-      "step3": "将密钥粘贴为 Authorization 标头以连接。",
+      "description": "Chat, search, and work with your notes inside Claude and other MCP tools.",
+      "step1": "Install rtw from the rtech-whisper repo: run npm install in tools/rtw.",
+      "step2": "Register it in your AI tool. For Claude Code:",
+      "step3": "It reads your notes through rTech Whisper while the app is running. Nothing leaves this Mac.",
       "learnMore": "了解更多",
       "viewPlans": "查看套餐",
       "copyUrl": "复制 MCP URL",
-      "proRequired": "升级到付费计划，以将 OpenWhispr 连接到 Claude、ChatGPT 和 Cursor。",
-      "copied": "已复制"
+      "proRequired": "升级到付费计划，以将 rTech Whisper 连接到 Claude、ChatGPT 和 Cursor。",
+      "copied": "已复制",
+      "copyCommand": "Copy command"
     },
     "cli": {
       "title": "命令行访问",
@@ -3587,7 +3975,7 @@
       "local": {
         "label": "本地",
         "freeBadge": "免费",
-        "description": "直接读取你的本地笔记。无需登录或 API 密钥 — 在 OpenWhispr 运行时即可使用。"
+        "description": "直接读取你的本地笔记。无需登录或 API 密钥 — 在 rTech Whisper 运行时即可使用。"
       },
       "cloud": {
         "label": "云端",
@@ -3607,8 +3995,49 @@
       "upgrade": "升级"
     },
     "notABot": {
-      "title": "OpenWhispr 是会议录制工具，不是机器人",
-      "description": "OpenWhispr 直接从您的系统捕获音频 — 它不会以参与者身份加入您的会议。只需连接日历，正常记录笔记即可。"
+      "title": "rTech Whisper 是会议录制工具，不是机器人",
+      "description": "rTech Whisper 直接从您的系统捕获音频 — 它不会以参与者身份加入您的会议。只需连接日历，正常记录笔记即可。"
+    },
+    "crm": {
+      "saved": "GoHighLevel 设置已保存",
+      "testSuccess": "已连接到 {{locationName}}",
+      "saveBeforeTesting": "测试连接前请先保存更改。",
+      "title": "GoHighLevel",
+      "configured": "已配置",
+      "notConfigured": "未配置",
+      "description": "将笔记同步到 rTech GoHighLevel 子账户中的联系人和商机。",
+      "locationId": "位置 ID",
+      "token": "Private Integration 令牌",
+      "tokenUnchanged": "留空以保留已保存的令牌",
+      "test": "测试连接",
+      "removeToken": "移除令牌"
+    },
+    "pipeline": {
+      "title": "Social media pipeline",
+      "description": "Send finished grills to the pipeline and ask its open feed questions.",
+      "configured": "Configured",
+      "baseUrl": "Pipeline URL",
+      "token": "Bearer token",
+      "tokenUnchanged": "Saved · leave blank to keep",
+      "saved": "Pipeline settings saved",
+      "saveBeforeTesting": "Save changes before testing the connection.",
+      "test": "Test connection",
+      "testOk": "Connected (HTTP {{status}})",
+      "testUnauthorized": "Unauthorized. Check the token.",
+      "testUnreachable": "Pipeline is unreachable. Check the URL.",
+      "removeToken": "Remove token"
+    },
+    "calendarSyncNow": {
+      "syncNow": "Sync now",
+      "syncedJustNow": "Synced just now",
+      "syncedMinutesAgo": "Synced {{count}} min ago",
+      "syncedHoursAgo": "Synced {{count}} h ago",
+      "syncFailed": "Sync failed"
+    },
+    "calendarSyncHealth": {
+      "needsReconnect": "需要重新连接",
+      "reconnect": "重新连接",
+      "failingSince": "自 {{time}} 起同步失败"
     }
   },
   "calendar": {
@@ -3649,7 +4078,7 @@
     "systemAudioRequired": "需要系统音频权限来录制其他参与者的音频。",
     "openSettings": "打开系统设置",
     "connectCalendar": "连接您的日历",
-    "connectCalendarDescription": "无需离开 OpenWhispr 即可查看并加入您的会议。",
+    "connectCalendarDescription": "无需离开 rTech Whisper 即可查看并加入您的会议。",
     "connectCalendarButton": "连接日历"
   },
   "notesView": {
@@ -3698,7 +4127,7 @@
         "invitationActions": "邀请操作",
         "resendSent": "邀请已发送",
         "resendThrottled": "邀请刚刚发送过，请一分钟后再试。",
-        "syncPrompt": "分享会在你的 OpenWhispr 云端保留此笔记的副本。在你选择分享对象之前，只有你能看到它。",
+        "syncPrompt": "分享会在你的 rTech Whisper 云端保留此笔记的副本。在你选择分享对象之前，只有你能看到它。",
         "syncAndShare": "同步笔记",
         "visibility": {
           "label": "可见性",
@@ -3719,7 +4148,16 @@
           "syncFailed": "无法同步此笔记。请重试。",
           "loadFailed": "无法加载分享设置",
           "retry": "重试"
-        }
+        },
+        "help": "Anyone with the link can view it. There is no expiry.",
+        "notConfigured": "Sharing isn't set up in this build.",
+        "linkLabel": "Share link",
+        "update": "Update shared copy",
+        "newLink": "New link",
+        "stopSharing": "Stop sharing",
+        "updated": "Shared copy updated",
+        "rotated": "Old link no longer works",
+        "failed": "Sharing failed"
       }
     }
   },
@@ -3743,13 +4181,13 @@
     }
   },
   "updateNotification": {
-    "title": "OpenWhispr 有可用更新",
+    "title": "rTech Whisper 有可用更新",
     "body": "版本 {{version}} 已可下载",
     "cta": "立即更新"
   },
   "permissionsGate": {
     "title": "需要权限",
-    "description": "OpenWhispr 需要一些权限才能在此电脑上正常运行。",
+    "description": "rTech Whisper 需要一些权限才能在此电脑上正常运行。",
     "continue": "继续"
   },
   "apiKeysSection": {
@@ -3819,7 +4257,10 @@
     "copy": "复制",
     "copied": "已复制",
     "collapse": "折叠转录",
-    "waitingForInput": "说点什么..."
+    "waitingForInput": "说点什么...",
+    "latencyAverageShort": "平均 {{average}}",
+    "latencyLast": "{{ms}} ms",
+    "latencyWithAverage": "{{ms}} ms · 平均 {{average}} ms"
   },
   "transcript": {
     "speaker": {
@@ -3872,7 +4313,7 @@
     },
     "join": {
       "title": "加入你的团队",
-      "domainTitle": "你的团队已在 OpenWhispr",
+      "domainTitle": "你的团队已在 rTech Whisper",
       "description": "这些工作区中有与你相同邮箱域名的成员。",
       "invitedDescription": "有人邀请你加入一个工作区。",
       "invitedBy": "{{inviter}} 邀请你担任{{role}}",
@@ -3935,6 +4376,12 @@
     },
     "start": "开始记录",
     "join": "加入并转录",
+    "calendarEnd": {
+      "title": "此会议已到计划结束时间。",
+      "body": "继续录音？",
+      "stop": "停止并保存",
+      "keep": "继续录音"
+    },
     "autoEnd": {
       "title": "会议录音已结束",
       "body": {
@@ -3942,7 +4389,65 @@
         "silence": "未检测到音频，因此录音已自动停止。请在 {{seconds}} 秒内重新开始录音。",
         "processExit": "会议应用已关闭，因此录音已自动停止。请在 {{seconds}} 秒内重新开始录音。"
       },
-      "restart": "重新开始录音"
+      "restart": "重新开始录音",
+      "confirm": {
+        "title": "会议似乎已结束",
+        "body": "{{seconds}} 秒后停止",
+        "keep": "继续录制",
+        "stop": "立即停止"
+      }
+    },
+    "grill": {
+      "title": "Grill 会话",
+      "body": "你的 Grill 会话即将开始。",
+      "start": "开始 Grill"
     }
+  },
+  "dataFolderMove": {
+    "pickTitle": "为 rTech Whisper 数据选择一个空文件夹",
+    "confirm": "应用将重新启动并复制你的数据（约 {{size}}）。旧文件夹会保留。",
+    "moveButton": "移动并重新启动",
+    "cancel": "取消",
+    "progress": "正在移动你的数据。这可能需要几分钟。请保持驱动器连接。",
+    "failed": "无法移动数据文件夹。rTech Whisper 将继续使用旧文件夹。",
+    "refused": {
+      "missing": "找不到该文件夹。",
+      "notWritable": "无法写入该文件夹。",
+      "notEmpty": "请选择一个空文件夹。",
+      "insideCurrent": "请选择当前数据文件夹和模型缓存之外的文件夹。"
+    }
+  },
+  "grillTopics": {
+    "title": "To grill",
+    "description": "Topics the next daily grill asks first, then marks done.",
+    "empty": "Nothing waiting. Brain dumps sorted as grill topics land here.",
+    "addPlaceholder": "Add a topic to grill",
+    "add": "Add",
+    "remove": "Remove topic"
+  },
+  "brainDumps": {
+    "title": "Brain dumps",
+    "waitingCount_one": "{{count}} waiting",
+    "waitingCount_other": "{{count}} waiting",
+    "process": "Process",
+    "progress": "Sorting {{current}} of {{total}}...",
+    "waiting": "Waiting",
+    "empty": "No brain dumps waiting.",
+    "lastRun": "Last run",
+    "kind": {
+      "note": "Note in {{folder}}",
+      "grill": "To grill",
+      "todo": "Reminder"
+    },
+    "undo": "Undo",
+    "undone": "Undone",
+    "unavailable": "Brain dumps are not available.",
+    "roundups": "Roundups",
+    "roundupsEmpty": "Daily roundups appear here.",
+    "roundupMorning": "Morning",
+    "roundupNight": "Night",
+    "runNow": "Run now",
+    "running": "Running...",
+    "roundupNothing": "No new brain dumps since the last roundup."
   }
 }

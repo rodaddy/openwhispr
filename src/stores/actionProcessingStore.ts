@@ -4,6 +4,7 @@ import { getSettings, selectResolvedNoteFormatting } from "./settingsStore";
 import { appendDictionarySuffix } from "../config/prompts";
 import { generateNoteTitle } from "../utils/generateTitle";
 import { buildNoteFormattingOverrides } from "../helpers/noteFormattingOverrides";
+import { getLongInputTimeoutSeconds } from "../helpers/llmRequestTimeout.js";
 import { tagActionItemOwners, type MentionPerson } from "../utils/mentionMarkdown";
 import type { ActionItem } from "../types/electron";
 
@@ -70,7 +71,7 @@ const MEETING_SYSTEM_PROMPT = `You are a professional meeting notes assistant. Y
 Your job is to produce clean, actionable meeting notes in markdown. Follow these rules:
 
 FORMAT RULES (strict):
-- Do NOT include any preamble: no title, no "# Meeting Notes", no date/time/location, no attendee list, no topic header. Start directly with the summary.
+- Do NOT include any preamble: no title, no "# Meeting Notes", no date/time/location, no attendee list, no topic header. Start directly with the summary (or the flagged section, when there are highlights).
 - Do NOT reproduce the Meeting Context block in the output.
 - Do NOT use tables, horizontal rules, or block quotes.
 - Refer to people only by the speaker labels used in the transcript. NEVER guess or invent an identity: the note owner is who the Meeting Context says they are — never a name mentioned in conversation. Keep unnamed speakers as "Them" or "Speaker N".
@@ -84,6 +85,11 @@ CONTENT RULES:
 - Where speakers refer to the same topic across multiple turns, consolidate into a coherent point rather than listing every utterance.
 - If the user included manual notes alongside the transcript, integrate them — they represent the user's emphasis on what matters most.
 - Keep the tone professional and concise. Bias toward brevity.
+
+HIGHLIGHTS:
+- A transcript line of the form \`[HIGHLIGHT by <name> @ <time>] <text>\` is a point the note owner flagged live during the meeting as important.
+- When any highlight is present, put a section before the summary headed \`## Flagged by <name>\` (when <name> is "You" or not a real name, use \`## Flagged during the meeting\`). List every highlight as its own bullet, in order, each with the surrounding discussion that gives it context.
+- Weight highlighted points above everything else in the summary, decisions, and action items; never drop or soften one.
 
 Instructions: `;
 
@@ -148,6 +154,7 @@ export function runBackgroundAction(
         systemPrompt,
         temperature: 0.3,
         disableThinking: settings.noteFormattingDisableThinking,
+        timeoutSeconds: getLongInputTimeoutSeconds(noteContent.length + systemPrompt.length),
         ...providerOverrides,
       });
 

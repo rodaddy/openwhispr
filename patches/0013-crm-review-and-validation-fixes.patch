@@ -1,0 +1,2649 @@
+From 45a52fc6370d8cd87e1fffacafe05d55518b4f1d Mon Sep 17 00:00:00 2001
+From: Rico Rojas <rickrojas@gmail.com>
+Date: Thu, 10 Sep 2026 01:06:11 -0400
+Subject: [PATCH] fix(crm): preserve sync receipts and resolve review findings
+
+---
+ package-lock.json                          | 522 +++++++++------------
+ package.json                               |  68 +--
+ patches/README.md                          |   1 +
+ src/components/CrmIntegrationCard.tsx      |  23 +-
+ src/components/notes/CrmSyncDialog.tsx     |  43 +-
+ src/components/notes/NoteEditor.tsx        |   1 +
+ src/components/notes/PersonalNotesView.tsx |  20 +-
+ src/helpers/crmConnector.js                |  67 +--
+ src/helpers/crmStore.js                    |  65 ++-
+ src/helpers/database.js                    |  40 +-
+ src/lib/crmNoteSaveBoundary.ts             |  42 ++
+ src/locales/de/translation.json            |  38 +-
+ src/locales/en/translation.json            |  38 +-
+ src/locales/es/translation.json            |  38 +-
+ src/locales/fr/translation.json            |  38 +-
+ src/locales/it/translation.json            |  38 +-
+ src/locales/ja/translation.json            |  38 +-
+ src/locales/pt/translation.json            |  38 +-
+ src/locales/ru/translation.json            |  38 +-
+ src/locales/zh-CN/translation.json         |  38 +-
+ src/locales/zh-TW/translation.json         |  38 +-
+ test/helpers/crmConnector.test.js          |  72 ++-
+ test/helpers/crmPersistence.test.js        |  66 ++-
+ test/lib/crmNoteSaveBoundary.test.js       |  73 +++
+ 24 files changed, 1052 insertions(+), 431 deletions(-)
+ create mode 100644 src/lib/crmNoteSaveBoundary.ts
+ create mode 100644 test/lib/crmNoteSaveBoundary.test.js
+
+diff --git a/package-lock.json b/package-lock.json
+index e147ade8..7d84e66d 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -36,14 +36,14 @@
+         "@radix-ui/react-slot": "^1.2.3",
+         "@radix-ui/react-tabs": "^1.1.12",
+         "@tanstack/react-virtual": "^3.13.2",
+-        "@tiptap/core": "3.30.4",
+-        "@tiptap/extension-mention": "3.30.4",
+-        "@tiptap/extension-placeholder": "3.30.4",
+-        "@tiptap/extension-task-item": "3.30.4",
+-        "@tiptap/extension-task-list": "3.30.4",
+-        "@tiptap/react": "3.30.4",
+-        "@tiptap/starter-kit": "3.30.4",
+-        "@tiptap/suggestion": "3.30.4",
++        "@tiptap/core": "3.31.3",
++        "@tiptap/extension-mention": "3.31.3",
++        "@tiptap/extension-placeholder": "3.31.3",
++        "@tiptap/extension-task-item": "3.31.3",
++        "@tiptap/extension-task-list": "3.31.3",
++        "@tiptap/react": "3.31.3",
++        "@tiptap/starter-kit": "3.31.3",
++        "@tiptap/suggestion": "3.31.3",
+         "ai": "^6.0.116",
+         "better-auth": "1.6.27",
+         "better-sqlite3": "12.9.0",
+@@ -58,7 +58,7 @@
+         "kysely": "^0.28.17",
+         "lucide-react": "^1.31.0",
+         "object-assign": "^4.1.1",
+-        "onnxruntime-node": "^1.21.0",
++        "onnxruntime-node": "1.21.0",
+         "opencc-js": "^1.4.1",
+         "ps-list": "^9.0.0",
+         "react": "^19.1.0",
+@@ -4604,49 +4604,49 @@
+       }
+     },
+     "node_modules/@tiptap/core": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/core/-/core-3.30.4.tgz",
+-      "integrity": "sha512-V9yKuUfV8qC9WBrnVxkFWmYLBomc3d1CwXoFSjED5DRu5q2oyxv07F+jOJSRogJAY+feHjuxvjhixwxeHm2DXQ==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/core/-/core-3.31.3.tgz",
++      "integrity": "sha512-Cz50pvciQrxdSxgTkHOVz0uD0Yl/8Xt0QatGD6ILm47jW8EzyHR9RkUGs/D5IqzXKuVPntfw1ttaT926vXfiRg==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/pm": "3.30.4"
++        "@tiptap/pm": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-blockquote": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-blockquote/-/extension-blockquote-3.30.4.tgz",
+-      "integrity": "sha512-n25/pFfDpZRJS4f6Ga/PkNrQFBEr3pRvPkDlY99kl8Kt8jFa1EUxbx+uUVIilqwiUjUnHtwCfqjSDFooQjezjg==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-blockquote/-/extension-blockquote-3.31.3.tgz",
++      "integrity": "sha512-fyY2XMbyDDDfOTQ1Qdrnqa1qwC9DWE4n7AfE0EKQI0G8MfLV8RaDlLDcOZDJ9JbMPY7/Gx7EjyK4NKxSW9n2hQ==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4",
+-        "@tiptap/pm": "3.30.4"
++        "@tiptap/core": "3.31.3",
++        "@tiptap/pm": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-bold": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-bold/-/extension-bold-3.30.4.tgz",
+-      "integrity": "sha512-eCOkf+/jdQte7lTZ4pQF10akrsFM4TzYc0ysSAkPa7QA+ex1aI8QT5UUx+mK8RwFo57lqE8PCX/Mx1gTqlCDnQ==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-bold/-/extension-bold-3.31.3.tgz",
++      "integrity": "sha512-dIuYhKk8TitKU/FeDpoTeWZhU42YgDN5npgWNjAmMmRktPdoxnH3/wGSiwXlqZgJWjehN7kPWDePWpJeAImGpQ==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4"
++        "@tiptap/core": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-bubble-menu": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-bubble-menu/-/extension-bubble-menu-3.30.4.tgz",
+-      "integrity": "sha512-diB5stCiuffFIIKhDAVvSYTYW/zzEVh7QqTuk2JAqdkAmAGP2YvUXXZBVhA9ITTIYD1+cp5p6rx9pdM25fsVRQ==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-bubble-menu/-/extension-bubble-menu-3.31.3.tgz",
++      "integrity": "sha512-EV6ZnwKc++2OM/OcD54n8s1B7C9LP7GKAtdEPwu0t3BYJf3sG8Ueoinf7SgGPO9oMPg96GneOkDNm1urMV167g==",
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+@@ -4657,80 +4657,80 @@
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4",
+-        "@tiptap/pm": "3.30.4"
++        "@tiptap/core": "3.31.3",
++        "@tiptap/pm": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-bullet-list": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-bullet-list/-/extension-bullet-list-3.30.4.tgz",
+-      "integrity": "sha512-kJFOF3U4b1ad4T7Vm+CIIp+nxcr6wwWVeqpVe6Jhq9gudsWCKP0+KVAmOiJCePoDu9fpc/ZuGMXDefXYnyQDxg==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-bullet-list/-/extension-bullet-list-3.31.3.tgz",
++      "integrity": "sha512-qEyyoPapPef4LO8XKaN83bxtaNzkJ4kFn/IxLnEKd4BJ3Mvi4MH2yJYlyDqwFnMoev4pMA1zBHRAt/C0THRmZw==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/extension-list": "3.30.4"
++        "@tiptap/extension-list": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-code": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-code/-/extension-code-3.30.4.tgz",
+-      "integrity": "sha512-z9v9rBA/0MecUvf8QkcKKOGgceO9X3DT/JvFNka8Mdd68V5fhBs0jGsxYrj3qDWtdXyyUQIWs0t8HzL6LTdLiA==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-code/-/extension-code-3.31.3.tgz",
++      "integrity": "sha512-SzxOqchrD2AcN3uT67PjKmRFEMOU3vNNiwNaamZJUbZrI6Hmy+bvdHJrc3jrIddyyCrAtsnAfRI0cmorW1jGfg==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4"
++        "@tiptap/core": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-code-block": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-code-block/-/extension-code-block-3.30.4.tgz",
+-      "integrity": "sha512-eKLKxgLCvi+M5tiLkW+fIMzDtR7HvSKnigSE9RYHZmzSrv1ejVjgNj5FH8nGTim98hXiQGfWotss3zqG6bpdDw==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-code-block/-/extension-code-block-3.31.3.tgz",
++      "integrity": "sha512-nvknt4FhyJQjYcvxptmeUlFsIAc8ibua3E5BN4Pim374/9RWepH4cdE9X0/qUTtguHElLx0iKtSIY3rW2qGTFA==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4",
+-        "@tiptap/pm": "3.30.4"
++        "@tiptap/core": "3.31.3",
++        "@tiptap/pm": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-document": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-document/-/extension-document-3.30.4.tgz",
+-      "integrity": "sha512-N+FbI+X1FVH8HxsM8C4fNkkzKXiyhXc9oh9oSqAIKOAAYGAjnHLMxW9TzYXbvm60SlAn6DIMypNf6nULGEc1oQ==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-document/-/extension-document-3.31.3.tgz",
++      "integrity": "sha512-EexgmqnyDNyGlISxo7SMrp5MygpJYmqD+0cY5jB6L1U6L4CpKKRWUt8OO1sWzEHDE1+TTvwt+WIFoIWAziOtEA==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4"
++        "@tiptap/core": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-dropcursor": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-dropcursor/-/extension-dropcursor-3.30.4.tgz",
+-      "integrity": "sha512-P1V0y/FKdyNVBImeW3WN+uGI77Uboc0dW44izAjrII0jcW2KUoBQeNrbbm9UZR1xuRvQJ1Z0OrFHmYrxP5ClNQ==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-dropcursor/-/extension-dropcursor-3.31.3.tgz",
++      "integrity": "sha512-NWomSfu5CSC7VacnMSDzKT8qm66SzMfZwVPEtwY5bPpRTJgTiT1rNK0neDrrzfMN27MfylGyKWWf7Q5Qf8w/fg==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/extensions": "3.30.4"
++        "@tiptap/extensions": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-floating-menu": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-floating-menu/-/extension-floating-menu-3.30.4.tgz",
+-      "integrity": "sha512-75kDLGkVqLBL7OPGNhJZQkmI3KGGVN9S5i+ZHKZEhk4HNOQUU+YMs7qu4I/XSJMXSh7mGrQlMi/OD/Fn3JmkKg==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-floating-menu/-/extension-floating-menu-3.31.3.tgz",
++      "integrity": "sha512-rd4VJ9PGSP9Eop8ZTEwaLZcMzMXLuJKe3hUNf58rq+zANpwM+9fI+vB7g9MAc3eXwUNDxNDVACFIL2oeBqpQ3A==",
+       "license": "MIT",
+       "optional": true,
+       "funding": {
+@@ -4739,80 +4739,80 @@
+       },
+       "peerDependencies": {
+         "@floating-ui/dom": "^1.0.0",
+-        "@tiptap/core": "3.30.4",
+-        "@tiptap/pm": "3.30.4"
++        "@tiptap/core": "3.31.3",
++        "@tiptap/pm": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-gapcursor": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-gapcursor/-/extension-gapcursor-3.30.4.tgz",
+-      "integrity": "sha512-wsuXsB8Rp9BgfWlWYsRVzoHg9LwhoPAQGaw/gku1buDSTMcbLYQvok5MwJ/uJRECaJRLGgbUe5WBXoRvSY+o3g==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-gapcursor/-/extension-gapcursor-3.31.3.tgz",
++      "integrity": "sha512-EBXKb1FrVStsNYCcRGtd9jmzveCvR+eqgg1rVqoONrqFK6U7bga6LN+1dMKroP1kliDVgveYkP3vRYxqw+rFqg==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/extensions": "3.30.4"
++        "@tiptap/extensions": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-hard-break": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-hard-break/-/extension-hard-break-3.30.4.tgz",
+-      "integrity": "sha512-eZ66SyfgmMK861S5SYtQROT/+ZfXtDHxllz7ao+X+dcl+DMdffmOzBeSfwrHQENmgl7umjbdAjqC7PT95jaU+w==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-hard-break/-/extension-hard-break-3.31.3.tgz",
++      "integrity": "sha512-QAdCvNO4+yW9ATwsrej11NTkDYFqPLIEQr3ARNrKOK1qaiS7A0fia2SEukb/hrkP3A6mbozhoQt2r2RGUf/DpQ==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4"
++        "@tiptap/core": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-heading": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-heading/-/extension-heading-3.30.4.tgz",
+-      "integrity": "sha512-sVJxoRnbfK/QC7IoUw/Ezzx9b87+cqFz5d5WZvN8O8yobDWuh7IS8ZgqZiPypTW5RuhnZI+ahvmSyO3WLm8q5Q==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-heading/-/extension-heading-3.31.3.tgz",
++      "integrity": "sha512-rk5VHMAeQcg06SLauN6EGdD2jc0O2qY8QkZYPd0LxNvLblw2BxBx+lxUQSYwLAT9Ie5914gKIK2YbRyO2Ts3ig==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4"
++        "@tiptap/core": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-horizontal-rule": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-horizontal-rule/-/extension-horizontal-rule-3.30.4.tgz",
+-      "integrity": "sha512-RmvjVVkUf5pF70XvwI7Sb4vIUSDbLTLEcFl1l5X9vPcDgDT5G0SiUL6l8F49+qYc6wrMvnLcenApnAiiQ0Vbpw==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-horizontal-rule/-/extension-horizontal-rule-3.31.3.tgz",
++      "integrity": "sha512-YnHGy2KShRwvCseAmmxl9VP7R0qaj8QMp3DA6DJWZqp7r5gLGvDkAqhedxqqefqsE4Y43hjkBdjtB9Ce78LkIw==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4",
+-        "@tiptap/pm": "3.30.4"
++        "@tiptap/core": "3.31.3",
++        "@tiptap/pm": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-italic": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-italic/-/extension-italic-3.30.4.tgz",
+-      "integrity": "sha512-6cEjcyjPRcLEMB75BwiUc6S7yzkqc7VPXCeRgY26UqMg4AvcLrseY70+pO4sLv3n2DS5w8DBbMXZJ4rb1BhpUw==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-italic/-/extension-italic-3.31.3.tgz",
++      "integrity": "sha512-ibGvdvAPyfxBMUVNRI43eb9h2/Jka1MRG5GtnGqbcCX/2+Y/y0EOfFrPQPkuYphiWQYyu9+FzPKMB/pjuaLuKQ==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4"
++        "@tiptap/core": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-link": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-link/-/extension-link-3.30.4.tgz",
+-      "integrity": "sha512-HPHaey3+nQZl+lsr/RvjoXSgSC67SAkNEF4qNELzzDwMUfI0UrZ3H/HhBe6XBeRnGli9gfuSpeRkh63ke5JpOw==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-link/-/extension-link-3.31.3.tgz",
++      "integrity": "sha512-986wOQzTL9Zr5lf84LCLpm+YOms8A0K39/8DVoqRfebqcOe0/eq4bnztmAlfabOd+kJY92g3AgZERFUx/w+dcw==",
+       "license": "MIT",
+       "dependencies": {
+         "linkifyjs": "^4.3.3"
+@@ -4822,187 +4822,187 @@
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4",
+-        "@tiptap/pm": "3.30.4"
++        "@tiptap/core": "3.31.3",
++        "@tiptap/pm": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-list": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-list/-/extension-list-3.30.4.tgz",
+-      "integrity": "sha512-Usqez9DBRoG78tdLwPDcd1j1mBBU7mr5D2yrRP2JL/eXXkhAfdWqEFRYXwct5T4/o9JkGcW3aQf+gUvp12v0pw==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-list/-/extension-list-3.31.3.tgz",
++      "integrity": "sha512-LoveGnC0FVdCV4jUNBaG1ZA+KWE07+adzV3kGy6uUYFcJEjbVUHTnPDrBOob3IwOSO3sCwIkvQb6EVYeXn/4yg==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4",
+-        "@tiptap/pm": "3.30.4"
++        "@tiptap/core": "3.31.3",
++        "@tiptap/pm": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-list-item": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-list-item/-/extension-list-item-3.30.4.tgz",
+-      "integrity": "sha512-8E1ffdC7v3dwSrsqyxY3YP5uEQHTrwBDDmYF6o2YoHfzQ9nhXX5GmBz8fTxukjXUzSpuO76N/gwHIM8hBfdxMQ==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-list-item/-/extension-list-item-3.31.3.tgz",
++      "integrity": "sha512-4QlKOriJJMvg95QJTEsy9BUYPBQ6UvJyb8WURRwdUtQUkkqb8h32lg/eyQUv2FzW9IT1AdUyNZfVaxH64kRfQA==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/extension-list": "3.30.4"
++        "@tiptap/extension-list": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-list-keymap": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-list-keymap/-/extension-list-keymap-3.30.4.tgz",
+-      "integrity": "sha512-6RIzF3aThqIt4sia81K+6wA7H7bgPKjd3D66qLOGxdqdyfnAegk0OD5pUYhMZKhDCWGYKylyRVd2yIn/VNXqAg==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-list-keymap/-/extension-list-keymap-3.31.3.tgz",
++      "integrity": "sha512-If8UOEdDZbPJU6iYTvLtH6DOp2KBy6BKxg9UELL1AevVetGHEF/7lW8hP50Gn1tHMVpPRqmhSzVrJRpEJJgb/Q==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/extension-list": "3.30.4"
++        "@tiptap/extension-list": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-mention": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-mention/-/extension-mention-3.30.4.tgz",
+-      "integrity": "sha512-btRMl5HmYRNU0Vyu5/J/hg1Ya7v5KOwBm2vG03LQC2+p/4wJw4nYNlQhiMDDe6CAZvChpi+abl8HHX3ob3drGA==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-mention/-/extension-mention-3.31.3.tgz",
++      "integrity": "sha512-ygOPc3nQijSMUTbEdMeng12P1szk3znubA9xNi84f31VnR18VjmU0we8SIOSSVwDfm1GppSjRER2qHmX/wGIIw==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4",
+-        "@tiptap/pm": "3.30.4",
+-        "@tiptap/suggestion": "3.30.4"
++        "@tiptap/core": "3.31.3",
++        "@tiptap/pm": "3.31.3",
++        "@tiptap/suggestion": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-ordered-list": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-ordered-list/-/extension-ordered-list-3.30.4.tgz",
+-      "integrity": "sha512-hInlH8I2UFGGULm9XLPtLWWFBECrYf/eNkloQb+udbF7ltLBL5JRCPcB3aM29qSSUQVxCCN8ICHdbwgpnTUAsw==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-ordered-list/-/extension-ordered-list-3.31.3.tgz",
++      "integrity": "sha512-mp3g11NgA/PYu8rj7J7Ez3l4qBy6WfTSmHIG4PZvEGG5w2oUAIkgb9DU7nPPzjmeme27oazFYZw+AtZA0+u4tw==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/extension-list": "3.30.4"
++        "@tiptap/extension-list": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-paragraph": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-paragraph/-/extension-paragraph-3.30.4.tgz",
+-      "integrity": "sha512-gM0WXvOP1tNcvpyRXTCtGhwVxye0VaFMCzDPjLrVAUtZMpo3cOrqDSrFl5tCurA59Qc2p5TUOR4g3/fKw8Yx9Q==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-paragraph/-/extension-paragraph-3.31.3.tgz",
++      "integrity": "sha512-+iPku7wJfy5hbNDNLX8dveFtYVsZMmh7vztjuq8hT3mipSC4IByDehDbU8fzUCjfXiEzmI7mQn7c8LGmHULuzA==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4"
++        "@tiptap/core": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-placeholder": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-placeholder/-/extension-placeholder-3.30.4.tgz",
+-      "integrity": "sha512-Bbwzse6oTNwkQVmBQF45YJ/zpFQut52tT+s+u6cWi/SwyYTMeaU4XNOV6KidkM8urERFCkF/PplAevusvWuowA==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-placeholder/-/extension-placeholder-3.31.3.tgz",
++      "integrity": "sha512-9jYtR8ELEw7GVaruyrm4oFkPcjig9Q+crc+dpmarhBNXUmxagCdlhVzNwCJ2WJRzvBAtx59sEYqNTU38Wx8S3A==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/extensions": "3.30.4"
++        "@tiptap/extensions": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-strike": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-strike/-/extension-strike-3.30.4.tgz",
+-      "integrity": "sha512-iM3QhkEvNwDsxyNKTZM4wwqYhIKOjgXHTamPWnCICrPQ3aYFVdidfpDMePlHl6XL8aEAqPa1Xlj0aumFvSphOQ==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-strike/-/extension-strike-3.31.3.tgz",
++      "integrity": "sha512-G29bhKttYwcKHT+BI6emWVFol3RO/gUXxQVcmr/iT8LXXy7j8J6HFUnsKM+Kg5YlP1rxMRgsa65dbrQVahZi0A==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4"
++        "@tiptap/core": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-task-item": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-task-item/-/extension-task-item-3.30.4.tgz",
+-      "integrity": "sha512-PArRkxRkajtqkCV7wICVCkh6LBtQhvMqRgPmoEfdOIwGSnaWXCmAe8AmtLmCjhtHRxZ5aJlYH2C0/vm2ocoYxg==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-task-item/-/extension-task-item-3.31.3.tgz",
++      "integrity": "sha512-gCWvvXsCzi9tVFXPqKlkbU81XxtIdfjGy7FM9QFRKiWAvq5uv+Q5nvwrCyMVyP4bA7zRGWFaPzwjL68djgzoBw==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/extension-list": "3.30.4"
++        "@tiptap/extension-list": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-task-list": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-task-list/-/extension-task-list-3.30.4.tgz",
+-      "integrity": "sha512-X83/OuCBnY97rEusL+1figMUv+aaJiSJuSKdOjm3zJi3M1KI0GbyBVZ3/LL5Y2hynfeu1rOEVd/fkaP3Z/HUBw==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-task-list/-/extension-task-list-3.31.3.tgz",
++      "integrity": "sha512-3WgVzmfEnDbmxbjUBlvTiKpT53KSBnnYhXUVQxM0nz1vpoWG8QifhsnCVsNI6TZmhgR0x/jY+UW9Hc/WLF8DkQ==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/extension-list": "3.30.4"
++        "@tiptap/extension-list": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-text": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-text/-/extension-text-3.30.4.tgz",
+-      "integrity": "sha512-bzgVlPhkVan+m6jycXkyq08fKCNyQff/cl/5U+/wQf8s3GlX+Le2/pTxbbC3ClfO1D8VLzLwcd2HJTYIoBOdAA==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-text/-/extension-text-3.31.3.tgz",
++      "integrity": "sha512-gdsWtF+taeaCu6V+5Ct10fGo0ACUy1GnYtbb+mcathBt8OqbT+Ws60p/yEmKesBDz2Hn+B5IcWy6+2BBZl5ZTg==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4"
++        "@tiptap/core": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extension-underline": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extension-underline/-/extension-underline-3.30.4.tgz",
+-      "integrity": "sha512-h6nM3ykKswJLWvJVD1eiUFbanNmNj2SeV+2vuW666/xOy2WPyMnE2NZnsbvCKeK0wlUj7AE3l1m602mFwA4sDg==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extension-underline/-/extension-underline-3.31.3.tgz",
++      "integrity": "sha512-HghdJaOwRqYzsAxqSyNyb+IWyOMcdCl8IoiBETA9BZCJAqdXzFLcuWp7CqCqJPam9dgkWosSoHqTCAO4nTBfpw==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4"
++        "@tiptap/core": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/extensions": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/extensions/-/extensions-3.30.4.tgz",
+-      "integrity": "sha512-WeBl/ggeNCOoOySX7647lwtSUHWbCh8I1Qqp8NQBsGyHXEE6/7jHbKcxpw4fplOgScgVMfPz8WZ+3yrfXYCUFw==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/extensions/-/extensions-3.31.3.tgz",
++      "integrity": "sha512-8sJNPGGUe8f3aDojcOW5cfVL7I5NrBbE0UWxG08qoi9Tea6qWbvQJsCR9tsrOapr/DaLr3kpbGZ9s1gEEfcNcA==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4",
+-        "@tiptap/pm": "3.30.4"
++        "@tiptap/core": "3.31.3",
++        "@tiptap/pm": "3.31.3"
+       }
+     },
+     "node_modules/@tiptap/pm": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/pm/-/pm-3.30.4.tgz",
+-      "integrity": "sha512-oPbE+BOzzDKkxsvF9wepTWELvq385oifDkKIigqKCPKpGqplEIHIjNztCj/nOqHCfJBiU9LcoyyWH0qkHAQ9TQ==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/pm/-/pm-3.31.3.tgz",
++      "integrity": "sha512-sZime0SWsz/k62W2WvHx5Ig7G2h7kVhrrmnqy+wEgIHfDwEfOlelRjaWCiBCFlF7dxGUntJusCh9FxlLhni0Ag==",
+       "license": "MIT",
+       "dependencies": {
+         "prosemirror-changeset": "^2.4.1",
+@@ -5017,7 +5017,7 @@
+         "prosemirror-state": "^1.4.4",
+         "prosemirror-tables": "^1.8.5",
+         "prosemirror-transform": "^1.12.0",
+-        "prosemirror-view": "^1.41.9"
++        "prosemirror-view": "^1.42.3"
+       },
+       "funding": {
+         "type": "github",
+@@ -5025,9 +5025,9 @@
+       }
+     },
+     "node_modules/@tiptap/react": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/react/-/react-3.30.4.tgz",
+-      "integrity": "sha512-NxGcKg4xBF6ngk6xORyzRCvG9zb7Z/cf59GpDBsiYpPpD/6m+J4kfNF0KVIOhRSAhNxm2u2ZPuGIWBtS/CDUBQ==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/react/-/react-3.31.3.tgz",
++      "integrity": "sha512-QiwQqvaLFLm5EMFu5tg7nAgXJxCUiUTLD8EsK+TqVV5P4bqOoMOCM39khbhXTJyahCuYpiFWx5YOSDtC/JiPtg==",
+       "license": "MIT",
+       "dependencies": {
+         "@types/use-sync-external-store": "^0.0.6",
+@@ -5039,12 +5039,12 @@
+         "url": "https://github.com/sponsors/ueberdosis"
+       },
+       "optionalDependencies": {
+-        "@tiptap/extension-bubble-menu": "^3.30.4",
+-        "@tiptap/extension-floating-menu": "^3.30.4"
++        "@tiptap/extension-bubble-menu": "^3.31.3",
++        "@tiptap/extension-floating-menu": "^3.31.3"
+       },
+       "peerDependencies": {
+-        "@tiptap/core": "3.30.4",
+-        "@tiptap/pm": "3.30.4",
++        "@tiptap/core": "3.31.3",
++        "@tiptap/pm": "3.31.3",
+         "@types/react": "^17.0.0 || ^18.0.0 || ^19.0.0",
+         "@types/react-dom": "^17.0.0 || ^18.0.0 || ^19.0.0",
+         "react": "^17.0.0 || ^18.0.0 || ^19.0.0",
+@@ -5052,35 +5052,35 @@
+       }
+     },
+     "node_modules/@tiptap/starter-kit": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/starter-kit/-/starter-kit-3.30.4.tgz",
+-      "integrity": "sha512-rZiv2QOqfQU4/MNsAmvbymIwx0tKrGrtdJg76aEaej+aGU1QNDhZbUNutV8AnZxFjSJMm8rt810qzAU98OmCAg==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "@tiptap/core": "3.30.4",
+-        "@tiptap/extension-blockquote": "3.30.4",
+-        "@tiptap/extension-bold": "3.30.4",
+-        "@tiptap/extension-bullet-list": "3.30.4",
+-        "@tiptap/extension-code": "3.30.4",
+-        "@tiptap/extension-code-block": "3.30.4",
+-        "@tiptap/extension-document": "3.30.4",
+-        "@tiptap/extension-dropcursor": "3.30.4",
+-        "@tiptap/extension-gapcursor": "3.30.4",
+-        "@tiptap/extension-hard-break": "3.30.4",
+-        "@tiptap/extension-heading": "3.30.4",
+-        "@tiptap/extension-horizontal-rule": "3.30.4",
+-        "@tiptap/extension-italic": "3.30.4",
+-        "@tiptap/extension-link": "3.30.4",
+-        "@tiptap/extension-list": "3.30.4",
+-        "@tiptap/extension-list-item": "3.30.4",
+-        "@tiptap/extension-list-keymap": "3.30.4",
+-        "@tiptap/extension-ordered-list": "3.30.4",
+-        "@tiptap/extension-paragraph": "3.30.4",
+-        "@tiptap/extension-strike": "3.30.4",
+-        "@tiptap/extension-text": "3.30.4",
+-        "@tiptap/extension-underline": "3.30.4",
+-        "@tiptap/extensions": "3.30.4",
+-        "@tiptap/pm": "3.30.4"
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/starter-kit/-/starter-kit-3.31.3.tgz",
++      "integrity": "sha512-WKof9RewdmGHvWJ1wn0/HVNG2mV+HOgVRyJkKekuM9fgr6BZAAH/xZsWE1eon+94JnQ+KtK2ThydXQM/qc6b2A==",
++      "license": "MIT",
++      "dependencies": {
++        "@tiptap/core": "3.31.3",
++        "@tiptap/extension-blockquote": "3.31.3",
++        "@tiptap/extension-bold": "3.31.3",
++        "@tiptap/extension-bullet-list": "3.31.3",
++        "@tiptap/extension-code": "3.31.3",
++        "@tiptap/extension-code-block": "3.31.3",
++        "@tiptap/extension-document": "3.31.3",
++        "@tiptap/extension-dropcursor": "3.31.3",
++        "@tiptap/extension-gapcursor": "3.31.3",
++        "@tiptap/extension-hard-break": "3.31.3",
++        "@tiptap/extension-heading": "3.31.3",
++        "@tiptap/extension-horizontal-rule": "3.31.3",
++        "@tiptap/extension-italic": "3.31.3",
++        "@tiptap/extension-link": "3.31.3",
++        "@tiptap/extension-list": "3.31.3",
++        "@tiptap/extension-list-item": "3.31.3",
++        "@tiptap/extension-list-keymap": "3.31.3",
++        "@tiptap/extension-ordered-list": "3.31.3",
++        "@tiptap/extension-paragraph": "3.31.3",
++        "@tiptap/extension-strike": "3.31.3",
++        "@tiptap/extension-text": "3.31.3",
++        "@tiptap/extension-underline": "3.31.3",
++        "@tiptap/extensions": "3.31.3",
++        "@tiptap/pm": "3.31.3"
+       },
+       "funding": {
+         "type": "github",
+@@ -5088,9 +5088,9 @@
+       }
+     },
+     "node_modules/@tiptap/suggestion": {
+-      "version": "3.30.4",
+-      "resolved": "https://registry.npmjs.org/@tiptap/suggestion/-/suggestion-3.30.4.tgz",
+-      "integrity": "sha512-viJYyd8xyYFlJmvxPphj/gojMwDIT1g2HRWEzKstbcLb1ox8X+Ijy45PlqgCJFIIxO9RicfIxdaR/hMK2tqG2Q==",
++      "version": "3.31.3",
++      "resolved": "https://registry.npmjs.org/@tiptap/suggestion/-/suggestion-3.31.3.tgz",
++      "integrity": "sha512-z1OQ/Yx6seMZehi1AcmNkyJ8qkHQzybArmCyRdmreS4YL9C4bPMBe5lbMfFsArYs+KD5JyHwps5j7J/YE5BIuw==",
+       "license": "MIT",
+       "funding": {
+         "type": "github",
+@@ -5098,8 +5098,8 @@
+       },
+       "peerDependencies": {
+         "@floating-ui/dom": "^1.0.0",
+-        "@tiptap/core": "3.30.4",
+-        "@tiptap/pm": "3.30.4"
++        "@tiptap/core": "3.31.3",
++        "@tiptap/pm": "3.31.3"
+       }
+     },
+     "node_modules/@tybys/wasm-util": {
+@@ -5624,15 +5624,6 @@
+         "acorn": "^6.0.0 || ^7.0.0 || ^8.0.0"
+       }
+     },
+-    "node_modules/adm-zip": {
+-      "version": "0.6.0",
+-      "resolved": "https://registry.npmjs.org/adm-zip/-/adm-zip-0.6.0.tgz",
+-      "integrity": "sha512-XleryMhbuksdKtofnWZ9Sk+4CUTbms4Mb/EU32SZwToAyZ5RgVos/ki8n+yr0LWHOGKuakbXTuuYNHLQjhddgg==",
+-      "license": "MIT",
+-      "engines": {
+-        "node": ">=14.0"
+-      }
+-    },
+     "node_modules/agent-base": {
+       "version": "7.1.4",
+       "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
+@@ -5921,25 +5912,6 @@
+         "node": ">=6"
+       }
+     },
+-    "node_modules/app-builder-lib/node_modules/global-agent": {
+-      "version": "3.0.0",
+-      "resolved": "https://registry.npmjs.org/global-agent/-/global-agent-3.0.0.tgz",
+-      "integrity": "sha512-PT6XReJ+D07JvGoxQMkT6qji/jVNfX/h364XHZOWeRzy64sSFr+xJ5OX7LI3b4MPQzdL4H8Y8M0xzPpsVMwA8Q==",
+-      "dev": true,
+-      "license": "BSD-3-Clause",
+-      "optional": true,
+-      "dependencies": {
+-        "boolean": "^3.0.1",
+-        "es6-error": "^4.1.1",
+-        "matcher": "^3.0.0",
+-        "roarr": "^2.15.3",
+-        "semver": "^7.3.2",
+-        "serialize-error": "^7.0.1"
+-      },
+-      "engines": {
+-        "node": ">=10.0"
+-      }
+-    },
+     "node_modules/app-builder-lib/node_modules/isexe": {
+       "version": "3.1.5",
+       "resolved": "https://registry.npmjs.org/isexe/-/isexe-3.1.5.tgz",
+@@ -5950,20 +5922,6 @@
+         "node": ">=18"
+       }
+     },
+-    "node_modules/app-builder-lib/node_modules/matcher": {
+-      "version": "3.0.0",
+-      "resolved": "https://registry.npmjs.org/matcher/-/matcher-3.0.0.tgz",
+-      "integrity": "sha512-OkeDaAZ/bQCxeFAozM55PKcKU0yJMPGifLwV4Qgjitu+5MoAfSQN4lsLJeXZ1b8w0x+/Emda6MZgXS1jvsapng==",
+-      "dev": true,
+-      "license": "MIT",
+-      "optional": true,
+-      "dependencies": {
+-        "escape-string-regexp": "^4.0.0"
+-      },
+-      "engines": {
+-        "node": ">=10"
+-      }
+-    },
+     "node_modules/app-builder-lib/node_modules/semver": {
+       "version": "7.7.4",
+       "resolved": "https://registry.npmjs.org/semver/-/semver-7.7.4.tgz",
+@@ -5977,37 +5935,6 @@
+         "node": ">=10"
+       }
+     },
+-    "node_modules/app-builder-lib/node_modules/serialize-error": {
+-      "version": "7.0.1",
+-      "resolved": "https://registry.npmjs.org/serialize-error/-/serialize-error-7.0.1.tgz",
+-      "integrity": "sha512-8I8TjW5KMOKsZQTvoxjuSIa7foAwPWGOts+6o7sgjz41/qMD9VQHEDxi6PBvK2l0MXUmqZyNpUK+T2tQaaElvw==",
+-      "dev": true,
+-      "license": "MIT",
+-      "optional": true,
+-      "dependencies": {
+-        "type-fest": "^0.13.1"
+-      },
+-      "engines": {
+-        "node": ">=10"
+-      },
+-      "funding": {
+-        "url": "https://github.com/sponsors/sindresorhus"
+-      }
+-    },
+-    "node_modules/app-builder-lib/node_modules/type-fest": {
+-      "version": "0.13.1",
+-      "resolved": "https://registry.npmjs.org/type-fest/-/type-fest-0.13.1.tgz",
+-      "integrity": "sha512-34R7HTnG0XIJcBSn5XhDd7nNFPRcXYRZrBB2O2jdKqYODldSzBAqzsWoZYYvduky73toYS/ESqxPvkDf/F0XMg==",
+-      "dev": true,
+-      "license": "(MIT OR CC0-1.0)",
+-      "optional": true,
+-      "engines": {
+-        "node": ">=10"
+-      },
+-      "funding": {
+-        "url": "https://github.com/sponsors/sindresorhus"
+-      }
+-    },
+     "node_modules/app-builder-lib/node_modules/which": {
+       "version": "5.0.0",
+       "resolved": "https://registry.npmjs.org/which/-/which-5.0.0.tgz",
+@@ -6391,9 +6318,7 @@
+       "resolved": "https://registry.npmjs.org/boolean/-/boolean-3.2.0.tgz",
+       "integrity": "sha512-d0II/GO9uf9lfUHH2BQsjxzRJZBdsjgsBiW4BvhWk/3qoKwQFjIDVN19PfX8F2D/r9PCMTtLWjYVCFrpeYUzsw==",
+       "deprecated": "Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.",
+-      "dev": true,
+-      "license": "MIT",
+-      "optional": true
++      "license": "MIT"
+     },
+     "node_modules/bowser": {
+       "version": "2.14.1",
+@@ -7135,9 +7060,7 @@
+       "version": "2.1.0",
+       "resolved": "https://registry.npmjs.org/detect-node/-/detect-node-2.1.0.tgz",
+       "integrity": "sha512-T0NIuQpnTvFDATNuHN5roPwSBG83rFsuO+MXXH9/3N1eFbn4wcPjttvjMLEPWJ0RGUYgQE7cGgS3tNxbqCGM7g==",
+-      "dev": true,
+-      "license": "MIT",
+-      "optional": true
++      "license": "MIT"
+     },
+     "node_modules/detect-node-es": {
+       "version": "1.1.0",
+@@ -7835,9 +7758,7 @@
+       "version": "4.1.1",
+       "resolved": "https://registry.npmjs.org/es6-error/-/es6-error-4.1.1.tgz",
+       "integrity": "sha512-Um/+FxMr9CISWh0bi5Zv0iOD+4cFh5qLeks1qhAopKVAJw3drgKbKySikp7wGhDL0HPeaja0P5ULZrxLkniUVg==",
+-      "dev": true,
+-      "license": "MIT",
+-      "optional": true
++      "license": "MIT"
+     },
+     "node_modules/esbuild": {
+       "version": "0.28.1",
+@@ -8729,15 +8650,17 @@
+       }
+     },
+     "node_modules/global-agent": {
+-      "version": "4.1.3",
+-      "resolved": "https://registry.npmjs.org/global-agent/-/global-agent-4.1.3.tgz",
+-      "integrity": "sha512-KUJEViiuFT3I97t+GYMikLPJS2Lfo/S2F+DQuBWzuzaMPnvt5yyZePzArx36fBzpGTxZjIpDbXLeySLgh+k76g==",
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/global-agent/-/global-agent-3.0.0.tgz",
++      "integrity": "sha512-PT6XReJ+D07JvGoxQMkT6qji/jVNfX/h364XHZOWeRzy64sSFr+xJ5OX7LI3b4MPQzdL4H8Y8M0xzPpsVMwA8Q==",
+       "license": "BSD-3-Clause",
+       "dependencies": {
+-        "globalthis": "^1.0.2",
+-        "matcher": "^4.0.0",
+-        "semver": "^7.3.5",
+-        "serialize-error": "^8.1.0"
++        "boolean": "^3.0.1",
++        "es6-error": "^4.1.1",
++        "matcher": "^3.0.0",
++        "roarr": "^2.15.3",
++        "semver": "^7.3.2",
++        "serialize-error": "^7.0.1"
+       },
+       "engines": {
+         "node": ">=10.0"
+@@ -9345,9 +9268,9 @@
+       "license": "MIT"
+     },
+     "node_modules/js-yaml": {
+-      "version": "4.3.1",
+-      "resolved": "https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.1.tgz",
+-      "integrity": "sha512-CY6crGq313MX8GkwvB7tzgp99vjQxY1++5y10/BKN/GUfHqWaOGQMNZkBvqSzsZKWk/ijwHlWzzkLulsGHhjWQ==",
++      "version": "4.3.2",
++      "resolved": "https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.2.tgz",
++      "integrity": "sha512-SFNOvSJ+Dgf/9An904Yx+CgSlIPCkIpao4qo51lpee25TIRejdH3rhR4EZMGoNx3/TP3O+wzWuiTFl4sqbltzA==",
+       "funding": [
+         {
+           "type": "github",
+@@ -9419,9 +9342,7 @@
+       "version": "5.0.1",
+       "resolved": "https://registry.npmjs.org/json-stringify-safe/-/json-stringify-safe-5.0.1.tgz",
+       "integrity": "sha512-ZClg6AaYvamvYEE82d3Iyd3vSSIjQ+odgjaTzRuO3s7toCdFKczob2i0zCh7JE8kWn17yvAWhUVxvqGwUalsRA==",
+-      "dev": true,
+-      "license": "ISC",
+-      "optional": true
++      "license": "ISC"
+     },
+     "node_modules/json5": {
+       "version": "2.2.3",
+@@ -9925,18 +9846,15 @@
+       "license": "ISC"
+     },
+     "node_modules/matcher": {
+-      "version": "4.0.0",
+-      "resolved": "https://registry.npmjs.org/matcher/-/matcher-4.0.0.tgz",
+-      "integrity": "sha512-S6x5wmcDmsDRRU/c2dkccDwQPXoFczc5+HpQ2lON8pnvHlnvHAHj5WlLVvw6n6vNyHuVugYrFohYxbS+pvFpKQ==",
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/matcher/-/matcher-3.0.0.tgz",
++      "integrity": "sha512-OkeDaAZ/bQCxeFAozM55PKcKU0yJMPGifLwV4Qgjitu+5MoAfSQN4lsLJeXZ1b8w0x+/Emda6MZgXS1jvsapng==",
+       "license": "MIT",
+       "dependencies": {
+         "escape-string-regexp": "^4.0.0"
+       },
+       "engines": {
+         "node": ">=10"
+-      },
+-      "funding": {
+-        "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
+     "node_modules/math-intrinsics": {
+@@ -10921,15 +10839,15 @@
+       }
+     },
+     "node_modules/onnxruntime-common": {
+-      "version": "1.27.0",
+-      "resolved": "https://registry.npmjs.org/onnxruntime-common/-/onnxruntime-common-1.27.0.tgz",
+-      "integrity": "sha512-3KxL5wIVqa8Ex08jxSzncm9CMgw8CjOFyOQ7SxvG9o0cVLlhTNKXyIQuTbtX4tGPJEf73OER2xrjt4HJSBL4ow==",
++      "version": "1.21.0",
++      "resolved": "https://registry.npmjs.org/onnxruntime-common/-/onnxruntime-common-1.21.0.tgz",
++      "integrity": "sha512-Q632iLLrtCAVOTO65dh2+mNbQir/QNTVBG3h/QdZBpns7mZ0RYbLRBgGABPbpU9351AgYy7SJf1WaeVwMrBFPQ==",
+       "license": "MIT"
+     },
+     "node_modules/onnxruntime-node": {
+-      "version": "1.27.0",
+-      "resolved": "https://registry.npmjs.org/onnxruntime-node/-/onnxruntime-node-1.27.0.tgz",
+-      "integrity": "sha512-QEzGwrvNBgv4uPVdnbHsOGG4G6T96mdlcFI8aAKPjMU8wOPpVocPXb6k3QGkaZagVTv2G9Bnnbo6Z3JdXr1fQw==",
++      "version": "1.21.0",
++      "resolved": "https://registry.npmjs.org/onnxruntime-node/-/onnxruntime-node-1.21.0.tgz",
++      "integrity": "sha512-NeaCX6WW2L8cRCSqy3bInlo5ojjQqu2fD3D+9W5qb5irwxhEyWKXeH2vZ8W9r6VxaMPUan+4/7NDwZMtouZxEw==",
+       "hasInstallScript": true,
+       "license": "MIT",
+       "os": [
+@@ -10938,9 +10856,9 @@
+         "linux"
+       ],
+       "dependencies": {
+-        "adm-zip": "^0.5.16",
+-        "global-agent": "^4.1.3",
+-        "onnxruntime-common": "1.27.0"
++        "global-agent": "^3.0.0",
++        "onnxruntime-common": "1.21.0",
++        "tar": "^7.0.1"
+       }
+     },
+     "node_modules/openai": {
+@@ -11957,9 +11875,7 @@
+       "version": "2.15.4",
+       "resolved": "https://registry.npmjs.org/roarr/-/roarr-2.15.4.tgz",
+       "integrity": "sha512-CHhPh+UNHD2GTXNYhPWLnU8ONHdI+5DI+4EYIAOaiD63rHeYlZvyh8P+in5999TTSFgUYuKUAjzRI4mdh/p+2A==",
+-      "dev": true,
+       "license": "BSD-3-Clause",
+-      "optional": true,
+       "dependencies": {
+         "boolean": "^3.0.1",
+         "detect-node": "^2.0.4",
+@@ -12110,17 +12026,15 @@
+       "version": "1.0.0",
+       "resolved": "https://registry.npmjs.org/semver-compare/-/semver-compare-1.0.0.tgz",
+       "integrity": "sha512-YM3/ITh2MJ5MtzaM429anh+x2jiLVjqILF4m4oyQB18W7Ggea7BfqdH/wGMK7dDiMghv/6WG7znWMwUDzJiXow==",
+-      "dev": true,
+-      "license": "MIT",
+-      "optional": true
++      "license": "MIT"
+     },
+     "node_modules/serialize-error": {
+-      "version": "8.1.0",
+-      "resolved": "https://registry.npmjs.org/serialize-error/-/serialize-error-8.1.0.tgz",
+-      "integrity": "sha512-3NnuWfM6vBYoy5gZFvHiYsVbafvI9vZv/+jlIigFn4oP4zjNPK3LhcY0xSCgeb1a5L8jO71Mit9LlNoi2UfDDQ==",
++      "version": "7.0.1",
++      "resolved": "https://registry.npmjs.org/serialize-error/-/serialize-error-7.0.1.tgz",
++      "integrity": "sha512-8I8TjW5KMOKsZQTvoxjuSIa7foAwPWGOts+6o7sgjz41/qMD9VQHEDxi6PBvK2l0MXUmqZyNpUK+T2tQaaElvw==",
+       "license": "MIT",
+       "dependencies": {
+-        "type-fest": "^0.20.2"
++        "type-fest": "^0.13.1"
+       },
+       "engines": {
+         "node": ">=10"
+@@ -12293,9 +12207,7 @@
+       "version": "1.1.3",
+       "resolved": "https://registry.npmjs.org/sprintf-js/-/sprintf-js-1.1.3.tgz",
+       "integrity": "sha512-Oo+0REFV59/rz3gfJNKQiBlwfHaSESl1pcGyABQsnnIfWOFt6JNj5gCog2U6MLZ//IGYD+nA8nI+mTShREReaA==",
+-      "dev": true,
+-      "license": "BSD-3-Clause",
+-      "optional": true
++      "license": "BSD-3-Clause"
+     },
+     "node_modules/stat-mode": {
+       "version": "1.0.0",
+@@ -12792,9 +12704,9 @@
+       }
+     },
+     "node_modules/type-fest": {
+-      "version": "0.20.2",
+-      "resolved": "https://registry.npmjs.org/type-fest/-/type-fest-0.20.2.tgz",
+-      "integrity": "sha512-Ne+eE4r0/iWnpAxD852z3A+N0Bt5RN//NjJwRd2VFHEmrywxf5vsZlh4R6lixl6B+wz/8d+maTSAkN1FIkI3LQ==",
++      "version": "0.13.1",
++      "resolved": "https://registry.npmjs.org/type-fest/-/type-fest-0.13.1.tgz",
++      "integrity": "sha512-34R7HTnG0XIJcBSn5XhDd7nNFPRcXYRZrBB2O2jdKqYODldSzBAqzsWoZYYvduky73toYS/ESqxPvkDf/F0XMg==",
+       "license": "(MIT OR CC0-1.0)",
+       "engines": {
+         "node": ">=10"
+diff --git a/package.json b/package.json
+index 9d1b9631..d4fa3f87 100644
+--- a/package.json
++++ b/package.json
+@@ -146,14 +146,14 @@
+     "@radix-ui/react-slot": "^1.2.3",
+     "@radix-ui/react-tabs": "^1.1.12",
+     "@tanstack/react-virtual": "^3.13.2",
+-    "@tiptap/core": "3.30.4",
+-    "@tiptap/extension-mention": "3.30.4",
+-    "@tiptap/extension-placeholder": "3.30.4",
+-    "@tiptap/extension-task-item": "3.30.4",
+-    "@tiptap/extension-task-list": "3.30.4",
+-    "@tiptap/react": "3.30.4",
+-    "@tiptap/starter-kit": "3.30.4",
+-    "@tiptap/suggestion": "3.30.4",
++    "@tiptap/core": "3.31.3",
++    "@tiptap/extension-mention": "3.31.3",
++    "@tiptap/extension-placeholder": "3.31.3",
++    "@tiptap/extension-task-item": "3.31.3",
++    "@tiptap/extension-task-list": "3.31.3",
++    "@tiptap/react": "3.31.3",
++    "@tiptap/starter-kit": "3.31.3",
++    "@tiptap/suggestion": "3.31.3",
+     "ai": "^6.0.116",
+     "better-auth": "1.6.27",
+     "better-sqlite3": "12.9.0",
+@@ -168,7 +168,7 @@
+     "kysely": "^0.28.17",
+     "lucide-react": "^1.31.0",
+     "object-assign": "^4.1.1",
+-    "onnxruntime-node": "^1.21.0",
++    "onnxruntime-node": "1.21.0",
+     "opencc-js": "^1.4.1",
+     "ps-list": "^9.0.0",
+     "react": "^19.1.0",
+@@ -189,31 +189,31 @@
+   },
+   "overrides": {
+     "adm-zip": "^0.6.0",
+-    "@tiptap/extension-blockquote": "3.30.4",
+-    "@tiptap/extension-bold": "3.30.4",
+-    "@tiptap/extension-bubble-menu": "3.30.4",
+-    "@tiptap/extension-bullet-list": "3.30.4",
+-    "@tiptap/extension-code": "3.30.4",
+-    "@tiptap/extension-code-block": "3.30.4",
+-    "@tiptap/extension-document": "3.30.4",
+-    "@tiptap/extension-dropcursor": "3.30.4",
+-    "@tiptap/extension-floating-menu": "3.30.4",
+-    "@tiptap/extension-gapcursor": "3.30.4",
+-    "@tiptap/extension-hard-break": "3.30.4",
+-    "@tiptap/extension-heading": "3.30.4",
+-    "@tiptap/extension-horizontal-rule": "3.30.4",
+-    "@tiptap/extension-italic": "3.30.4",
+-    "@tiptap/extension-link": "3.30.4",
+-    "@tiptap/extension-list": "3.30.4",
+-    "@tiptap/extension-list-item": "3.30.4",
+-    "@tiptap/extension-list-keymap": "3.30.4",
+-    "@tiptap/extension-ordered-list": "3.30.4",
+-    "@tiptap/extension-paragraph": "3.30.4",
+-    "@tiptap/extension-strike": "3.30.4",
+-    "@tiptap/extension-text": "3.30.4",
+-    "@tiptap/extension-underline": "3.30.4",
+-    "@tiptap/extensions": "3.30.4",
+-    "@tiptap/pm": "3.30.4",
++    "@tiptap/extension-blockquote": "3.31.3",
++    "@tiptap/extension-bold": "3.31.3",
++    "@tiptap/extension-bubble-menu": "3.31.3",
++    "@tiptap/extension-bullet-list": "3.31.3",
++    "@tiptap/extension-code": "3.31.3",
++    "@tiptap/extension-code-block": "3.31.3",
++    "@tiptap/extension-document": "3.31.3",
++    "@tiptap/extension-dropcursor": "3.31.3",
++    "@tiptap/extension-floating-menu": "3.31.3",
++    "@tiptap/extension-gapcursor": "3.31.3",
++    "@tiptap/extension-hard-break": "3.31.3",
++    "@tiptap/extension-heading": "3.31.3",
++    "@tiptap/extension-horizontal-rule": "3.31.3",
++    "@tiptap/extension-italic": "3.31.3",
++    "@tiptap/extension-link": "3.31.3",
++    "@tiptap/extension-list": "3.31.3",
++    "@tiptap/extension-list-item": "3.31.3",
++    "@tiptap/extension-list-keymap": "3.31.3",
++    "@tiptap/extension-ordered-list": "3.31.3",
++    "@tiptap/extension-paragraph": "3.31.3",
++    "@tiptap/extension-strike": "3.31.3",
++    "@tiptap/extension-text": "3.31.3",
++    "@tiptap/extension-underline": "3.31.3",
++    "@tiptap/extensions": "3.31.3",
++    "@tiptap/pm": "3.31.3",
+     "@xmldom/xmldom": "0.8.15",
+     "fast-xml-builder": "1.2.0",
+     "fast-xml-parser": "5.7.2",
+diff --git a/patches/README.md b/patches/README.md
+index 567638e2..b5f0b1da 100644
+--- a/patches/README.md
++++ b/patches/README.md
+@@ -17,6 +17,7 @@ Local changes carried on top of upstream OpenWhispr. Each patch is a
+ | `0010-instant-transcript-panel.patch` | Live transcript panel appears whole on its first frame instead of staging the entrance; the staged timeline stays behind `LIVE_TRANSCRIPT_INSTANT_ENTRANCE`. |
+ | `0011-crm-connector.patch` | CRM settings, contact/company selection and creation, and note activity sync with persisted update identity. |
+ | `0012-forge-ci-runner-routing.patch` | Route the PR test and lockfile checks to Forge's available Docker runner and pin Node from `.nvmrc`. |
++| `0013-crm-review-and-validation-fixes.patch` | Preserve CRM activity identity through key/account changes, export stable drafts, fix company resolution and diagnostics, and repair validation dependencies and fixtures. |
+ 
+ ## Reapply after pulling upstream
+ 
+diff --git a/src/components/CrmIntegrationCard.tsx b/src/components/CrmIntegrationCard.tsx
+index a250e2af..cba11835 100644
+--- a/src/components/CrmIntegrationCard.tsx
++++ b/src/components/CrmIntegrationCard.tsx
+@@ -32,6 +32,7 @@ function failureKind(error: CrmFailure): "auth" | "unreachable" | "generic" {
+ export default function CrmIntegrationCard() {
+   const { t } = useTranslation();
+   const [settings, setSettings] = useState(EMPTY_SETTINGS);
++  const [savedSettings, setSavedSettings] = useState(EMPTY_SETTINGS);
+   const [apiKey, setApiKey] = useState("");
+   const [loading, setLoading] = useState(true);
+   const [saving, setSaving] = useState(false);
+@@ -53,7 +54,9 @@ export default function CrmIntegrationCard() {
+           result.settings.workspaceSlug &&
+           result.settings.hasApiKey
+         );
+-      setSettings({ ...result.settings, configured });
++      const next = { ...result.settings, configured };
++      setSettings(next);
++      setSavedSettings(next);
+     } else setMessage({ kind: failureKind(result), text: result.error });
+     setLoading(false);
+   }, []);
+@@ -75,6 +78,7 @@ export default function CrmIntegrationCard() {
+     const result = await window.electronAPI.crmSaveSettings(input);
+     if ("settings" in result) {
+       setSettings(result.settings);
++      setSavedSettings(result.settings);
+       setApiKey("");
+       setMessage({
+         kind: "success",
+@@ -86,6 +90,12 @@ export default function CrmIntegrationCard() {
+     setSaving(false);
+   };
+ 
++  const hasUnsavedChanges =
++    Boolean(apiKey) ||
++    settings.baseUrl !== savedSettings.baseUrl ||
++    settings.appUrl !== savedSettings.appUrl ||
++    settings.workspaceSlug !== savedSettings.workspaceSlug;
++
+   const test = async () => {
+     setTesting(true);
+     setMessage(null);
+@@ -94,7 +104,7 @@ export default function CrmIntegrationCard() {
+       setMessage({
+         kind: "success",
+         text: t("integrations.crm.testSuccess", {
+-          defaultValue: "Connected (HTTP {{status}}) · {{count}} CRM records available",
++          defaultValue: "Connected (HTTP {{status}}) · {{count}} matching records returned",
+           status: result.status,
+           count: result.rowCount,
+         }),
+@@ -195,6 +205,13 @@ export default function CrmIntegrationCard() {
+           {message.text}
+         </div>
+       )}
++      {hasUnsavedChanges && (
++        <p className="mt-3 text-xs text-muted-foreground">
++          {t("integrations.crm.saveBeforeTesting", {
++            defaultValue: "Save changes before testing the connection.",
++          })}
++        </p>
++      )}
+ 
+       <div className="flex flex-wrap items-center gap-2 mt-4">
+         <Button size="sm" onClick={() => void save()} disabled={saving || testing}>
+@@ -209,7 +226,7 @@ export default function CrmIntegrationCard() {
+           size="sm"
+           variant="outline"
+           onClick={() => void test()}
+-          disabled={saving || testing || !settings.configured}
++          disabled={saving || testing || !settings.configured || hasUnsavedChanges}
+         >
+           {testing ? (
+             <Loader2 className="h-3.5 w-3.5 animate-spin" />
+diff --git a/src/components/notes/CrmSyncDialog.tsx b/src/components/notes/CrmSyncDialog.tsx
+index 01ea6a80..9f3076b8 100644
+--- a/src/components/notes/CrmSyncDialog.tsx
++++ b/src/components/notes/CrmSyncDialog.tsx
+@@ -1,4 +1,4 @@
+-import { useEffect, useMemo, useState } from "react";
++import { useEffect, useMemo, useRef, useState } from "react";
+ import { useTranslation } from "react-i18next";
+ import { Building2, Contact, ExternalLink, Loader2, Plus, Search } from "lucide-react";
+ import { Button } from "../ui/button";
+@@ -22,6 +22,7 @@ interface CrmSyncDialogProps {
+   initialState: CrmSyncState | null;
+   onBeforeSync: () => Promise<void>;
+   onSynced: (state: CrmSyncState) => void;
++  blocked: boolean;
+ }
+ 
+ interface AttendeeSeed {
+@@ -44,9 +45,17 @@ function firstAttendee(raw: string | null): AttendeeSeed | null {
+ 
+ function domainFromEmail(email: string): string {
+   const domain = email.trim().toLowerCase().split("@")[1] || "";
+-  return /^(gmail|googlemail|outlook|hotmail|icloud|yahoo|protonmail|proton)\./.test(domain)
+-    ? ""
+-    : domain;
++  const consumerDomains = new Set([
++    "gmail.com",
++    "googlemail.com",
++    "outlook.com",
++    "hotmail.com",
++    "icloud.com",
++    "yahoo.com",
++    "protonmail.com",
++    "proton.me",
++  ]);
++  return consumerDomains.has(domain) ? "" : domain;
+ }
+ 
+ export default function CrmSyncDialog({
+@@ -56,6 +65,7 @@ export default function CrmSyncDialog({
+   initialState,
+   onBeforeSync,
+   onSynced,
++  blocked,
+ }: CrmSyncDialogProps) {
+   const { t } = useTranslation();
+   const attendee = useMemo(() => firstAttendee(note.participants), [note.participants]);
+@@ -69,12 +79,15 @@ export default function CrmSyncDialog({
+   const [syncing, setSyncing] = useState(false);
+   const [syncState, setSyncState] = useState(initialState);
+   const [error, setError] = useState("");
++  const suggestedDomain = domainFromEmail(attendee?.email || "");
+   const [contact, setContact] = useState<CrmCreateContactInput>({
+     name: attendee?.name || "",
+     email: attendee?.email || "",
+-    companyName: "",
+-    companyDomain: domainFromEmail(attendee?.email || ""),
++    companyName: suggestedDomain,
++    companyDomain: suggestedDomain,
+   });
++  const blockedRef = useRef(blocked);
++  blockedRef.current = blocked;
+ 
+   useEffect(() => {
+     if (!open) return;
+@@ -88,22 +101,25 @@ export default function CrmSyncDialog({
+     setContact({
+       name: attendee?.name || "",
+       email: attendee?.email || "",
+-      companyName: "",
+-      companyDomain: domainFromEmail(attendee?.email || ""),
++      companyName: suggestedDomain,
++      companyDomain: suggestedDomain,
+     });
+-  }, [attendee, initialQuery, initialState, open]);
++  }, [attendee, initialQuery, initialState, open, suggestedDomain]);
+ 
+   useEffect(() => {
+     if (!open) return;
+     let cancelled = false;
+     setSelected(null);
+     setTargets([]);
++    setError("");
+     const timer = setTimeout(async () => {
+       setSearching(true);
+       const result = await window.electronAPI.crmSearchTargets(query.trim());
+       if (cancelled) return;
+-      if ("targets" in result) setTargets(result.targets);
+-      else setError(result.error);
++      if ("targets" in result) {
++        setTargets(result.targets);
++        setError("");
++      } else setError(result.error);
+       setSearching(false);
+     }, 250);
+     return () => {
+@@ -133,11 +149,12 @@ export default function CrmSyncDialog({
+   };
+ 
+   const sync = async () => {
+-    if (!selected) return;
++    if (!selected || blockedRef.current) return;
+     setSyncing(true);
+     setError("");
+     try {
+       await onBeforeSync();
++      if (blockedRef.current) return;
+       const result = await window.electronAPI.crmSyncNote(note.id, selected);
+       if ("state" in result) {
+         setSyncState(result.state);
+@@ -288,7 +305,7 @@ export default function CrmSyncDialog({
+           <Button variant="outline" onClick={() => onOpenChange(false)}>
+             {t("common.cancel", { defaultValue: "Cancel" })}
+           </Button>
+-          <Button onClick={() => void sync()} disabled={!selected || syncing}>
++          <Button onClick={() => void sync()} disabled={!selected || syncing || blocked}>
+             {syncing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+             {syncState
+               ? t("notes.crm.update", { defaultValue: "Update CRM note" })
+diff --git a/src/components/notes/NoteEditor.tsx b/src/components/notes/NoteEditor.tsx
+index e7b5975f..858947fb 100644
+--- a/src/components/notes/NoteEditor.tsx
++++ b/src/components/notes/NoteEditor.tsx
+@@ -1303,6 +1303,7 @@ export default function NoteEditor({
+             initialState={crmSyncState}
+             onBeforeSync={onBeforeCrmSync ?? (async () => {})}
+             onSynced={setCrmSyncState}
++            blocked={!canEditNote || isRecording || isProcessing || !note.id}
+           />
+           {chatMode === "floating" && (
+             <EmbeddedChat
+diff --git a/src/components/notes/PersonalNotesView.tsx b/src/components/notes/PersonalNotesView.tsx
+index 0583c29d..85ab6314 100644
+--- a/src/components/notes/PersonalNotesView.tsx
++++ b/src/components/notes/PersonalNotesView.tsx
+@@ -69,6 +69,7 @@ import { isRegenerableNoteTitle } from "../../helpers/regenerableNoteTitle";
+ import { isMeetingAutoEndEligible } from "../../helpers/meetingRecordingSession";
+ import { handleMeetingRecordingRequest } from "../../helpers/meetingRecordingRequest";
+ import { markIntroSeen, NOTES_STRUCTURE_INTRO, shouldShowIntro } from "../../lib/versionedIntro";
++import { persistStableCrmNoteDraft } from "../../lib/crmNoteSaveBoundary";
+ import {
+   applyNoteDraftMutation,
+   collectPendingNoteWrites,
+@@ -466,9 +467,6 @@ export default function PersonalNotesView({
+     // asking the backend to read the note for CRM sync.
+     await Promise.all(Array.from(activeSavePromisesRef.current));
+ 
+-    const snapshot = draftRef.current;
+-    if (!snapshot) throw new Error("No saved note is available to sync");
+-
+     const document = pendingDocumentRef.current;
+     const enhanced = pendingEnhancedRef.current;
+     if (document) clearTimeout(document.timer);
+@@ -476,15 +474,15 @@ export default function PersonalNotesView({
+ 
+     setIsSaving(true);
+     try {
+-      // Persist the complete current draft even when an earlier debounce has
+-      // already failed and removed its pending marker. CRM reads from the DB,
+-      // so this successful acknowledgement is the sync boundary.
+-      const result = await window.electronAPI.updateNote(snapshot.noteId, {
+-        title: snapshot.title,
+-        content: snapshot.content,
+-        enhanced_content: snapshot.enhancedContent,
++      await persistStableCrmNoteDraft({
++        getDraft: () => draftRef.current,
++        save: (snapshot) =>
++          window.electronAPI.updateNote(snapshot.noteId, {
++            title: snapshot.title,
++            content: snapshot.content,
++            enhanced_content: snapshot.enhancedContent,
++          }),
+       });
+-      if (!result?.success) throw new Error("Could not save the latest note before CRM sync");
+       // Clear only the exact snapshots we persisted; edits made while the
+       // writes were in flight install newer pending snapshots and must stay.
+       if (pendingDocumentRef.current === document) pendingDocumentRef.current = null;
+diff --git a/src/helpers/crmConnector.js b/src/helpers/crmConnector.js
+index 840eb8be..be6f7216 100644
+--- a/src/helpers/crmConnector.js
++++ b/src/helpers/crmConnector.js
+@@ -1,4 +1,3 @@
+-const crypto = require("crypto");
+ const { parseNoteDate } = require("./transcriptFormatter");
+ 
+ const REQUEST_TIMEOUT_MS = 10000;
+@@ -36,7 +35,7 @@ function normalizeUrl(value, field) {
+   return url.toString().replace(/\/$/, "");
+ }
+ 
+-function sanitizeSettings(input = {}) {
++function normalizeCrmSettings(input = {}) {
+   const workspaceSlug = String(input.workspaceSlug || "").trim();
+   if (!workspaceSlug || !/^[A-Za-z0-9_-]+$/.test(workspaceSlug)) {
+     throw new CrmError("Workspace slug is invalid", { code: "INVALID_SETTINGS" });
+@@ -90,7 +89,7 @@ function createCrmConnector({ store, fetchImpl = fetch, now = () => new Date() }
+   const noteQueues = new Map();
+ 
+   async function resolvedConfig() {
+-    const settings = sanitizeSettings(await store.getSettings());
++    const settings = normalizeCrmSettings(await store.getSettings());
+     const apiKey = await store.getApiKey();
+     if (!apiKey) throw new CrmError("CRM API key is required", { code: "NOT_CONFIGURED" });
+     return { ...settings, apiKey: String(apiKey) };
+@@ -151,7 +150,7 @@ function createCrmConnector({ store, fetchImpl = fetch, now = () => new Date() }
+           status: response.status,
+         });
+       }
+-      return { payload, config };
++      return { payload, config, status: response.status };
+     } finally {
+       clearTimeout(timer);
+     }
+@@ -161,9 +160,11 @@ function createCrmConnector({ store, fetchImpl = fetch, now = () => new Date() }
+     if (!target || !["contact", "company"].includes(target.type) || !target.id) {
+       throw new CrmError("CRM target is invalid", { code: "INVALID_TARGET" });
+     }
+-    const note = await store.getNote(noteId);
++    const context = store.captureSyncContext ? await store.captureSyncContext(noteId) : null;
++    const note = context?.note || (await store.getNote(noteId));
+     if (!note || note.deleted_at) throw new CrmError("Note not found", { code: "NOTE_NOT_FOUND" });
+-    const config = await resolvedConfig();
++    const config = context?.config || (await resolvedConfig());
++    if (!config.apiKey) throw new CrmError("CRM API key is required", { code: "NOT_CONFIGURED" });
+     const timestamp = now();
+     const syncedAt = timestamp.toISOString();
+     const noteDate = parseNoteDate(note.created_at);
+@@ -177,10 +178,15 @@ function createCrmConnector({ store, fetchImpl = fetch, now = () => new Date() }
+         ? { contactId: String(target.id) }
+         : { companyId: String(target.id) }),
+     };
+-    const previous = await store.getSyncState(noteId);
++    const previous = await store.getSyncState(noteId, context);
+     const sameScope =
+       previous?.baseUrl === config.baseUrl && previous?.workspaceSlug === config.workspaceSlug;
+     let activityId = sameScope ? previous?.activityId : null;
++    if (context && !(await store.validateSyncContext(context))) {
++      throw new CrmError("CRM account or settings changed before sync", {
++        code: "SETTINGS_CHANGED",
++      });
++    }
+     if (activityId) {
+       if (previous.targetId !== String(target.id) || previous.targetType !== target.type) {
+         throw new CrmError("An existing CRM activity cannot be moved to a different target", {
+@@ -210,14 +216,6 @@ function createCrmConnector({ store, fetchImpl = fetch, now = () => new Date() }
+         throw new CrmError("CRM returned an invalid activity", { code: "INVALID_RESPONSE" });
+       activityId = String(result.payload.id);
+     }
+-    const currentConfig = await resolvedConfig();
+-    if (
+-      currentConfig.baseUrl !== config.baseUrl ||
+-      currentConfig.workspaceSlug !== config.workspaceSlug ||
+-      currentConfig.apiKey !== config.apiKey
+-    ) {
+-      throw new CrmError("CRM settings changed during sync", { code: "SETTINGS_CHANGED" });
+-    }
+     const state = {
+       baseUrl: config.baseUrl,
+       workspaceSlug: config.workspaceSlug,
+@@ -225,12 +223,8 @@ function createCrmConnector({ store, fetchImpl = fetch, now = () => new Date() }
+       targetId: String(target.id),
+       targetType: target.type,
+       syncedAt,
+-      scopeHash: crypto
+-        .createHash("sha256")
+-        .update(`${config.baseUrl}\0${config.workspaceSlug}\0${config.apiKey}`)
+-        .digest("hex"),
+     };
+-    await store.saveSyncState(noteId, state);
++    await store.saveSyncState(noteId, state, context);
+     return {
+       activityId,
+       targetId: state.targetId,
+@@ -244,7 +238,7 @@ function createCrmConnector({ store, fetchImpl = fetch, now = () => new Date() }
+     async getSettings() {
+       let settings;
+       try {
+-        settings = sanitizeSettings(await store.getSettings());
++        settings = normalizeCrmSettings(await store.getSettings());
+       } catch {
+         settings = { baseUrl: "", appUrl: "", workspaceSlug: "" };
+       }
+@@ -258,17 +252,17 @@ function createCrmConnector({ store, fetchImpl = fetch, now = () => new Date() }
+       };
+     },
+     async saveSettings(input) {
+-      const settings = sanitizeSettings(input);
++      const settings = normalizeCrmSettings(input);
+       if (Object.hasOwn(input, "apiKey")) await store.saveApiKey(String(input.apiKey || ""));
+       await store.saveSettings(settings);
+       return this.getSettings();
+     },
+     async testConnection() {
+       const config = await resolvedConfig();
+-      const { payload } = await request("/rest/search?q=a", {}, config);
++      const { payload, status } = await request("/rest/search?q=a", {}, config);
+       if (!Array.isArray(payload.hits))
+         throw new CrmError("CRM returned an invalid search response", { code: "INVALID_RESPONSE" });
+-      return { status: 200, rowCount: payload.hits.length };
++      return { status, rowCount: payload.hits.length };
+     },
+     async searchTargets(query) {
+       const q = String(query || "").trim();
+@@ -343,11 +337,12 @@ function createCrmConnector({ store, fetchImpl = fetch, now = () => new Date() }
+         };
+       }
+       let companyId;
+-      if (input.companyName && input.companyDomain !== "") {
+-        const companyName = String(input.companyName).trim();
+-        const domain = String(input.companyDomain || "")
+-          .trim()
+-          .toLowerCase();
++      const requestedCompanyName = String(input.companyName || "").trim();
++      const domain = String(input.companyDomain || "")
++        .trim()
++        .toLowerCase();
++      if (requestedCompanyName || domain) {
++        const companyName = requestedCompanyName || domain;
+         const { payload } = await request(
+           "/rest/companies/search",
+           { method: "POST", body: { q: domain || companyName, page: 1, pageSize: 100 } },
+@@ -357,8 +352,14 @@ function createCrmConnector({ store, fetchImpl = fetch, now = () => new Date() }
+           throw new CrmError("CRM returned an invalid company search", {
+             code: "INVALID_RESPONSE",
+           });
+-        const match = payload.rows.find(
+-          (row) => domain && String(row.domain || row.domainName || "").toLowerCase() === domain
++        const match = payload.rows.find((row) =>
++          domain
++            ? String(row.domain || "")
++                .trim()
++                .toLowerCase() === domain
++            : String(row.name || "")
++                .trim()
++                .toLowerCase() === companyName.toLowerCase()
+         );
+         if (match) companyId = String(match.id);
+         else {
+@@ -404,7 +405,7 @@ function createCrmConnector({ store, fetchImpl = fetch, now = () => new Date() }
+     async getSyncState(noteId) {
+       const state = await store.getSyncState(noteId);
+       if (!state) return null;
+-      const settings = sanitizeSettings(await store.getSettings());
++      const settings = normalizeCrmSettings(await store.getSettings());
+       return {
+         activityId: state.activityId,
+         targetId: state.targetId,
+@@ -416,4 +417,4 @@ function createCrmConnector({ store, fetchImpl = fetch, now = () => new Date() }
+   };
+ }
+ 
+-module.exports = { buildActivityBody, createCrmConnector, CrmError };
++module.exports = { buildActivityBody, createCrmConnector, CrmError, normalizeCrmSettings };
+diff --git a/src/helpers/crmStore.js b/src/helpers/crmStore.js
+index 0a96f7fd..d4b90e2d 100644
+--- a/src/helpers/crmStore.js
++++ b/src/helpers/crmStore.js
+@@ -2,6 +2,7 @@ const fs = require("fs/promises");
+ const path = require("path");
+ const crypto = require("crypto");
+ const { app } = require("electron");
++const { normalizeCrmSettings } = require("./crmConnector");
+ 
+ class CrmStore {
+   constructor({ databaseManager, environmentManager }) {
+@@ -56,29 +57,67 @@ class CrmStore {
+     return { ...note, speakerMappings: mappings };
+   }
+ 
+-  async _scope() {
+-    const settings = await this.getSettings();
+-    const key = (await this.getApiKey()) || "";
++  _scope(settings, accountId) {
+     return crypto
+       .createHash("sha256")
+-      .update(`${settings.baseUrl}\0${settings.workspaceSlug}\0${key}`)
++      .update(JSON.stringify([settings.baseUrl, settings.workspaceSlug, accountId]))
+       .digest("hex");
+   }
+ 
+-  async getSyncState(noteId) {
+-    const settings = await this.getSettings();
+-    const state = this.databaseManager.getCrmSyncState(noteId, await this._scope());
++  async captureSyncContext(noteId) {
++    const captured = this.databaseManager.captureCrmNoteContext(noteId);
++    if (!captured) return null;
++    const mappings = Object.fromEntries(
++      (this.databaseManager.getSpeakerMappings?.(noteId) || []).map((row) => [
++        row.speaker_id,
++        row.display_name || row.speaker_name || row.name,
++      ])
++    );
++    const settings = normalizeCrmSettings(await this.getSettings());
++    const apiKey = await this.getApiKey();
++    if (!apiKey)
++      return {
++        ...captured,
++        note: { ...captured.note, speakerMappings: mappings },
++        config: { ...settings, apiKey: "" },
++        scope: this._scope(settings, captured.accountId),
++      };
++    return {
++      ...captured,
++      note: { ...captured.note, speakerMappings: mappings },
++      config: { ...settings, apiKey: String(apiKey) },
++      scope: this._scope(settings, captured.accountId),
++    };
++  }
++
++  async validateSyncContext(context) {
++    if (!this.databaseManager.isCrmNoteContextCurrent(context)) return false;
++    const settings = normalizeCrmSettings(await this.getSettings());
++    const apiKey = String((await this.getApiKey()) || "");
++    return (
++      JSON.stringify(settings) ===
++        JSON.stringify({
++          baseUrl: context.config.baseUrl,
++          appUrl: context.config.appUrl,
++          workspaceSlug: context.config.workspaceSlug,
++        }) && apiKey === context.config.apiKey
++    );
++  }
++
++  async getSyncState(noteId, context = null) {
++    const captured = context || (await this.captureSyncContext(noteId));
++    if (!captured) return null;
++    const settings = captured.config;
++    const state = this.databaseManager.getCrmSyncState(noteId, captured.scope, captured.accountId);
+     return state
+       ? { ...state, baseUrl: settings.baseUrl, workspaceSlug: settings.workspaceSlug }
+       : null;
+   }
+ 
+-  async saveSyncState(noteId, state) {
+-    return this.databaseManager.saveCrmSyncState(
+-      noteId,
+-      state,
+-      state.scopeHash || (await this._scope())
+-    );
++  async saveSyncState(noteId, state, context = null) {
++    const captured = context || (await this.captureSyncContext(noteId));
++    if (!captured) throw new Error("Note not found");
++    return this.databaseManager.saveCrmSyncState(noteId, state, captured.scope, captured.accountId);
+   }
+ }
+ 
+diff --git a/src/helpers/database.js b/src/helpers/database.js
+index 5710873e..69db593e 100644
+--- a/src/helpers/database.js
++++ b/src/helpers/database.js
+@@ -2652,9 +2652,9 @@ class DatabaseManager {
+     }
+   }
+ 
+-  getCrmSyncState(noteId, scope) {
++  getCrmSyncState(noteId, scope, accountId = this.activeAccountId) {
+     if (!this.db) throw new Error("Database not initialized");
+-    const accountScope = this._accountScopeCondition("notes");
++    const accountScope = this._crmAccountScopeCondition("notes", accountId);
+     const row = this.db
+       .prepare(
+         `SELECT crm_activity_id, crm_target_id, crm_target_type, crm_synced_at
+@@ -2670,9 +2670,9 @@ class DatabaseManager {
+     };
+   }
+ 
+-  saveCrmSyncState(noteId, state, scope) {
++  saveCrmSyncState(noteId, state, scope, accountId = this.activeAccountId) {
+     if (!this.db) throw new Error("Database not initialized");
+-    const accountScope = this._accountScopeCondition("notes");
++    const accountScope = this._crmAccountScopeCondition("notes", accountId);
+     const result = this.db
+       .prepare(
+         `UPDATE notes SET crm_activity_id = ?, crm_target_id = ?, crm_target_type = ?,
+@@ -2692,6 +2692,38 @@ class DatabaseManager {
+     return state;
+   }
+ 
++  _crmAccountScopeCondition(tableName, accountId) {
++    return {
++      sql: `((${tableName}.account_id IS NULL AND EXISTS (
++        SELECT 1 FROM spaces crm_scope_space
++        WHERE crm_scope_space.id = ${tableName}.space_id
++          AND crm_scope_space.kind = 'private'
++      )) OR ${tableName}.account_id = ? OR EXISTS (
++        SELECT 1 FROM spaces crm_scope_space
++        JOIN space_accounts crm_scope_membership
++          ON crm_scope_membership.space_id = crm_scope_space.id
++        WHERE crm_scope_space.id = ${tableName}.space_id
++          AND crm_scope_space.kind = 'team'
++          AND crm_scope_membership.account_id = ?
++      ))`,
++      params: [accountId, accountId],
++    };
++  }
++
++  captureCrmNoteContext(noteId) {
++    if (!this.db) throw new Error("Database not initialized");
++    const accountId = this.activeAccountId;
++    const accountScope = this._crmAccountScopeCondition("notes", accountId);
++    const note = this.db
++      .prepare(`SELECT * FROM notes WHERE id = ? AND deleted_at IS NULL AND ${accountScope.sql}`)
++      .get(noteId, ...accountScope.params);
++    return note ? { note, accountId } : null;
++  }
++
++  isCrmNoteContextCurrent(context) {
++    return Boolean(context && context.accountId === this.activeAccountId);
++  }
++
+   getNotes(noteType = null, limit = 100, folderId = null, spaceId = null) {
+     try {
+       if (!this.db) {
+diff --git a/src/lib/crmNoteSaveBoundary.ts b/src/lib/crmNoteSaveBoundary.ts
+new file mode 100644
+index 00000000..5675b4d6
+--- /dev/null
++++ b/src/lib/crmNoteSaveBoundary.ts
+@@ -0,0 +1,42 @@
++export interface CrmNoteDraftSnapshot {
++  noteId: number;
++  title: string;
++  content: string;
++  enhancedContent: string | null;
++}
++
++interface StableCrmNoteDraftOptions {
++  getDraft: () => CrmNoteDraftSnapshot | null;
++  save: (snapshot: CrmNoteDraftSnapshot) => Promise<{ success: boolean } | null | undefined>;
++}
++
++function sameDraft(left: CrmNoteDraftSnapshot, right: CrmNoteDraftSnapshot): boolean {
++  return (
++    left.noteId === right.noteId &&
++    left.title === right.title &&
++    left.content === right.content &&
++    left.enhancedContent === right.enhancedContent
++  );
++}
++
++export async function persistStableCrmNoteDraft({
++  getDraft,
++  save,
++}: StableCrmNoteDraftOptions): Promise<void> {
++  const initial = getDraft();
++  if (!initial) throw new Error("No saved note is available to sync");
++  const noteId = initial.noteId;
++
++  let snapshot = initial;
++  for (;;) {
++    const result = await save(snapshot);
++    if (!result?.success) throw new Error("Could not save the latest note before CRM sync");
++
++    const current = getDraft();
++    if (!current || current.noteId !== noteId) {
++      throw new Error("The active note changed before CRM sync");
++    }
++    if (sameDraft(snapshot, current)) return;
++    snapshot = current;
++  }
++}
+diff --git a/src/locales/de/translation.json b/src/locales/de/translation.json
+index 09d2eb06..566a3b8d 100644
+--- a/src/locales/de/translation.json
++++ b/src/locales/de/translation.json
+@@ -3422,6 +3422,26 @@
+       "author": {
+         "you": "Du"
+       }
++    },
++    "crm": {
++      "updateTitle": "Update CRM note",
++      "syncTitle": "Sync note to CRM",
++      "description": "Choose one contact or company for this note.",
++      "syncedAt": "Synced {{time}}",
++      "open": "Open in CRM",
++      "search": "Search contacts and companies",
++      "noMatches": "No matching contacts or companies",
++      "newContact": "New contact",
++      "confirmCreate": "Review these details before creating the contact.",
++      "name": "Name",
++      "email": "Email",
++      "company": "Company (optional)",
++      "domainSuggestion": "Company domain (editable suggestion)",
++      "createContact": "Create contact",
++      "update": "Update CRM note",
++      "sync": "Sync to CRM",
++      "configureFirst": "Configure CRM in Integrations first",
++      "synced": "Synced"
+     }
+   },
+   "dictionary": {
+@@ -3727,7 +3747,8 @@
+       "calendar": "Kalender",
+       "api": "API",
+       "mcp": "MCP",
+-      "cli": "CLI"
++      "cli": "CLI",
++      "crm": "CRM"
+     },
+     "api": {
+       "title": "API-Schlüssel",
+@@ -3782,6 +3803,21 @@
+     "notABot": {
+       "title": "OpenWhispr ist ein Meeting-Rekorder, kein Bot",
+       "description": "OpenWhispr erfasst Audio direkt von deinem System — es nimmt niemals als Teilnehmer an deinen Meetings teil. Verbinde einfach deinen Kalender und mach Notizen wie gewohnt."
++    },
++    "crm": {
++      "saved": "CRM settings saved",
++      "testSuccess": "Connected (HTTP {{status}}) · {{count}} matching records returned",
++      "saveBeforeTesting": "Save changes before testing the connection.",
++      "title": "CRM",
++      "configured": "Configured",
++      "description": "Sync saved notes to CRM contacts and companies.",
++      "baseUrl": "API base URL",
++      "appUrl": "CRM app URL",
++      "workspace": "Workspace slug",
++      "apiKey": "API key",
++      "keyUnchanged": "Saved · leave blank to keep",
++      "test": "Test connection",
++      "removeKey": "Remove API key"
+     }
+   },
+   "notesView": {
+diff --git a/src/locales/en/translation.json b/src/locales/en/translation.json
+index 72486a10..866a6d26 100644
+--- a/src/locales/en/translation.json
++++ b/src/locales/en/translation.json
+@@ -3422,6 +3422,26 @@
+       "author": {
+         "you": "You"
+       }
++    },
++    "crm": {
++      "updateTitle": "Update CRM note",
++      "syncTitle": "Sync note to CRM",
++      "description": "Choose one contact or company for this note.",
++      "syncedAt": "Synced {{time}}",
++      "open": "Open in CRM",
++      "search": "Search contacts and companies",
++      "noMatches": "No matching contacts or companies",
++      "newContact": "New contact",
++      "confirmCreate": "Review these details before creating the contact.",
++      "name": "Name",
++      "email": "Email",
++      "company": "Company (optional)",
++      "domainSuggestion": "Company domain (editable suggestion)",
++      "createContact": "Create contact",
++      "update": "Update CRM note",
++      "sync": "Sync to CRM",
++      "configureFirst": "Configure CRM in Integrations first",
++      "synced": "Synced"
+     }
+   },
+   "dictionary": {
+@@ -3727,7 +3747,8 @@
+       "calendar": "Calendar",
+       "api": "API",
+       "mcp": "MCP",
+-      "cli": "CLI"
++      "cli": "CLI",
++      "crm": "CRM"
+     },
+     "api": {
+       "title": "API keys",
+@@ -3782,6 +3803,21 @@
+     "notABot": {
+       "title": "OpenWhispr is a meeting recorder, not a bot",
+       "description": "OpenWhispr captures audio directly from your system — it never joins your meetings as a participant. Just connect your calendar and take notes as normal."
++    },
++    "crm": {
++      "saved": "CRM settings saved",
++      "testSuccess": "Connected (HTTP {{status}}) · {{count}} matching records returned",
++      "saveBeforeTesting": "Save changes before testing the connection.",
++      "title": "CRM",
++      "configured": "Configured",
++      "description": "Sync saved notes to CRM contacts and companies.",
++      "baseUrl": "API base URL",
++      "appUrl": "CRM app URL",
++      "workspace": "Workspace slug",
++      "apiKey": "API key",
++      "keyUnchanged": "Saved · leave blank to keep",
++      "test": "Test connection",
++      "removeKey": "Remove API key"
+     }
+   },
+   "notesView": {
+diff --git a/src/locales/es/translation.json b/src/locales/es/translation.json
+index 48eea1e1..490b74d5 100644
+--- a/src/locales/es/translation.json
++++ b/src/locales/es/translation.json
+@@ -3219,6 +3219,26 @@
+       "author": {
+         "you": "Tú"
+       }
++    },
++    "crm": {
++      "updateTitle": "Update CRM note",
++      "syncTitle": "Sync note to CRM",
++      "description": "Choose one contact or company for this note.",
++      "syncedAt": "Synced {{time}}",
++      "open": "Open in CRM",
++      "search": "Search contacts and companies",
++      "noMatches": "No matching contacts or companies",
++      "newContact": "New contact",
++      "confirmCreate": "Review these details before creating the contact.",
++      "name": "Name",
++      "email": "Email",
++      "company": "Company (optional)",
++      "domainSuggestion": "Company domain (editable suggestion)",
++      "createContact": "Create contact",
++      "update": "Update CRM note",
++      "sync": "Sync to CRM",
++      "configureFirst": "Configure CRM in Integrations first",
++      "synced": "Synced"
+     }
+   },
+   "dictionary": {
+@@ -3610,7 +3630,8 @@
+       "calendar": "Calendario",
+       "api": "API",
+       "mcp": "MCP",
+-      "cli": "CLI"
++      "cli": "CLI",
++      "crm": "CRM"
+     },
+     "api": {
+       "title": "Claves API",
+@@ -3665,6 +3686,21 @@
+     "notABot": {
+       "title": "OpenWhispr es un grabador de reuniones, no un bot",
+       "description": "OpenWhispr captura el audio directamente de tu sistema — nunca se une a tus reuniones como participante. Solo conecta tu calendario y toma notas con normalidad."
++    },
++    "crm": {
++      "saved": "CRM settings saved",
++      "testSuccess": "Connected (HTTP {{status}}) · {{count}} matching records returned",
++      "saveBeforeTesting": "Save changes before testing the connection.",
++      "title": "CRM",
++      "configured": "Configured",
++      "description": "Sync saved notes to CRM contacts and companies.",
++      "baseUrl": "API base URL",
++      "appUrl": "CRM app URL",
++      "workspace": "Workspace slug",
++      "apiKey": "API key",
++      "keyUnchanged": "Saved · leave blank to keep",
++      "test": "Test connection",
++      "removeKey": "Remove API key"
+     }
+   },
+   "calendar": {
+diff --git a/src/locales/fr/translation.json b/src/locales/fr/translation.json
+index 5a705c70..37113374 100644
+--- a/src/locales/fr/translation.json
++++ b/src/locales/fr/translation.json
+@@ -3422,6 +3422,26 @@
+       "author": {
+         "you": "Vous"
+       }
++    },
++    "crm": {
++      "updateTitle": "Update CRM note",
++      "syncTitle": "Sync note to CRM",
++      "description": "Choose one contact or company for this note.",
++      "syncedAt": "Synced {{time}}",
++      "open": "Open in CRM",
++      "search": "Search contacts and companies",
++      "noMatches": "No matching contacts or companies",
++      "newContact": "New contact",
++      "confirmCreate": "Review these details before creating the contact.",
++      "name": "Name",
++      "email": "Email",
++      "company": "Company (optional)",
++      "domainSuggestion": "Company domain (editable suggestion)",
++      "createContact": "Create contact",
++      "update": "Update CRM note",
++      "sync": "Sync to CRM",
++      "configureFirst": "Configure CRM in Integrations first",
++      "synced": "Synced"
+     }
+   },
+   "dictionary": {
+@@ -3727,7 +3747,8 @@
+       "calendar": "Calendrier",
+       "api": "API",
+       "mcp": "MCP",
+-      "cli": "CLI"
++      "cli": "CLI",
++      "crm": "CRM"
+     },
+     "api": {
+       "title": "Clés API",
+@@ -3782,6 +3803,21 @@
+     "notABot": {
+       "title": "OpenWhispr est un enregistreur de réunions, pas un bot",
+       "description": "OpenWhispr capture l'audio directement depuis votre système — il ne rejoint jamais vos réunions en tant que participant. Connectez simplement votre calendrier et prenez vos notes normalement."
++    },
++    "crm": {
++      "saved": "CRM settings saved",
++      "testSuccess": "Connected (HTTP {{status}}) · {{count}} matching records returned",
++      "saveBeforeTesting": "Save changes before testing the connection.",
++      "title": "CRM",
++      "configured": "Configured",
++      "description": "Sync saved notes to CRM contacts and companies.",
++      "baseUrl": "API base URL",
++      "appUrl": "CRM app URL",
++      "workspace": "Workspace slug",
++      "apiKey": "API key",
++      "keyUnchanged": "Saved · leave blank to keep",
++      "test": "Test connection",
++      "removeKey": "Remove API key"
+     }
+   },
+   "notesView": {
+diff --git a/src/locales/it/translation.json b/src/locales/it/translation.json
+index 83ac0bfa..b003186c 100644
+--- a/src/locales/it/translation.json
++++ b/src/locales/it/translation.json
+@@ -3171,6 +3171,26 @@
+       "author": {
+         "you": "Tu"
+       }
++    },
++    "crm": {
++      "updateTitle": "Update CRM note",
++      "syncTitle": "Sync note to CRM",
++      "description": "Choose one contact or company for this note.",
++      "syncedAt": "Synced {{time}}",
++      "open": "Open in CRM",
++      "search": "Search contacts and companies",
++      "noMatches": "No matching contacts or companies",
++      "newContact": "New contact",
++      "confirmCreate": "Review these details before creating the contact.",
++      "name": "Name",
++      "email": "Email",
++      "company": "Company (optional)",
++      "domainSuggestion": "Company domain (editable suggestion)",
++      "createContact": "Create contact",
++      "update": "Update CRM note",
++      "sync": "Sync to CRM",
++      "configureFirst": "Configure CRM in Integrations first",
++      "synced": "Synced"
+     }
+   },
+   "dictionary": {
+@@ -3562,7 +3582,8 @@
+       "calendar": "Calendario",
+       "api": "API",
+       "mcp": "MCP",
+-      "cli": "CLI"
++      "cli": "CLI",
++      "crm": "CRM"
+     },
+     "api": {
+       "title": "Chiavi API",
+@@ -3617,6 +3638,21 @@
+     "notABot": {
+       "title": "OpenWhispr è un registratore di riunioni, non un bot",
+       "description": "OpenWhispr cattura l'audio direttamente dal tuo sistema — non entra mai nelle tue riunioni come partecipante. Basta collegare il calendario e prendere appunti normalmente."
++    },
++    "crm": {
++      "saved": "CRM settings saved",
++      "testSuccess": "Connected (HTTP {{status}}) · {{count}} matching records returned",
++      "saveBeforeTesting": "Save changes before testing the connection.",
++      "title": "CRM",
++      "configured": "Configured",
++      "description": "Sync saved notes to CRM contacts and companies.",
++      "baseUrl": "API base URL",
++      "appUrl": "CRM app URL",
++      "workspace": "Workspace slug",
++      "apiKey": "API key",
++      "keyUnchanged": "Saved · leave blank to keep",
++      "test": "Test connection",
++      "removeKey": "Remove API key"
+     }
+   },
+   "calendar": {
+diff --git a/src/locales/ja/translation.json b/src/locales/ja/translation.json
+index 11f15634..b0223fa9 100644
+--- a/src/locales/ja/translation.json
++++ b/src/locales/ja/translation.json
+@@ -3099,6 +3099,26 @@
+       "author": {
+         "you": "自分"
+       }
++    },
++    "crm": {
++      "updateTitle": "Update CRM note",
++      "syncTitle": "Sync note to CRM",
++      "description": "Choose one contact or company for this note.",
++      "syncedAt": "Synced {{time}}",
++      "open": "Open in CRM",
++      "search": "Search contacts and companies",
++      "noMatches": "No matching contacts or companies",
++      "newContact": "New contact",
++      "confirmCreate": "Review these details before creating the contact.",
++      "name": "Name",
++      "email": "Email",
++      "company": "Company (optional)",
++      "domainSuggestion": "Company domain (editable suggestion)",
++      "createContact": "Create contact",
++      "update": "Update CRM note",
++      "sync": "Sync to CRM",
++      "configureFirst": "Configure CRM in Integrations first",
++      "synced": "Synced"
+     }
+   },
+   "dictionary": {
+@@ -3562,7 +3582,8 @@
+       "calendar": "カレンダー",
+       "api": "API",
+       "mcp": "MCP",
+-      "cli": "CLI"
++      "cli": "CLI",
++      "crm": "CRM"
+     },
+     "api": {
+       "title": "APIキー",
+@@ -3617,6 +3638,21 @@
+     "notABot": {
+       "title": "OpenWhispr はミーティング録音ツールであり、ボットではありません",
+       "description": "OpenWhispr はシステムから直接オーディオをキャプチャします — 参加者としてミーティングに参加することはありません。カレンダーを接続して、通常通りノートを取るだけです。"
++    },
++    "crm": {
++      "saved": "CRM settings saved",
++      "testSuccess": "Connected (HTTP {{status}}) · {{count}} matching records returned",
++      "saveBeforeTesting": "Save changes before testing the connection.",
++      "title": "CRM",
++      "configured": "Configured",
++      "description": "Sync saved notes to CRM contacts and companies.",
++      "baseUrl": "API base URL",
++      "appUrl": "CRM app URL",
++      "workspace": "Workspace slug",
++      "apiKey": "API key",
++      "keyUnchanged": "Saved · leave blank to keep",
++      "test": "Test connection",
++      "removeKey": "Remove API key"
+     }
+   },
+   "calendar": {
+diff --git a/src/locales/pt/translation.json b/src/locales/pt/translation.json
+index aed78a00..dd6efbd3 100644
+--- a/src/locales/pt/translation.json
++++ b/src/locales/pt/translation.json
+@@ -3171,6 +3171,26 @@
+       "author": {
+         "you": "Você"
+       }
++    },
++    "crm": {
++      "updateTitle": "Update CRM note",
++      "syncTitle": "Sync note to CRM",
++      "description": "Choose one contact or company for this note.",
++      "syncedAt": "Synced {{time}}",
++      "open": "Open in CRM",
++      "search": "Search contacts and companies",
++      "noMatches": "No matching contacts or companies",
++      "newContact": "New contact",
++      "confirmCreate": "Review these details before creating the contact.",
++      "name": "Name",
++      "email": "Email",
++      "company": "Company (optional)",
++      "domainSuggestion": "Company domain (editable suggestion)",
++      "createContact": "Create contact",
++      "update": "Update CRM note",
++      "sync": "Sync to CRM",
++      "configureFirst": "Configure CRM in Integrations first",
++      "synced": "Synced"
+     }
+   },
+   "dictionary": {
+@@ -3562,7 +3582,8 @@
+       "calendar": "Calendário",
+       "api": "API",
+       "mcp": "MCP",
+-      "cli": "CLI"
++      "cli": "CLI",
++      "crm": "CRM"
+     },
+     "api": {
+       "title": "Chaves de API",
+@@ -3617,6 +3638,21 @@
+     "notABot": {
+       "title": "O OpenWhispr é um gravador de reuniões, não um bot",
+       "description": "O OpenWhispr captura áudio diretamente do seu sistema — ele nunca entra nas suas reuniões como participante. Basta conectar seu calendário e fazer anotações normalmente."
++    },
++    "crm": {
++      "saved": "CRM settings saved",
++      "testSuccess": "Connected (HTTP {{status}}) · {{count}} matching records returned",
++      "saveBeforeTesting": "Save changes before testing the connection.",
++      "title": "CRM",
++      "configured": "Configured",
++      "description": "Sync saved notes to CRM contacts and companies.",
++      "baseUrl": "API base URL",
++      "appUrl": "CRM app URL",
++      "workspace": "Workspace slug",
++      "apiKey": "API key",
++      "keyUnchanged": "Saved · leave blank to keep",
++      "test": "Test connection",
++      "removeKey": "Remove API key"
+     }
+   },
+   "calendar": {
+diff --git a/src/locales/ru/translation.json b/src/locales/ru/translation.json
+index a7d7af30..f14f413f 100644
+--- a/src/locales/ru/translation.json
++++ b/src/locales/ru/translation.json
+@@ -3197,6 +3197,26 @@
+       "author": {
+         "you": "Вы"
+       }
++    },
++    "crm": {
++      "updateTitle": "Update CRM note",
++      "syncTitle": "Sync note to CRM",
++      "description": "Choose one contact or company for this note.",
++      "syncedAt": "Synced {{time}}",
++      "open": "Open in CRM",
++      "search": "Search contacts and companies",
++      "noMatches": "No matching contacts or companies",
++      "newContact": "New contact",
++      "confirmCreate": "Review these details before creating the contact.",
++      "name": "Name",
++      "email": "Email",
++      "company": "Company (optional)",
++      "domainSuggestion": "Company domain (editable suggestion)",
++      "createContact": "Create contact",
++      "update": "Update CRM note",
++      "sync": "Sync to CRM",
++      "configureFirst": "Configure CRM in Integrations first",
++      "synced": "Synced"
+     }
+   },
+   "dictionary": {
+@@ -3600,7 +3620,8 @@
+       "calendar": "Календарь",
+       "api": "API",
+       "mcp": "MCP",
+-      "cli": "CLI"
++      "cli": "CLI",
++      "crm": "CRM"
+     },
+     "api": {
+       "title": "API-ключи",
+@@ -3655,6 +3676,21 @@
+     "notABot": {
+       "title": "OpenWhispr — это запись встреч, а не бот",
+       "description": "OpenWhispr захватывает аудио напрямую из вашей системы — он никогда не присоединяется к встречам как участник. Просто подключите календарь и делайте заметки как обычно."
++    },
++    "crm": {
++      "saved": "CRM settings saved",
++      "testSuccess": "Connected (HTTP {{status}}) · {{count}} matching records returned",
++      "saveBeforeTesting": "Save changes before testing the connection.",
++      "title": "CRM",
++      "configured": "Configured",
++      "description": "Sync saved notes to CRM contacts and companies.",
++      "baseUrl": "API base URL",
++      "appUrl": "CRM app URL",
++      "workspace": "Workspace slug",
++      "apiKey": "API key",
++      "keyUnchanged": "Saved · leave blank to keep",
++      "test": "Test connection",
++      "removeKey": "Remove API key"
+     }
+   },
+   "calendar": {
+diff --git a/src/locales/zh-CN/translation.json b/src/locales/zh-CN/translation.json
+index ec3ba9b1..cd394c8e 100644
+--- a/src/locales/zh-CN/translation.json
++++ b/src/locales/zh-CN/translation.json
+@@ -3171,6 +3171,26 @@
+       "author": {
+         "you": "你"
+       }
++    },
++    "crm": {
++      "updateTitle": "Update CRM note",
++      "syncTitle": "Sync note to CRM",
++      "description": "Choose one contact or company for this note.",
++      "syncedAt": "Synced {{time}}",
++      "open": "Open in CRM",
++      "search": "Search contacts and companies",
++      "noMatches": "No matching contacts or companies",
++      "newContact": "New contact",
++      "confirmCreate": "Review these details before creating the contact.",
++      "name": "Name",
++      "email": "Email",
++      "company": "Company (optional)",
++      "domainSuggestion": "Company domain (editable suggestion)",
++      "createContact": "Create contact",
++      "update": "Update CRM note",
++      "sync": "Sync to CRM",
++      "configureFirst": "Configure CRM in Integrations first",
++      "synced": "Synced"
+     }
+   },
+   "dictionary": {
+@@ -3562,7 +3582,8 @@
+       "calendar": "日历",
+       "api": "API",
+       "mcp": "MCP",
+-      "cli": "CLI"
++      "cli": "CLI",
++      "crm": "CRM"
+     },
+     "api": {
+       "title": "API 密钥",
+@@ -3617,6 +3638,21 @@
+     "notABot": {
+       "title": "OpenWhispr 是会议录制工具，不是机器人",
+       "description": "OpenWhispr 直接从您的系统捕获音频 — 它不会以参与者身份加入您的会议。只需连接日历，正常记录笔记即可。"
++    },
++    "crm": {
++      "saved": "CRM settings saved",
++      "testSuccess": "Connected (HTTP {{status}}) · {{count}} matching records returned",
++      "saveBeforeTesting": "Save changes before testing the connection.",
++      "title": "CRM",
++      "configured": "Configured",
++      "description": "Sync saved notes to CRM contacts and companies.",
++      "baseUrl": "API base URL",
++      "appUrl": "CRM app URL",
++      "workspace": "Workspace slug",
++      "apiKey": "API key",
++      "keyUnchanged": "Saved · leave blank to keep",
++      "test": "Test connection",
++      "removeKey": "Remove API key"
+     }
+   },
+   "calendar": {
+diff --git a/src/locales/zh-TW/translation.json b/src/locales/zh-TW/translation.json
+index 505b0adf..5ee0bb30 100644
+--- a/src/locales/zh-TW/translation.json
++++ b/src/locales/zh-TW/translation.json
+@@ -3171,6 +3171,26 @@
+       "author": {
+         "you": "你"
+       }
++    },
++    "crm": {
++      "updateTitle": "Update CRM note",
++      "syncTitle": "Sync note to CRM",
++      "description": "Choose one contact or company for this note.",
++      "syncedAt": "Synced {{time}}",
++      "open": "Open in CRM",
++      "search": "Search contacts and companies",
++      "noMatches": "No matching contacts or companies",
++      "newContact": "New contact",
++      "confirmCreate": "Review these details before creating the contact.",
++      "name": "Name",
++      "email": "Email",
++      "company": "Company (optional)",
++      "domainSuggestion": "Company domain (editable suggestion)",
++      "createContact": "Create contact",
++      "update": "Update CRM note",
++      "sync": "Sync to CRM",
++      "configureFirst": "Configure CRM in Integrations first",
++      "synced": "Synced"
+     }
+   },
+   "dictionary": {
+@@ -3562,7 +3582,8 @@
+       "calendar": "行事曆",
+       "api": "API",
+       "mcp": "MCP",
+-      "cli": "CLI"
++      "cli": "CLI",
++      "crm": "CRM"
+     },
+     "api": {
+       "title": "API 金鑰",
+@@ -3617,6 +3638,21 @@
+     "notABot": {
+       "title": "OpenWhispr 是會議錄製工具，不是機器人",
+       "description": "OpenWhispr 直接從您的系統擷取音訊 — 它不會以參與者身分加入您的會議。只需連接日曆，正常記錄筆記即可。"
++    },
++    "crm": {
++      "saved": "CRM settings saved",
++      "testSuccess": "Connected (HTTP {{status}}) · {{count}} matching records returned",
++      "saveBeforeTesting": "Save changes before testing the connection.",
++      "title": "CRM",
++      "configured": "Configured",
++      "description": "Sync saved notes to CRM contacts and companies.",
++      "baseUrl": "API base URL",
++      "appUrl": "CRM app URL",
++      "workspace": "Workspace slug",
++      "apiKey": "API key",
++      "keyUnchanged": "Saved · leave blank to keep",
++      "test": "Test connection",
++      "removeKey": "Remove API key"
+     }
+   },
+   "calendar": {
+diff --git a/test/helpers/crmConnector.test.js b/test/helpers/crmConnector.test.js
+index f601a3b9..874bbfa0 100644
+--- a/test/helpers/crmConnector.test.js
++++ b/test/helpers/crmConnector.test.js
+@@ -122,13 +122,77 @@ test("connection check authenticates in the main-process request and returns the
+       assert.equal(request.headers.get("x-api-key"), "secret-key");
+       assert.equal(request.url, "https://crm.example/rest/search?q=a");
+       assert.equal(request.method, "GET");
+-      return jsonResponse({
+-        hits: [{ kind: "contact", id: "contact-1", label: "Ada", detail: "ada@example.com" }],
+-      });
++      return jsonResponse(
++        {
++          hits: [{ kind: "contact", id: "contact-1", label: "Ada", detail: "ada@example.com" }],
++        },
++        207
++      );
+     },
+   });
+ 
+-  assert.deepEqual(await connector.testConnection(), { status: 200, rowCount: 1 });
++  assert.deepEqual(await connector.testConnection(), { status: 207, rowCount: 1 });
++});
++
++test("contact creation resolves a domain-only company and exact name-only match", async () => {
++  for (const input of [
++    { name: "Ada Lovelace", email: "ada@example.com", companyDomain: "example.com" },
++    { name: "Ada Lovelace", email: "ada@example.com", companyName: "Example Co" },
++  ]) {
++    const requests = [];
++    const connector = createCrmConnector({
++      store: makeStore(),
++      fetchImpl: async (url, init) => {
++        const request = requestDetails(url, init);
++        requests.push(request);
++        if (request.url.endsWith("/contacts/search")) return jsonResponse({ rows: [] });
++        if (request.url.endsWith("/companies/search")) {
++          return jsonResponse({
++            rows: [{ id: "company-1", name: "example co", domain: "example.com" }],
++          });
++        }
++        return jsonResponse(
++          { id: "contact-1", firstName: "Ada", lastName: "Lovelace", email: "ada@example.com" },
++          201
++        );
++      },
++    });
++    await connector.createContact(input);
++    const contact = requests.find(
++      ({ url, method }) => url.endsWith("/contacts") && method === "POST"
++    );
++    assert.equal(contact.body.companyId, "company-1");
++    assert.equal(
++      requests.some(({ url }) => url.endsWith("/companies")),
++      false
++    );
++  }
++});
++
++test("domain-only company creation derives an editable fallback name", async () => {
++  const requests = [];
++  const connector = createCrmConnector({
++    store: makeStore(),
++    fetchImpl: async (url, init) => {
++      const request = requestDetails(url, init);
++      requests.push(request);
++      if (request.url.endsWith("/contacts/search")) return jsonResponse({ rows: [] });
++      if (request.url.endsWith("/companies/search")) return jsonResponse({ rows: [] });
++      if (request.url.endsWith("/companies"))
++        return jsonResponse({ id: "company-1", name: "example.com", domain: "example.com" }, 201);
++      return jsonResponse({ id: "contact-1", firstName: "Ada", email: "ada@example.com" }, 201);
++    },
++  });
++
++  await connector.createContact({
++    name: "Ada",
++    email: "ada@example.com",
++    companyDomain: "example.com",
++  });
++  const company = requests.find(
++    ({ url, method }) => url.endsWith("/companies") && method === "POST"
++  );
++  assert.deepEqual(company.body, { name: "example.com", domain: "example.com" });
+ });
+ 
+ test("target search combines and normalizes contacts and companies", async () => {
+diff --git a/test/helpers/crmPersistence.test.js b/test/helpers/crmPersistence.test.js
+index 1fc66e99..33db7b8a 100644
+--- a/test/helpers/crmPersistence.test.js
++++ b/test/helpers/crmPersistence.test.js
+@@ -144,6 +144,8 @@ test("actual CRM store composition updates an existing activity after persisted
+   let connector = createCrmConnector({ store, fetchImpl });
+   await connector.syncNote(noteId, { id: "contact-1", type: "contact" });
+ 
++  apiKey = "replacement-secret";
++
+   manager.db.close();
+   manager.db = null;
+   manager = openDatabase(t);
+@@ -167,8 +169,70 @@ test("actual CRM store composition updates an existing activity after persisted
+   manager.db = null;
+ });
+ 
+-test("CRM API key uses encrypted secret storage, stays out of .env, and explicit empty removes it", async () => {
++test("acknowledged activity persists to its captured account and CRM scope after context changes", async (t) => {
++  userDataDir = fs.mkdtempSync(path.join(fixtureRoot, "account-race-"));
++  const manager = openDatabase(t);
++  if (!manager) return;
++  manager.setActiveAccountId("account-a");
++  const noteId = insertPrivateNote(manager, { accountId: "account-a" });
++  const environmentManager = { getCrmApiKey: () => "key", saveCrmApiKey: () => {} };
++  const store = new CrmStore({ databaseManager: manager, environmentManager });
++  await store.saveSettings({
++    baseUrl: "http://127.0.0.1:43199/",
++    appUrl: "http://127.0.0.1:43200/",
++    workspaceSlug: " acme ",
++  });
++  let release;
++  const connector = createCrmConnector({
++    store,
++    fetchImpl: async () => {
++      await new Promise((resolve) => {
++        release = resolve;
++      });
++      return {
++        ok: true,
++        status: 201,
++        headers: { get: () => "application/json" },
++        json: async () => ({ id: "activity-race" }),
++      };
++    },
++  });
++  const sync = connector.syncNote(noteId, { id: "contact-1", type: "contact" });
++  while (!release) await new Promise((resolve) => setImmediate(resolve));
++  manager.setActiveAccountId("account-b");
++  await store.saveSettings({
++    baseUrl: "http://127.0.0.1:53199",
++    appUrl: "http://127.0.0.1:53200",
++    workspaceSlug: "other",
++  });
++  release();
++  await sync;
++  manager.setActiveAccountId("account-a");
++  await store.saveSettings({
++    baseUrl: "http://127.0.0.1:43199/",
++    appUrl: "http://127.0.0.1:43200/",
++    workspaceSlug: " acme ",
++  });
++  const reopened = new CrmStore({ databaseManager: manager, environmentManager });
++  assert.equal((await reopened.getSyncState(noteId))?.activityId, "activity-race");
++  manager.db.close();
++  manager.db = null;
++});
++
++test("CRM API key uses encrypted secret storage, stays out of .env, and explicit empty removes it", async (t) => {
+   userDataDir = fs.mkdtempSync(path.join(fixtureRoot, "secret-"));
++  const originalResourcesPath = Object.getOwnPropertyDescriptor(process, "resourcesPath");
++  Object.defineProperty(process, "resourcesPath", {
++    configurable: true,
++    value: fixtureRoot,
++  });
++  t.after(() => {
++    if (originalResourcesPath) {
++      Object.defineProperty(process, "resourcesPath", originalResourcesPath);
++    } else {
++      delete process.resourcesPath;
++    }
++  });
+   const environmentPath = require.resolve("../../src/helpers/environment.js");
+   const secretCryptoPath = require.resolve("../../src/helpers/secretCrypto.js");
+   const encryptedPrefix = Buffer.from("encrypted:");
+diff --git a/test/lib/crmNoteSaveBoundary.test.js b/test/lib/crmNoteSaveBoundary.test.js
+new file mode 100644
+index 00000000..7db93f33
+--- /dev/null
++++ b/test/lib/crmNoteSaveBoundary.test.js
+@@ -0,0 +1,73 @@
++const assert = require("node:assert/strict");
++const test = require("node:test");
++
++const load = () => import("../../src/lib/crmNoteSaveBoundary.ts");
++
++function deferred() {
++  let resolve;
++  let reject;
++  const promise = new Promise((res, rej) => {
++    resolve = res;
++    reject = rej;
++  });
++  return { promise, resolve, reject };
++}
++
++test("CRM save boundary persists an edit that arrives while the first save is pending", async () => {
++  const { persistStableCrmNoteDraft } = await load();
++  let draft = { noteId: 7, title: "N", content: "one", enhancedContent: null };
++  const saves = [];
++  const first = deferred();
++  const second = deferred();
++
++  const run = persistStableCrmNoteDraft({
++    getDraft: () => draft,
++    save: (snapshot) => {
++      saves.push({ ...snapshot });
++      return saves.length === 1 ? first.promise : second.promise;
++    },
++  });
++
++  await Promise.resolve();
++  draft = { ...draft, content: "two" };
++  first.resolve({ success: true });
++  await Promise.resolve();
++  await Promise.resolve();
++
++  assert.deepEqual(
++    saves.map((save) => save.content),
++    ["one", "two"]
++  );
++  second.resolve({ success: true });
++  await run;
++});
++
++test("CRM save boundary rejects a failed save before export and keeps the current draft", async () => {
++  const { persistStableCrmNoteDraft } = await load();
++  const draft = { noteId: 9, title: "Keep", content: "unsaved", enhancedContent: "draft" };
++  let exported = false;
++
++  await assert.rejects(async () => {
++    await persistStableCrmNoteDraft({
++      getDraft: () => draft,
++      save: async () => ({ success: false }),
++    });
++    exported = true;
++  }, /Could not save/);
++
++  assert.equal(exported, false);
++  assert.equal(draft.content, "unsaved");
++});
++
++test("CRM save boundary aborts when the active note changes", async () => {
++  const { persistStableCrmNoteDraft } = await load();
++  let draft = { noteId: 11, title: "A", content: "one", enhancedContent: null };
++  const save = deferred();
++  const run = persistStableCrmNoteDraft({ getDraft: () => draft, save: () => save.promise });
++
++  await Promise.resolve();
++  draft = { noteId: 12, title: "B", content: "other", enhancedContent: null };
++  save.resolve({ success: true });
++
++  await assert.rejects(run, /changed before CRM sync/);
++});
+-- 
+2.55.0
+

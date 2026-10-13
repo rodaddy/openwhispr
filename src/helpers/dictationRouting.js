@@ -169,6 +169,19 @@ export function resolveLifecycleInputKind({ voiceAgentRequested, translationRequ
   return "dictation";
 }
 
+// Whether a recording that is starting is a meeting highlight: the plain
+// dictation hotkey pressed while a meeting recording is live. The voice
+// assistant and translation hotkeys keep their own routes during a meeting.
+export function resolveMeetingHighlightRequested({
+  meetingRecordingActive,
+  voiceAgentRequested,
+  translationRequested,
+}) {
+  return !!meetingRecordingActive && !voiceAgentRequested && !translationRequested;
+}
+
+// A meeting highlight ("highlight") is saved into the meeting note as-is: no
+// cleanup, no agent, no paste.
 export function resolveDictationRouteKind({
   cleanupReachable,
   agentReachable,
@@ -176,6 +189,7 @@ export function resolveDictationRouteKind({
   voiceAgentRequested,
   translationRequested,
   translationReachable,
+  meetingHighlightRequested = false,
 }) {
   if (translationRequested) {
     if (translationReachable) return "translation";
@@ -183,6 +197,9 @@ export function resolveDictationRouteKind({
   }
   if (voiceAgentRequested) {
     return "agent";
+  }
+  if (meetingHighlightRequested) {
+    return "highlight";
   }
   if (agentReachable && agentInvoked) {
     return "agent";

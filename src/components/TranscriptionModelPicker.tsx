@@ -49,12 +49,20 @@ interface LocalModel {
   downloaded?: boolean;
 }
 
+function formatRamEstimate(ramEstimateMb: number): string {
+  // Tenths are rounded on integers: (1150 / 1000).toFixed(1) is "1.1".
+  return ramEstimateMb < 1000
+    ? `${ramEstimateMb} MB`
+    : `${(Math.round(ramEstimateMb / 100) / 10).toFixed(1)} GB`;
+}
+
 interface LocalModelCardProps {
   modelId: string;
   name: string;
   description: string;
   size: string;
   actualSizeMb?: number;
+  ramEstimateMb?: number;
   isSelected: boolean;
   isDownloaded: boolean;
   isDownloading: boolean;
@@ -76,6 +84,7 @@ function LocalModelCard({
   description,
   size,
   actualSizeMb,
+  ramEstimateMb,
   isSelected,
   isDownloaded,
   isDownloading,
@@ -128,6 +137,9 @@ function LocalModelCard({
           </span>
           <span className="text-xs text-muted-foreground/50 tabular-nums shrink-0">
             {actualSizeMb ? `${actualSizeMb}MB` : size}
+            {typeof ramEstimateMb === "number" && ramEstimateMb > 0
+              ? ` · ${t("common.ramEstimate", { ram: formatRamEstimate(ramEstimateMb) })}`
+              : null}
           </span>
           {recommended && (
             <span className={cardStyles.badges.recommended}>{t("common.recommended")}</span>
@@ -1034,6 +1046,7 @@ export default function TranscriptionModelPicker({
               description={info.description}
               size={info.size}
               actualSizeMb={model.size_mb}
+              ramEstimateMb={WHISPER_MODEL_INFO[modelId]?.ramEstimateMb}
               isSelected={modelId === selectedLocalModel}
               isDownloaded={model.downloaded ?? false}
               isDownloading={isDownloadingModel(modelId)}
@@ -1112,6 +1125,7 @@ export default function TranscriptionModelPicker({
               description={info.description}
               size={info.size}
               actualSizeMb={model.size_mb}
+              ramEstimateMb={PARAKEET_MODEL_INFO[modelId]?.ramEstimateMb}
               isSelected={modelId === selectedLocalModel}
               isDownloaded={model.downloaded ?? false}
               isDownloading={isDownloadingParakeetModel(modelId)}

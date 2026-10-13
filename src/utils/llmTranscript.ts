@@ -36,6 +36,21 @@ export function resolveLlmSpeakerLabel(
   return t("notes.speaker.them");
 }
 
+const formatClockTime = (timestamp: number): string => {
+  const date = new Date(timestamp);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
+/**
+ * A highlight is an aside the note owner recorded during the meeting to flag
+ * what matters. MEETING_SYSTEM_PROMPT keys on this exact marker.
+ */
+export function formatLlmHighlightLine(segment: TranscriptSegment, selfLabel: string): string {
+  const at = segment.timestamp != null ? ` @ ${formatClockTime(segment.timestamp)}` : "";
+  return `[HIGHLIGHT by ${selfLabel}${at}] ${segment.text}`;
+}
+
 export function buildLlmTranscript(
   segments: TranscriptSegment[],
   speakerMappings: Record<string, string>,
@@ -43,7 +58,11 @@ export function buildLlmTranscript(
   t: Translate
 ): string {
   return segments
-    .map((s) => `${resolveLlmSpeakerLabel(s, speakerMappings, selfLabel, t)}: ${s.text}`)
+    .map((s) =>
+      s.source === "highlight"
+        ? formatLlmHighlightLine(s, selfLabel)
+        : `${resolveLlmSpeakerLabel(s, speakerMappings, selfLabel, t)}: ${s.text}`
+    )
     .join("\n");
 }
 

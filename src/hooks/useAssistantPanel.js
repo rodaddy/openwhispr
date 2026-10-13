@@ -239,7 +239,8 @@ export function useAssistantPanel({
       // completion reopens the panel and answers a question the user withdrew.
       const recording = recordingControlsRef.current;
       if (recording?.isAssistantVoice) {
-        if (recording.isRecording || recording.isPreparing) recording.cancelRecording();
+        if (recording.isRecording || recording.isPreparing)
+          recording.cancelRecording("assistant-close");
         else if (recording.isProcessing) recording.cancelProcessing();
       }
       cancelAnimationFrame(openFrameRef.current);

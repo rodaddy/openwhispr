@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Monitor } from "lucide-react";
-import { useSettingsStore } from "../../stores/settingsStore";
+import { useSettingsStore, type AssistantSpeechProvider } from "../../stores/settingsStore";
 import { isAgentAllowed, isScreenContextAllowed } from "../../stores/policyRules";
 import { usePolicyStore } from "../../stores/policyStore";
 import { useAgentName } from "../../utils/agentName";
@@ -10,10 +10,18 @@ import { useScreenRecordingPermission } from "../../hooks/useScreenRecordingPerm
 import { Toggle } from "../ui/toggle";
 import { Input } from "../ui/input";
 import { Button } from "../ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsPanel, SettingsPanelRow, SettingsRow, SectionHeader } from "../ui/SettingsSection";
 import PermissionCard from "../ui/PermissionCard";
 import PromptStudio from "../ui/PromptStudio";
 import InferenceConfigEditor from "./InferenceConfigEditor";
+import { useLocalVoiceWeights, type LocalVoiceWeightsError } from "./useLocalVoiceWeights";
+
+const WEIGHTS_ERROR_KEYS: Record<LocalVoiceWeightsError, string> = {
+  "disk-full": "dictationAgent.speechProvider.errors.diskFull",
+  checksum: "dictationAgent.speechProvider.errors.checksum",
+  failed: "dictationAgent.speechProvider.errors.failed",
+};
 
 export default function DictationAgentSettings() {
   const { t } = useTranslation();
@@ -25,6 +33,9 @@ export default function DictationAgentSettings() {
   const setUseDictationAgentVisionModel = useSettingsStore(
     (s) => s.setUseDictationAgentVisionModel
   );
+  const assistantSpeechProvider = useSettingsStore((s) => s.assistantSpeechProvider);
+  const setAssistantSpeechProvider = useSettingsStore((s) => s.setAssistantSpeechProvider);
+  const localVoice = useLocalVoiceWeights();
   const {
     isMacOS,
     granted: screenGranted,
@@ -56,6 +67,57 @@ export default function DictationAgentSettings() {
       }),
     });
   }, [agentNameInput, setAgentName, showAlertDialog, t]);
+
+  const speechProviderDescriptions: Record<AssistantSpeechProvider, string> = {
+    hub: t("dictationAgent.speechProvider.options.hubDescription"),
+    local: t("dictationAgent.speechProvider.options.localDescription"),
+    auto: t("dictationAgent.speechProvider.options.autoDescription"),
+  };
+
+  const localVoiceStatus = localVoice.status;
+  let localVoiceNotice: React.ReactNode = null;
+  if (localVoiceStatus?.engineInstalled === false) {
+    localVoiceNotice = (
+      <p className="text-[11px] text-warning/80 leading-snug">
+        {t("dictationAgent.speechProvider.engineMissing")}
+      </p>
+    );
+  } else if (localVoiceStatus?.weightsInstalled === false) {
+    localVoiceNotice = (
+      <div className="space-y-2">
+        <p className="text-[11px] text-warning/80 leading-snug">
+          {t("dictationAgent.speechProvider.weightsMissing")}
+        </p>
+        {localVoice.downloading ? (
+          <div className="flex items-center gap-3">
+            <p className="text-xs text-muted-foreground">
+              {t("dictationAgent.speechProvider.downloading", {
+                percentage: localVoice.percentage,
+              })}
+            </p>
+            <Button variant="outline" size="sm" onClick={localVoice.cancel}>
+              {t("dictationAgent.speechProvider.cancelDownload")}
+            </Button>
+          </div>
+        ) : (
+          <Button variant="outline" size="sm" onClick={() => void localVoice.start()}>
+            {t("dictationAgent.speechProvider.downloadWeights")}
+          </Button>
+        )}
+        {localVoice.errorCode && (
+          <p className="text-[11px] text-warning/80 leading-snug">
+            {t(WEIGHTS_ERROR_KEYS[localVoice.errorCode])}
+          </p>
+        )}
+      </div>
+    );
+  } else if (localVoiceStatus?.localAvailable === false) {
+    localVoiceNotice = (
+      <p className="text-[11px] text-warning/80 leading-snug">
+        {t("dictationAgent.speechProvider.localMissing")}
+      </p>
+    );
+  }
 
   const handleScreenContextToggle = useCallback(
     (enabled: boolean) => {
@@ -226,6 +288,47 @@ export default function DictationAgentSettings() {
               allowedModes={["openwhispr", "providers"]}
             />
           )}
+        </div>
+      )}
+
+      {/* Spoken replies belong to the chat too, so this follows the policy
+          alone, not the dictation-agent toggle. */}
+      {agentAllowed && (
+        <div className="border-t border-border/40 pt-6 space-y-3">
+          <SettingsPanel>
+            <SettingsPanelRow>
+              <SettingsRow
+                label={t("dictationAgent.speechProvider.title", { agentName })}
+                description={t("dictationAgent.speechProvider.description")}
+              >
+                <Select
+                  value={assistantSpeechProvider}
+                  onValueChange={(value: AssistantSpeechProvider) =>
+                    setAssistantSpeechProvider(value)
+                  }
+                >
+                  <SelectTrigger className="h-7 w-36 text-xs rounded-lg px-2.5">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="hub">
+                      {t("dictationAgent.speechProvider.options.hub")}
+                    </SelectItem>
+                    <SelectItem value="local">
+                      {t("dictationAgent.speechProvider.options.local")}
+                    </SelectItem>
+                    <SelectItem value="auto">
+                      {t("dictationAgent.speechProvider.options.auto")}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </SettingsRow>
+            </SettingsPanelRow>
+          </SettingsPanel>
+          <p className="text-xs text-muted-foreground/60">
+            {speechProviderDescriptions[assistantSpeechProvider]}
+          </p>
+          {assistantSpeechProvider !== "hub" && localVoiceNotice}
         </div>
       )}
 

@@ -21,6 +21,18 @@ interface AutoEndPresentation {
   allowTitleWrap: true;
 }
 
+interface AutoEndConfirmPresentation {
+  titleKey: "meetingNotification.autoEnd.confirm.title";
+  bodyKey: "meetingNotification.autoEnd.confirm.body";
+  bodyValues: { seconds: number };
+  actionKey: "meetingNotification.autoEnd.confirm.stop";
+  action: "stop";
+  secondaryActionKey: "meetingNotification.autoEnd.confirm.keep";
+  secondaryAction: "keep";
+  dismissible: false;
+  allowTitleWrap: true;
+}
+
 interface DetectionPresentation {
   title?: string;
   titleKey?: "meetingNotification.title";
@@ -34,7 +46,33 @@ interface DetectionPresentation {
   allowTitleWrap: false;
 }
 
-export type MeetingNotificationPresentation = AutoEndPresentation | DetectionPresentation;
+interface GrillPresentation {
+  title?: string;
+  titleKey?: "meetingNotification.grill.title";
+  bodyKey: "meetingNotification.grill.body";
+  actionKey: "meetingNotification.grill.start";
+  action: "start-grill";
+  dismissible: true;
+  allowTitleWrap: false;
+}
+
+interface CalendarEndPresentation {
+  titleKey: "meetingNotification.calendarEnd.title";
+  bodyKey: "meetingNotification.calendarEnd.body";
+  actionKey: "meetingNotification.calendarEnd.stop";
+  action: "stop";
+  secondaryActionKey: "meetingNotification.calendarEnd.keep";
+  secondaryAction: "keep";
+  dismissible: false;
+  allowTitleWrap: true;
+}
+
+export type MeetingNotificationPresentation =
+  | AutoEndPresentation
+  | AutoEndConfirmPresentation
+  | DetectionPresentation
+  | GrillPresentation
+  | CalendarEndPresentation;
 
 const MEETING_NOTIFICATION_SWIPE_DISTANCE_PX = 80;
 
@@ -49,6 +87,21 @@ export function getMeetingNotificationPresentation(
   data: MeetingNotificationData | null,
   secondsRemaining: number
 ): MeetingNotificationPresentation {
+  // Not dismissible: the recording is still running, and a swipe that read as
+  // "keep" or "stop" would be a guess either way.
+  if (data?.kind === "auto-end" && data.phase === "confirm") {
+    return {
+      titleKey: "meetingNotification.autoEnd.confirm.title",
+      bodyKey: "meetingNotification.autoEnd.confirm.body",
+      bodyValues: { seconds: secondsRemaining },
+      actionKey: "meetingNotification.autoEnd.confirm.stop",
+      action: "stop",
+      secondaryActionKey: "meetingNotification.autoEnd.confirm.keep",
+      secondaryAction: "keep",
+      dismissible: false,
+      allowTitleWrap: true,
+    };
+  }
   if (data?.kind === "auto-end") {
     return {
       titleKey: "meetingNotification.autoEnd.title",
@@ -59,6 +112,31 @@ export function getMeetingNotificationPresentation(
       action: "restart",
       dismissible: true,
       allowTitleWrap: true,
+    };
+  }
+  if (data?.kind === "calendar-end") {
+    return {
+      titleKey: "meetingNotification.calendarEnd.title",
+      bodyKey: "meetingNotification.calendarEnd.body",
+      actionKey: "meetingNotification.calendarEnd.stop",
+      action: "stop",
+      secondaryActionKey: "meetingNotification.calendarEnd.keep",
+      secondaryAction: "keep",
+      dismissible: false,
+      allowTitleWrap: true,
+    };
+  }
+
+  // A grill prompt never offers note-taking or recording, only the grill.
+  if (data?.kind === "detection" && data.source === "grill" && data.grill) {
+    const grillTitle = data.event?.summary;
+    return {
+      ...(grillTitle ? { title: grillTitle } : { titleKey: "meetingNotification.grill.title" }),
+      bodyKey: "meetingNotification.grill.body",
+      actionKey: "meetingNotification.grill.start",
+      action: "start-grill",
+      dismissible: true,
+      allowTitleWrap: false,
     };
   }
 

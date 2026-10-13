@@ -1,0 +1,146 @@
+From e347a16b0471dfa5536d5620e72de19d19d33881 Mon Sep 17 00:00:00 2001
+From: Rico Rojas <rickrojas@gmail.com>
+Date: Tue, 8 Sep 2026 21:36:51 -0400
+Subject: [PATCH] perf(dictation): show the live transcript panel whole instead
+ of staging its entrance
+
+The panel walked encapsulate, horizontal, controls, prepare, panel, and
+content beats with CSS transitions between each, and the pill travelled
+into the footer over the same durations. With the window already sized to
+the three-line surface before open, the staged build-up was the visible
+delay. LIVE_TRANSCRIPT_INSTANT_ENTRANCE puts the panel straight into its
+content stage on the first open frame with zero-length stage and travel
+transitions. The staged timeline and its tests stay in place behind the
+flag.
+---
+ src/App.jsx                                            | 6 ++++--
+ src/components/dictation/AgentDictationPillOverlay.tsx | 6 ++++--
+ src/components/dictation/VoiceModePanelCore.tsx        | 5 +++--
+ src/helpers/voicePillPresentation.js                   | 9 +++++++++
+ src/hooks/useLiveTranscriptPanel.js                    | 8 ++++++++
+ 5 files changed, 28 insertions(+), 6 deletions(-)
+
+diff --git a/src/App.jsx b/src/App.jsx
+index 31f3efc3..9afed9ad 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -26,6 +26,7 @@ import { createMainWindowResizeCoordinator } from "./utils/mainWindowResizeCoord
+ import {
+   ASSISTANT_FOOTER_TRANSITION_TIMING,
+   LIVE_TRANSCRIPT_ENTRANCE_TIMING,
++  resolveLiveTranscriptStageDurationMs,
+   resolveLiveTranscriptEntrancePresentation,
+   resolveAssistantFooterPresentation,
+   resolveAgentModeActive,
+@@ -547,10 +548,11 @@ export default function App() {
+     panelStartPosition,
+     horizontalDirection: voiceHorizontalDirection,
+   });
+-  const voicePillTravelDuration =
++  const voicePillTravelDuration = resolveLiveTranscriptStageDurationMs(
+     liveTranscript.open && liveTranscript.entrancePhase === "encapsulate"
+       ? LIVE_TRANSCRIPT_ENTRANCE_TIMING.encapsulateMs
+-      : LIVE_TRANSCRIPT_ENTRANCE_TIMING.horizontalMs;
++      : LIVE_TRANSCRIPT_ENTRANCE_TIMING.horizontalMs
++  );
+   const dictationErrorSuppressesPill =
+     dictationErrorActionCount > 0 || dictationErrorPillHandoffActive;
+   // Keep one pill DOM node alive while final Agent actions own the footer. On
+diff --git a/src/components/dictation/AgentDictationPillOverlay.tsx b/src/components/dictation/AgentDictationPillOverlay.tsx
+index 5d4f946c..c2eeac7b 100644
+--- a/src/components/dictation/AgentDictationPillOverlay.tsx
++++ b/src/components/dictation/AgentDictationPillOverlay.tsx
+@@ -12,6 +12,7 @@ import { useLiveTranscriptPanel } from "../../hooks/useLiveTranscriptPanel";
+ import {
+   LIVE_TRANSCRIPT_ENTRANCE_TIMING,
+   VOICE_PILL_FOOTPRINT,
++  resolveLiveTranscriptStageDurationMs,
+   resolveCompanionPillInteractive,
+   resolveListeningEntrancePresentation,
+   resolveLiveTranscriptEntrancePresentation,
+@@ -159,10 +160,11 @@ export default function AgentDictationPillOverlay() {
+     panelStartPosition: `bottom-${horizontalDirection}`,
+     horizontalDirection,
+   });
+-  const voicePillTravelDuration =
++  const voicePillTravelDuration = resolveLiveTranscriptStageDurationMs(
+     liveTranscript.open && liveTranscript.entrancePhase === "encapsulate"
+       ? LIVE_TRANSCRIPT_ENTRANCE_TIMING.encapsulateMs
+-      : LIVE_TRANSCRIPT_ENTRANCE_TIMING.horizontalMs;
++      : LIVE_TRANSCRIPT_ENTRANCE_TIMING.horizontalMs
++  );
+   const state = (listeningEntrance.activeState ||
+     voiceActivity.activeState ||
+     (isPreparing
+diff --git a/src/components/dictation/VoiceModePanelCore.tsx b/src/components/dictation/VoiceModePanelCore.tsx
+index e68c0810..8827ce95 100644
+--- a/src/components/dictation/VoiceModePanelCore.tsx
++++ b/src/components/dictation/VoiceModePanelCore.tsx
+@@ -2,6 +2,7 @@ import { useEffect, useRef, type CSSProperties, type ReactNode, type TransitionE
+ import {
+   LIVE_TRANSCRIPT_ENTRANCE_TIMING,
+   LIVE_TRANSCRIPT_SURFACE_LIMITS,
++  resolveLiveTranscriptStageDurationMs,
+ } from "../../helpers/voicePillPresentation";
+ import { ExpandingPanelShell } from "./ExpandingPanelShell";
+ 
+@@ -96,8 +97,8 @@ export function VoiceModePanelCore({
+       data-panel-direction={horizontalDirection}
+       style={
+         {
+-          "--live-transcript-horizontal-duration": `${LIVE_TRANSCRIPT_ENTRANCE_TIMING.horizontalMs}ms`,
+-          "--live-transcript-encapsulation-duration": `${LIVE_TRANSCRIPT_ENTRANCE_TIMING.encapsulateMs}ms`,
++          "--live-transcript-horizontal-duration": `${resolveLiveTranscriptStageDurationMs(LIVE_TRANSCRIPT_ENTRANCE_TIMING.horizontalMs)}ms`,
++          "--live-transcript-encapsulation-duration": `${resolveLiveTranscriptStageDurationMs(LIVE_TRANSCRIPT_ENTRANCE_TIMING.encapsulateMs)}ms`,
+         } as CSSProperties
+       }
+     >
+diff --git a/src/helpers/voicePillPresentation.js b/src/helpers/voicePillPresentation.js
+index 25881907..3ceb9ac6 100644
+--- a/src/helpers/voicePillPresentation.js
++++ b/src/helpers/voicePillPresentation.js
+@@ -111,6 +111,15 @@ export const LIVE_TRANSCRIPT_ENTRANCE_TIMING = Object.freeze({
+   contentSettleMs: 20,
+ });
+ 
++// Fork: the panel appears in its final shape on the first frame after the
++// native window has been sized, instead of walking the staged entrance above.
++// The timeline stays exported for the staged path and its tests.
++export const LIVE_TRANSCRIPT_INSTANT_ENTRANCE = true;
++
++export function resolveLiveTranscriptStageDurationMs(stagedMs) {
++  return LIVE_TRANSCRIPT_INSTANT_ENTRANCE ? 0 : stagedMs;
++}
++
+ export function getLiveTranscriptEntranceTimeline(timing = LIVE_TRANSCRIPT_ENTRANCE_TIMING) {
+   const horizontalAtMs = timing.encapsulateMs + timing.encapsulateHoldMs;
+   const controlsAtMs = horizontalAtMs + timing.horizontalMs + timing.controlsDelayMs;
+diff --git a/src/hooks/useLiveTranscriptPanel.js b/src/hooks/useLiveTranscriptPanel.js
+index 9dce93b8..2ce9f7fe 100644
+--- a/src/hooks/useLiveTranscriptPanel.js
++++ b/src/hooks/useLiveTranscriptPanel.js
+@@ -3,6 +3,7 @@ import { createLatestValueScheduler } from "../utils/latestValueScheduler";
+ import {
+   getLiveTranscriptEntranceTimeline,
+   LIVE_TRANSCRIPT_ENTRANCE_TIMING,
++  LIVE_TRANSCRIPT_INSTANT_ENTRANCE,
+   LIVE_TRANSCRIPT_SURFACE_LIMITS,
+   shouldOfferLiveTranscriptReopen,
+ } from "../helpers/voicePillPresentation";
+@@ -237,6 +238,13 @@ export function useLiveTranscriptPanel({
+       openFrameRef.current = requestAnimationFrame(() => {
+         if (generation !== openGenerationRef.current) return;
+         setOpen(true);
++        if (LIVE_TRANSCRIPT_INSTANT_ENTRANCE) {
++          // The window is already at the three-line surface; show the panel
++          // whole and let text flow from the next scheduler tick.
++          setEntrancePhase("content");
++          resumeText();
++          return;
++        }
+         const timeline = getLiveTranscriptEntranceTimeline();
+         entranceTimersRef.current = [
+           setTimeout(() => setEntrancePhase("horizontal"), timeline.horizontalAtMs),
+-- 
+2.55.0
+

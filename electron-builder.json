@@ -1,9 +1,9 @@
 {
   "appId": "com.gizmolabs.openwhispr",
   "afterPack": "scripts/afterPack.js",
-  "productName": "OpenWhispr",
+  "productName": "rTech Whisper",
   "protocols": {
-    "name": "OpenWhispr Protocol",
+    "name": "rTech Whisper Protocol",
     "schemes": ["openwhispr"]
   },
   "directories": {
@@ -15,6 +15,7 @@
     "main.js",
     "preload.js",
     "package.json",
+    "LICENSE",
     "node_modules/**/*",
     "src/dist/**/*",
     "src/helpers/**/*",
@@ -106,6 +107,7 @@
         "whisper-server-*",
         "llama-server-*",
         "sherpa-onnx-*",
+        "omnivoice-tts-*",
         "yt-dlp-*",
         "qdrant-*",
         "macos-audio-tap",
@@ -145,7 +147,7 @@
   ],
   "mac": {
     "category": "public.app-category.productivity",
-    "target": ["dmg", "zip"],
+    "target": ["dmg"],
     "icon": "src/assets/icon.icns",
     "gatekeeperAssess": false,
     "hardenedRuntime": true,
@@ -162,11 +164,12 @@
     "extendInfo": {
       "LSUIElement": false,
       "CFBundleIconName": "openwhispr",
-      "NSMicrophoneUsageDescription": "OpenWhispr uses the microphone to capture your voice for transcription.",
-      "NSAudioCaptureUsageDescription": "OpenWhispr uses system audio to capture other participants' audio from calls and meetings.",
-      "NSAccessibilityUsageDescription": "OpenWhispr needs accessibility permissions to paste transcribed text into other applications.",
-      "NSCalendarsUsageDescription": "OpenWhispr reads your calendar to detect upcoming meetings and link meeting notes to events.",
-      "NSCalendarsFullAccessUsageDescription": "OpenWhispr reads your calendar to detect upcoming meetings and link meeting notes to events."
+      "NSMicrophoneUsageDescription": "rTech Whisper uses the microphone to capture your voice for transcription.",
+      "NSAudioCaptureUsageDescription": "rTech Whisper uses system audio to capture other participants' audio from calls and meetings.",
+      "NSAccessibilityUsageDescription": "rTech Whisper needs accessibility permissions to paste transcribed text into other applications.",
+      "NSCalendarsUsageDescription": "rTech Whisper reads your calendar to detect upcoming meetings and link meeting notes to events.",
+      "NSCalendarsFullAccessUsageDescription": "rTech Whisper reads your calendar to detect upcoming meetings and link meeting notes to events.",
+      "NSAppleEventsUsageDescription": "rTech Whisper adds brain-dump to-dos to Apple Reminders."
     }
   },
   "win": {
@@ -186,6 +189,7 @@
     ]
   },
   "linux": {
+    "executableName": "open-whispr",
     "target": ["AppImage", "deb", "rpm", "tar.gz"],
     "icon": "src/assets/icon.png",
     "category": "Utility",
@@ -259,7 +263,7 @@
     "include": "resources/nsis/installer.nsh"
   },
   "dmg": {
-    "title": "OpenWhispr",
+    "title": "rTech Whisper",
     "icon": "src/assets/icon.icns",
     "window": {
       "width": 540,

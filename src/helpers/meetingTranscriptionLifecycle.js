@@ -31,7 +31,8 @@ function createMeetingTranscriptionLifecycle({ start, stop, onError = () => {} }
     return sessions.values().next().value ?? null;
   };
 
-  const stopSession = (expectedSessionId) => {
+  // `reason` is for logging only; it never changes how the stop runs.
+  const stopSession = (expectedSessionId, reason = "renderer-request") => {
     const session = resolveSession(expectedSessionId);
     if (!session) {
       return Promise.resolve({ success: false, reason: "stale-session" });
@@ -43,7 +44,7 @@ function createMeetingTranscriptionLifecycle({ start, stop, onError = () => {} }
     session.stopPromise = enqueue(async () => {
       try {
         if (!session.startSucceeded) return { success: true };
-        return await stop(session.sessionId);
+        return await stop(session.sessionId, reason);
       } finally {
         removeSession(session);
       }
@@ -93,7 +94,7 @@ function createMeetingTranscriptionLifecycle({ start, stop, onError = () => {} }
     });
 
     const handleOwnerLoss = () => {
-      void stopSession(sessionId).catch((error) => {
+      void stopSession(sessionId, "owner-window-lost").catch((error) => {
         onError(error, sessionId);
       });
     };
@@ -108,7 +109,20 @@ function createMeetingTranscriptionLifecycle({ start, stop, onError = () => {} }
     return startPromise;
   };
 
-  return { startSession, stopSession };
+  // The session that is recording right now, or null while none is (starting
+  // and stopping sessions do not count). With `expectedSessionId`, only that
+  // session counts: a highlight pressed in one meeting never lands in the next.
+  const getActiveSession = (expectedSessionId) => {
+    for (const session of sessions.values()) {
+      if (expectedSessionId !== undefined && session.sessionId !== expectedSessionId) continue;
+      if (session.state === "active" && !session.stopRequested) {
+        return { sessionId: session.sessionId, ownerWebContents: session.ownerWebContents };
+      }
+    }
+    return null;
+  };
+
+  return { startSession, stopSession, getActiveSession };
 }
 
 module.exports = createMeetingTranscriptionLifecycle;

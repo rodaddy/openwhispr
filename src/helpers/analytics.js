@@ -153,3 +153,42 @@ export function summarizeAnalyticsDays(days, today = localDateKey()) {
     })),
   };
 }
+
+function medianOf(values) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[middle]
+    : Math.round((sorted[middle - 1] + sorted[middle]) / 2);
+}
+
+// Takes one row per dictation ({ model, ms }) and returns the median latency
+// overall and per model. A missing model is grouped under null.
+export function summarizeLatency(rows) {
+  const all = [];
+  const perModel = new Map();
+  for (const row of rows || []) {
+    const ms = row?.ms;
+    if (typeof ms !== "number" || !(ms > 0)) continue;
+    const model = typeof row.model === "string" && row.model.length > 0 ? row.model : null;
+    all.push(ms);
+    if (!perModel.has(model)) perModel.set(model, []);
+    perModel.get(model).push(ms);
+  }
+
+  const byModel = [...perModel.entries()]
+    .map(([model, values]) => ({
+      model,
+      sampleCount: values.length,
+      medianMs: medianOf(values),
+    }))
+    .sort((a, b) => {
+      if (b.sampleCount !== a.sampleCount) return b.sampleCount - a.sampleCount;
+      if (a.model === null) return 1;
+      if (b.model === null) return -1;
+      return a.model < b.model ? -1 : a.model > b.model ? 1 : 0;
+    });
+
+  return { sampleCount: all.length, medianMs: medianOf(all), byModel };
+}

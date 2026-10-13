@@ -74,9 +74,38 @@ const documentStub = {
   removeEventListener() {},
 };
 
+// Window listeners are recorded so a test can dispatch an event another window
+// would cause, such as a cross-window "storage" event (rtech-whisper#178).
+// Each entry maps a listener to its options; `once` and handleEvent objects
+// behave as in a browser (#213).
+const windowListeners = new Map();
+
+function dispatchWindowEvent(type, event = {}) {
+  const listeners = windowListeners.get(type);
+  for (const [listener, options] of [...(listeners ?? [])]) {
+    if (!listeners.has(listener)) continue;
+    if (options.once) listeners.delete(listener);
+    const payload = { type, ...event };
+    if (typeof listener === "function") listener(payload);
+    else listener.handleEvent(payload);
+  }
+}
+
+function windowListenerCount(type) {
+  return windowListeners.get(type)?.size ?? 0;
+}
+
 const windowStub = {
-  addEventListener() {},
-  removeEventListener() {},
+  addEventListener(type, listener, options) {
+    if (!windowListeners.has(type)) windowListeners.set(type, new Map());
+    const listeners = windowListeners.get(type);
+    if (!listeners.has(listener)) {
+      listeners.set(listener, typeof options === "object" && options ? options : {});
+    }
+  },
+  removeEventListener(type, listener) {
+    windowListeners.get(type)?.delete(listener);
+  },
   localStorage: localStorageStub,
   navigator: navigatorStub,
   document: documentStub,
@@ -113,6 +142,7 @@ function resetBrowserGlobals() {
   held.clear();
   waiters.clear();
   documentStub.visibilityState = "visible";
+  windowListeners.clear();
   delete windowStub.electronAPI;
   delete globalThis.electronAPI;
 }
@@ -182,6 +212,8 @@ module.exports = {
   establishValidatedAuth,
   stopSyncTimers,
   acquireLock,
+  dispatchWindowEvent,
+  windowListenerCount,
   localStorage: localStorageStub,
   navigator: navigatorStub,
   document: documentStub,

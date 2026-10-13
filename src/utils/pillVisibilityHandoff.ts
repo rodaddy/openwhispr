@@ -71,3 +71,19 @@ export function createPillVisibilityHandoff({
     },
   };
 }
+
+/**
+ * Whether the dictation-error handoff may hide the native window on release.
+ * A take that starts while the error card is up (preparing, recording or
+ * processing) owns the pill, so the window stays up; App.jsx's idle auto-hide
+ * hides it once the take ends (#549).
+ */
+export function shouldHideAfterHandoff({
+  autoHide,
+  takeLive,
+}: {
+  autoHide: boolean;
+  takeLive: boolean;
+}) {
+  return autoHide && !takeLive;
+}

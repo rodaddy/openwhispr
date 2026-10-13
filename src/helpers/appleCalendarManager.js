@@ -9,6 +9,7 @@ const { FOCUS_SYNC_THROTTLE_MS } = require("./calendarSyncInterval");
 const BINARY_NAME = "macos-calendar-listener";
 const HELPER_RESTART_BASE_MS = 1000;
 const HELPER_RESTART_MAX_MS = 30 * 1000;
+const SYNC_NOW_TIMEOUT_MS = 30 * 1000;
 const AVAILABILITY_STATUSES = new Set(["free", "tentative", "busy", "unavailable", "unknown"]);
 const RESPONSE_STATUSES = new Set(["accepted", "declined", "tentative", "needsAction"]);
 
@@ -24,6 +25,7 @@ class AppleCalendarManager {
     this._lastFocusSync = 0;
     this._restartTimer = null;
     this._restartAttempts = 0;
+    this._pendingSyncNow = null;
   }
 
   isConnected() {
@@ -96,6 +98,43 @@ class AppleCalendarManager {
 
   onWakeFromSleep() {
     this._requestSync();
+  }
+
+  // User-initiated (#433): asks the helper for a fresh snapshot and resolves
+  // { success, error? } once it is applied. A call while one is running gets
+  // the running result.
+  syncNow() {
+    if (this._pendingSyncNow) return this._pendingSyncNow.promise;
+    if (process.platform !== "darwin") {
+      return Promise.resolve({
+        success: false,
+        error: "Apple Calendar is only available on macOS",
+      });
+    }
+    const pending = {};
+    pending.promise = new Promise((resolve) => {
+      pending.resolve = resolve;
+    });
+    pending.timer = setTimeout(
+      () => this._settleSyncNow({ success: false, error: "Calendar helper did not respond" }),
+      SYNC_NOW_TIMEOUT_MS
+    );
+    this._pendingSyncNow = pending;
+    // A freshly spawned helper sends a snapshot on its own
+    if (this._helperProcess) {
+      this._requestSync();
+    } else if (!this._spawnHelper(false)) {
+      this._settleSyncNow({ success: false, error: "Calendar helper is missing" });
+    }
+    return pending.promise;
+  }
+
+  _settleSyncNow(result) {
+    const pending = this._pendingSyncNow;
+    if (!pending) return;
+    this._pendingSyncNow = null;
+    clearTimeout(pending.timer);
+    pending.resolve(result);
   }
 
   _requestSync() {
@@ -195,6 +234,7 @@ class AppleCalendarManager {
   _onHelperGone(child) {
     if (this._helperProcess !== child) return;
     this._helperProcess = null;
+    this._settleSyncNow({ success: false, error: "Calendar helper stopped" });
 
     if (this._pendingConnect) {
       const pending = this._pendingConnect;
@@ -263,6 +303,7 @@ class AppleCalendarManager {
     if (status !== "granted" && this.isConnected()) {
       // Access revoked in System Settings; a full re-connect is required
       debugLogger.warn("Calendar access no longer granted", { status }, "acal");
+      this._settleSyncNow({ success: false, error: "Calendar access is not granted" });
       this._clearStoredCalendarData();
     }
   }
@@ -284,6 +325,7 @@ class AppleCalendarManager {
       broadcastToWindows("acal-events-synced", {});
       this.reminderScheduler.reconcileProvider("apple");
       this.reminderScheduler.scheduleNextMeeting();
+      this._settleSyncNow({ success: true });
 
       if (this._pendingConnect?.awaitingSnapshot) {
         const pending = this._pendingConnect;
@@ -293,6 +335,7 @@ class AppleCalendarManager {
       }
     } catch (err) {
       debugLogger.error("Error applying calendar snapshot", { error: err.message }, "acal");
+      this._settleSyncNow({ success: false, error: err.message });
       if (this._pendingConnect) {
         const pending = this._pendingConnect;
         this._pendingConnect = null;

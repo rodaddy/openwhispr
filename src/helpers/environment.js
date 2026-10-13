@@ -5,7 +5,10 @@ const { app } = require("electron");
 const debugLogger = require("./debugLogger");
 const { normalizeUiLanguage } = require("./i18nMain");
 const secretCrypto = require("./secretCrypto");
+const { DEFAULT_ACTIVATION_MODE, normalizeActivationMode } = require("./activationMode");
 const { BYOK_API_KEYS } = require("../config/secretKeys");
+const { readHubUrlSetting, hubUrlToStore } = require("./hubUrlSetting");
+const { resolveSpeechProvider } = require("./localSpeechProvider");
 
 const SECRET_KEYS = [
   ...BYOK_API_KEYS.map((k) => k.env),
@@ -20,6 +23,8 @@ const SECRET_KEYS = [
   "BEDROCK_SESSION_TOKEN",
   "AZURE_OPENAI_API_KEY",
   "VERTEX_API_KEY",
+  "GHL_PRIVATE_TOKEN",
+  "PIPELINE_TOKEN",
 ];
 
 const SECRET_KEY_SET = new Set(SECRET_KEYS);
@@ -39,6 +44,7 @@ const PERSISTED_KEYS = [
   "DICTATION_KEY",
   "VOICE_AGENT_KEY",
   "TRANSLATION_KEY",
+  "PASTE_LAST_KEY",
   "MEETING_KEY",
   "ACTIVATION_MODE",
   "FLOATING_ICON_AUTO_HIDE",
@@ -59,6 +65,10 @@ const PERSISTED_KEYS = [
   "AZURE_OPENAI_API_VERSION",
   "VERTEX_PROJECT",
   "VERTEX_LOCATION",
+  "SYNC_HUB_URL",
+  "ASSISTANT_SPEECH_PROVIDER",
+  // Written by the Settings debug toggle; a rewrite without it turned debug logging off.
+  "OPENWHISPR_LOG_LEVEL",
 ];
 
 // Module-level so writes are serialized across all instances — hotkeyManager
@@ -393,6 +403,18 @@ class EnvironmentManager {
     return this._saveKey("VERTEX_API_KEY", key);
   }
 
+  // rTech Whisper hub. Unset means the default hub (RTECH_WHISPER_HUB_URL); an explicit empty save
+  // means sync is off (hubUrlSetting.js). The device key is not here: it
+  // lives in tokenStore as the bearer credential.
+  getHubUrl() {
+    return readHubUrlSetting(this._getKey("SYNC_HUB_URL"));
+  }
+  saveHubUrl(value) {
+    const result = this._saveKey("SYNC_HUB_URL", hubUrlToStore(value));
+    this.saveAllKeysToEnvFile().catch(() => {});
+    return result;
+  }
+
   getDictationKey() {
     return this._getKey("DICTATION_KEY");
   }
@@ -421,12 +443,40 @@ class EnvironmentManager {
     return result;
   }
 
+  getAssistantSpeechProvider() {
+    return resolveSpeechProvider(this._getKey("ASSISTANT_SPEECH_PROVIDER"));
+  }
+
+  // Only hub, local or auto is ever written: an unknown value is the hub.
+  saveAssistantSpeechProvider(value) {
+    const provider = resolveSpeechProvider(value);
+    this._saveKey("ASSISTANT_SPEECH_PROVIDER", provider);
+    this.saveAllKeysToEnvFile().catch((error) => {
+      debugLogger.error(
+        "Assistant speech provider was not saved to .env",
+        { error: error.message },
+        "environment"
+      );
+    });
+    return { success: true, provider };
+  }
+
   getTranslationKey() {
     return this._getKey("TRANSLATION_KEY");
   }
 
   saveTranslationKey(key) {
     const result = this._saveKey("TRANSLATION_KEY", key);
+    this.saveAllKeysToEnvFile().catch(() => {});
+    return result;
+  }
+
+  getPasteLastKey() {
+    return this._getKey("PASTE_LAST_KEY");
+  }
+
+  savePasteLastKey(key) {
+    const result = this._saveKey("PASTE_LAST_KEY", key);
     this.saveAllKeysToEnvFile().catch(() => {});
     return result;
   }
@@ -442,12 +492,12 @@ class EnvironmentManager {
   }
 
   getActivationMode() {
-    const mode = this._getKey("ACTIVATION_MODE");
-    return mode === "push" ? "push" : "tap";
+    const storedMode = this._getKey("ACTIVATION_MODE");
+    return storedMode ? normalizeActivationMode(storedMode) : DEFAULT_ACTIVATION_MODE;
   }
 
   saveActivationMode(mode) {
-    const validMode = mode === "push" ? "push" : "tap";
+    const validMode = normalizeActivationMode(mode);
     const result = this._saveKey("ACTIVATION_MODE", validMode);
     this.saveAllKeysToEnvFile().catch(() => {});
     return result;
@@ -497,6 +547,36 @@ class EnvironmentManager {
     return { ...result, language: normalized };
   }
 
+  getGhlToken() {
+    return this._getKey("GHL_PRIVATE_TOKEN");
+  }
+
+  async saveGhlToken(token) {
+    if (this._encryptionAvailable()) {
+      await this._saveSecretKey("GHL_PRIVATE_TOKEN", token);
+    } else if (token) {
+      process.env.GHL_PRIVATE_TOKEN = token;
+    } else {
+      delete process.env.GHL_PRIVATE_TOKEN;
+    }
+    return { success: true };
+  }
+
+  getPipelineToken() {
+    return this._getKey("PIPELINE_TOKEN");
+  }
+
+  async savePipelineToken(token) {
+    if (this._encryptionAvailable()) {
+      await this._saveSecretKey("PIPELINE_TOKEN", token);
+    } else if (token) {
+      process.env.PIPELINE_TOKEN = token;
+    } else {
+      delete process.env.PIPELINE_TOKEN;
+    }
+    return { success: true };
+  }
+
   async saveAllKeysToEnvFile() {
     const envPath = path.join(app.getPath("userData"), ".env");
     await this._writeEnvFileAtomic(envPath);
@@ -519,7 +599,7 @@ class EnvironmentManager {
 
   // Removes a single key's line from .env, preserving every other line
   // verbatim. saveAllKeysToEnvFile() would instead regenerate the file from
-  // PERSISTED_KEYS, dropping hand-added lines (e.g. OPENWHISPR_LOG_LEVEL) and
+  // PERSISTED_KEYS, dropping hand-added lines outside that list and
   // materializing session/shell env values into the file.
   removeKeyFromEnvFile(key) {
     const envPath = path.join(app.getPath("userData"), ".env");

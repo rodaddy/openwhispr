@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useCopyFeedback } from "../../hooks/useCopyFeedback";
 import { useStickToBottom } from "../../hooks/useStickToBottom";
 import { splitTranscriptForShimmer } from "../../utils/liveTranscriptPresentation";
+import type { TranscriptionPreviewLayout } from "../../utils/transcriptionPreview";
 
 export type LiveTranscriptPhase = "listening" | "live" | "cleanup" | "final";
 
@@ -16,9 +17,13 @@ interface LiveTranscriptPanelProps {
   contentVisible: boolean;
   onCollapse: () => void;
   onHoldChange?: (held: boolean) => void;
+  layout?: TranscriptionPreviewLayout;
+  latency?: { lastMs: number | null; averageMs: number | null; sampleCount: number } | null;
 }
 
 const COPIED_RESET_MS = 1600;
+export const FIXED_TRANSCRIPT_VIEWPORT_PX = 52;
+export const TRANSCRIPT_LINE_HEIGHT_PX = 26;
 
 export function LiveTranscriptPanel({
   text,
@@ -29,6 +34,8 @@ export function LiveTranscriptPanel({
   contentVisible,
   onCollapse,
   onHoldChange,
+  layout = "grow",
+  latency = null,
 }: LiveTranscriptPanelProps) {
   const { t } = useTranslation();
   const {
@@ -49,16 +56,12 @@ export function LiveTranscriptPanel({
   return (
     <>
       <main
-        ref={scrollRef}
-        onScroll={handleScroll}
-        onWheel={handleWheel}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
         onMouseEnter={() => onHoldChange?.(true)}
         onMouseLeave={() => onHoldChange?.(false)}
         data-panel-scroll-region
-        className={`agent-chat-scroll min-h-0 flex-auto overflow-y-auto overscroll-contain px-5 pb-3 pt-8 transition-[opacity,transform] duration-200 ease-out ${
+        className={`px-5 pb-3 pt-8 transition-[opacity,transform] duration-200 ease-out ${
+          layout === "fixed2lines" ? "h-[6rem] flex-none" : "min-h-0 flex-auto"
+        } ${
           contentVisible
             ? "translate-y-0 opacity-100 delay-75"
             : "pointer-events-none translate-y-2 opacity-0 delay-0"
@@ -68,16 +71,40 @@ export function LiveTranscriptPanel({
         aria-hidden={!contentVisible}
         aria-live="polite"
       >
-        <div>
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          onWheel={handleWheel}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          className={`agent-chat-scroll overflow-y-auto overscroll-contain ${layout === "fixed2lines" ? "" : "h-full"}`}
+          style={layout === "fixed2lines" ? { height: FIXED_TRANSCRIPT_VIEWPORT_PX } : undefined}
+          data-transcript-scroll-viewport
+        >
           {text ? (
-            <p className="select-text whitespace-pre-wrap break-words text-base leading-relaxed text-foreground">
+            <p
+              className={`${layout === "fixed2lines" ? "min-h-[3.25rem]" : "min-h-[4.875rem]"} select-text whitespace-pre-wrap break-words text-base leading-relaxed text-foreground`}
+              style={
+                layout === "fixed2lines"
+                  ? { lineHeight: `${TRANSCRIPT_LINE_HEIGHT_PX}px` }
+                  : undefined
+              }
+            >
               <span>{shimmerParts.settled}</span>
               {shimmerParts.active && (
                 <span className="inline-response-shimmer">{shimmerParts.active}</span>
               )}
             </p>
           ) : (
-            <p className="text-base leading-relaxed text-muted-foreground/55">
+            <p
+              className={`${layout === "fixed2lines" ? "min-h-[3.25rem]" : "min-h-[4.875rem]"} text-base leading-relaxed text-muted-foreground/55`}
+              style={
+                layout === "fixed2lines"
+                  ? { lineHeight: `${TRANSCRIPT_LINE_HEIGHT_PX}px` }
+                  : undefined
+              }
+            >
               {t("transcriptionPreview.waitingForInput")}
             </p>
           )}
@@ -97,6 +124,19 @@ export function LiveTranscriptPanel({
           }`}
           aria-hidden={!controlsVisible}
         >
+          {typeof latency?.lastMs === "number" && (
+            <span
+              className="select-none whitespace-nowrap text-xs tabular-nums text-muted-foreground"
+              data-dictation-latency
+            >
+              {latency.sampleCount < 2
+                ? t("transcriptionPreview.latencyLast", { ms: latency.lastMs })
+                : t("transcriptionPreview.latencyWithAverage", {
+                    ms: latency.lastMs,
+                    average: latency.averageMs,
+                  })}
+            </span>
+          )}
           <button
             type="button"
             onClick={() => void handleCopy()}
@@ -122,10 +162,12 @@ export function LiveTranscriptPanel({
 
       <div
         data-panel-size-source
-        className="pointer-events-none absolute inset-x-5 top-0 invisible pb-3 pt-8"
+        className={`pointer-events-none absolute inset-x-5 top-0 invisible pb-3 pt-8 ${layout === "fixed2lines" ? "h-[6rem]" : ""}`}
         aria-hidden="true"
       >
-        <p className="whitespace-pre-wrap break-words text-base leading-relaxed">
+        <p
+          className={`${layout === "fixed2lines" ? "h-[3.25rem] overflow-hidden" : "min-h-[4.875rem]"} whitespace-pre-wrap break-words text-base leading-relaxed`}
+        >
           {measurementText || t("transcriptionPreview.waitingForInput")}
         </p>
       </div>

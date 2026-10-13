@@ -14,54 +14,7 @@ const helperSources = fs
     source: fs.readFileSync(path.join(helpersDirectory, fileName), "utf8"),
   }));
 
-const NON_POLICY_ROUTE_REASONS = new Map([
-  ["usage", "entitlement and recovery status must remain available"],
-  ["stripe/switch-plan", "billing recovery must remain available"],
-  ["stripe/preview-switch", "billing recovery must remain available"],
-  ["referrals/stats", "referral data is outside the policy capability surface"],
-  ["referrals/invite", "referral actions are outside the policy capability surface"],
-  ["referrals/invites", "referral data is outside the policy capability surface"],
-]);
-
-test("all OpenWhispr multipart transcription transports use policy headers", () => {
-  assert.match(source, /async function chunkedCloudTranscribe\([\s\S]*?policyHeaders/);
-  assert.doesNotMatch(source, /postMultipart\(url, body, boundary, authHeader/);
-  assert.doesNotMatch(source, /chunkedCloudTranscribe\(\{[\s\S]{0,300}?\bauthHeader,/);
-  assert.ok(
-    (
-      source.match(
-        /postMultipart\(\s*url,\s*body,\s*boundary,\s*(?:policyHeaders|withPolicyHeaders\(authHeader\))/g
-      ) ?? []
-    ).length >= 4
-  );
-});
-
-test("chunk pool recovery cannot abort inline multipart uploads", () => {
-  const chunkedStart = source.indexOf("async function chunkedCloudTranscribe");
-  const handlersStart = source.indexOf("class IPCHandlers");
-  assert.ok(chunkedStart >= 0 && handlersStart > chunkedStart);
-
-  const chunkedSource = source.slice(chunkedStart, handlersStart);
-  assert.match(chunkedSource, /session:\s*getChunkCloudUploadSession\(\)/);
-  assert.doesNotMatch(chunkedSource, /getInlineCloudUploadSession/);
-  assert.match(
-    source,
-    /async function dropUploadConnections[\s\S]{0,300}?getChunkCloudUploadSession\(\)\.closeAllConnections/
-  );
-
-  const handlerSource = source.slice(handlersStart);
-  assert.match(handlerSource, /session:\s*getInlineCloudUploadSession\(\)/);
-  assert.doesNotMatch(handlerSource, /session:\s*getChunkCloudUploadSession\(\)/);
-  assert.doesNotMatch(source, /session:\s*getCloudUploadSession\(/);
-});
-
-test("the shared realtime-token helper applies policy headers", () => {
-  assert.match(
-    source,
-    /const postServerToken[\s\S]{0,900}?headers:\s*withPolicyHeaders\(/,
-    "the shared realtime-token helper must apply policy headers"
-  );
-});
+const NON_POLICY_ROUTE_REASONS = new Map();
 
 test("the structural inventory discovers newly added unprotected API routes", () => {
   const fixture = [
@@ -82,7 +35,10 @@ test("every direct OpenWhispr API route is policy-protected or explicitly exempt
   const calls = helperSources.flatMap(({ fileName, source: helperSource }) =>
     inspectDirectOpenWhisprApiCalls(helperSource, fileName)
   );
-  assert.ok(calls.length > 0, "the helper inventory must discover OpenWhispr API calls");
+  // No live helper calls an OpenWhispr API route directly since the dead
+  // upstream-cloud helpers were removed (#106); hub sync (#101) adds them back.
+  // Discovery itself is proven by the fixture test above, so an empty list
+  // here is a valid state, not a broken inventory.
 
   const unclassified = calls
     .filter((call) => !call.hasPolicyHeaders && !NON_POLICY_ROUTE_REASONS.has(call.route))

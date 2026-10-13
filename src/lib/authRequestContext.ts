@@ -1,3 +1,5 @@
+import { getHubModeGeneration, isHubMode, refreshHubMode } from "./hubMode";
+
 const AUTH_REQUEST_GENERATION = "openWhisprAuthGeneration";
 
 export interface AuthTokenState {
@@ -302,6 +304,9 @@ export function invalidateValidatedAuthContext(): void {
 }
 
 export function getValidatedAuthGeneration(): number | null {
+  // Hub mode: the device key is the credential and its tokenStore generation is
+  // the validated generation. No session, no user id, no account scope.
+  if (isHubMode()) return getHubModeGeneration();
   return snapshot.validatedGeneration === snapshot.observedGeneration && snapshot.hasToken
     ? snapshot.validatedGeneration
     : null;
@@ -312,6 +317,14 @@ export function hasValidatedAuthContext(): boolean {
 }
 
 export async function assertAuthGenerationCurrent(generation: number): Promise<void> {
+  if (isHubMode()) {
+    if (!(await refreshHubMode()) || getHubModeGeneration() !== generation) {
+      throw Object.assign(new Error("Hub device key changed during sync"), {
+        code: "AUTH_CONTEXT_CHANGED",
+      });
+    }
+    return;
+  }
   const state = await readAuthTokenState();
   if (state.generation !== generation || !state.token) {
     throw Object.assign(new Error("Authentication context changed during reconciliation"), {

@@ -1,0 +1,79 @@
+From 38d0b2ce939590b11f1ef5ab3194a19f29e4d13a Mon Sep 17 00:00:00 2001
+From: Rico Rojas <rickrojas@gmail.com>
+Date: Tue, 8 Sep 2026 18:30:45 -0400
+Subject: [PATCH] feat(preview): open the live transcript panel at three lines
+
+The preview panel entered at a one-line footprint and grew one step per
+chunk, which looked jumpy for short dictations. Give the transcript
+paragraph (and its hidden measurement twin) a three-line minimum height
+and raise the entry height to match, so the panel opens at three lines
+and only grows past that.
+
+Closes openwhispr#4.
+
+Claude-Session: https://claude.ai/code/session_015uYKeUK2xoKRQMj5gCikCq
+---
+ src/components/dictation/LiveTranscriptPanel.tsx | 6 +++---
+ src/helpers/voiceSurfaceGeometry.json            | 2 +-
+ test/helpers/voicePillPresentation.test.js       | 2 +-
+ 3 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/src/components/dictation/LiveTranscriptPanel.tsx b/src/components/dictation/LiveTranscriptPanel.tsx
+index c0a57845..7a9c067e 100644
+--- a/src/components/dictation/LiveTranscriptPanel.tsx
++++ b/src/components/dictation/LiveTranscriptPanel.tsx
+@@ -70,14 +70,14 @@ export function LiveTranscriptPanel({
+       >
+         <div>
+           {text ? (
+-            <p className="select-text whitespace-pre-wrap break-words text-base leading-relaxed text-foreground">
++            <p className="min-h-[4.875rem] select-text whitespace-pre-wrap break-words text-base leading-relaxed text-foreground">
+               <span>{shimmerParts.settled}</span>
+               {shimmerParts.active && (
+                 <span className="inline-response-shimmer">{shimmerParts.active}</span>
+               )}
+             </p>
+           ) : (
+-            <p className="text-base leading-relaxed text-muted-foreground/55">
++            <p className="min-h-[4.875rem] text-base leading-relaxed text-muted-foreground/55">
+               {t("transcriptionPreview.waitingForInput")}
+             </p>
+           )}
+@@ -125,7 +125,7 @@ export function LiveTranscriptPanel({
+         className="pointer-events-none absolute inset-x-5 top-0 invisible pb-3 pt-8"
+         aria-hidden="true"
+       >
+-        <p className="whitespace-pre-wrap break-words text-base leading-relaxed">
++        <p className="min-h-[4.875rem] whitespace-pre-wrap break-words text-base leading-relaxed">
+           {measurementText || t("transcriptionPreview.waitingForInput")}
+         </p>
+       </div>
+diff --git a/src/helpers/voiceSurfaceGeometry.json b/src/helpers/voiceSurfaceGeometry.json
+index 2af6e0b6..a4aa770f 100644
+--- a/src/helpers/voiceSurfaceGeometry.json
++++ b/src/helpers/voiceSurfaceGeometry.json
+@@ -8,7 +8,7 @@
+     "maxSurfaceWidth": 600
+   },
+   "LIVE_TRANSCRIPT_SURFACE_LIMITS": {
+-    "minHeight": 152,
++    "minHeight": 188,
+     "maxHeight": 538
+   }
+ }
+diff --git a/test/helpers/voicePillPresentation.test.js b/test/helpers/voicePillPresentation.test.js
+index 49aac7ac..8b53a061 100644
+--- a/test/helpers/voicePillPresentation.test.js
++++ b/test/helpers/voicePillPresentation.test.js
+@@ -57,7 +57,7 @@ test("Live Transcript keeps an adaptive surface instead of entering at Agent hei
+   const { LIVE_TRANSCRIPT_SURFACE_LIMITS } = await load();
+ 
+   assert.deepEqual(LIVE_TRANSCRIPT_SURFACE_LIMITS, {
+-    minHeight: 152,
++    minHeight: 188,
+     maxHeight: 538,
+   });
+   assert.ok(LIVE_TRANSCRIPT_SURFACE_LIMITS.minHeight < LIVE_TRANSCRIPT_SURFACE_LIMITS.maxHeight);
+-- 
+2.55.0
+

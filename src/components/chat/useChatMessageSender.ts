@@ -70,7 +70,7 @@ export function useChatMessageSender({
           };
 
           persistence.setMessages((messages) => [...messages, userMessage]);
-          await persistence.saveUserMessage(text);
+          await persistence.saveUserMessage(text, undefined, userMessage.id);
           await onMessagePersisted?.({
             conversationId: convId,
             text,

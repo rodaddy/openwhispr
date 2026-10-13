@@ -9,6 +9,7 @@ interface ExpandingPanelShellProps extends Omit<HTMLAttributes<HTMLElement>, "ch
   preferredHeightCap?: number;
   measurementKey?: string | null;
   measurementRevision?: string | number | null;
+  fixedContentHeight?: boolean;
   onPreferredHeightChange?: (
     height: number,
     measurementRevision?: string | number | null
@@ -25,6 +26,7 @@ export function ExpandingPanelShell({
   preferredHeightCap,
   measurementKey = null,
   measurementRevision = null,
+  fixedContentHeight = false,
   onPreferredHeightChange,
   children,
   className,
@@ -81,14 +83,18 @@ export function ExpandingPanelShell({
         if (!(child instanceof HTMLElement)) continue;
         if (child === detachedSizeSource) continue;
         if (child.hasAttribute("data-panel-scroll-region") && detachedSizeSource) {
-          preferredHeight += Math.max(
-            child.offsetHeight,
-            detachedSizeSource.offsetHeight,
-            detachedSizeSource.scrollHeight
-          );
+          preferredHeight += fixedContentHeight
+            ? Math.max(child.offsetHeight, detachedSizeSource.offsetHeight)
+            : Math.max(
+                child.offsetHeight,
+                detachedSizeSource.offsetHeight,
+                detachedSizeSource.scrollHeight
+              );
           continue;
         }
-        preferredHeight += Math.max(child.offsetHeight, child.scrollHeight);
+        preferredHeight += fixedContentHeight
+          ? child.offsetHeight
+          : Math.max(child.offsetHeight, child.scrollHeight);
       }
 
       // The shell has a 12px outer gutter on each side. Once the available
@@ -146,7 +152,14 @@ export function ExpandingPanelShell({
       resizeObserver.disconnect();
       mutationObserver.disconnect();
     };
-  }, [onPreferredHeightChange, open, stabilizeHeight, measurementKey, measurementRevision]);
+  }, [
+    fixedContentHeight,
+    onPreferredHeightChange,
+    open,
+    stabilizeHeight,
+    measurementKey,
+    measurementRevision,
+  ]);
 
   return (
     <section
@@ -164,6 +177,7 @@ export function ExpandingPanelShell({
       )}
       aria-hidden={!open}
       data-panel-height-stabilized={stabilizeHeight ? "true" : undefined}
+      data-panel-fixed-content-height={fixedContentHeight ? "true" : undefined}
       style={{
         // A long streaming response can make the natural-content floor taller
         // than the native window. Keep the floor within the same viewport cap

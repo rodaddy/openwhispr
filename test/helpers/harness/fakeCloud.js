@@ -10,6 +10,8 @@
 //   staleWriteGuard    a write whose basis predates the stored row is rejected
 //   updatedAtClamp     a stored updated_at never moves backwards
 
+const { createHash, randomInt } = require("node:crypto");
+
 // The server compares timestamps itself; it must not borrow the client's guard,
 // or a client-side regression would be invisible here.
 function normalizeTimestamp(value) {
@@ -33,6 +35,29 @@ class HttpError extends Error {
     this.status = status;
     this.code = code;
   }
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_BATCH_DELETE = 500;
+
+// The hub's TranscriptionInput zod schema (hub src/routes/transcriptions.ts):
+// one bad row 400s the whole batch (rtech-whisper#204).
+function checkTranscriptionInput(input) {
+  const optString = (v) => v == null || typeof v === "string";
+  const ms = input?.audio_duration_ms;
+  const ok =
+    typeof input?.client_transcription_id === "string" &&
+    input.client_transcription_id.length > 0 &&
+    typeof input.text === "string" &&
+    optString(input.raw_text) &&
+    optString(input.provider) &&
+    optString(input.model) &&
+    (ms == null || (Number.isSafeInteger(ms) && ms >= 0)) &&
+    (input.status === undefined || (typeof input.status === "string" && input.status !== "")) &&
+    (input.created_at === undefined ||
+      (typeof input.created_at === "string" &&
+        !Number.isNaN(new Date(input.created_at).getTime())));
+  if (!ok) throw new HttpError(400, "invalid transcription input", "invalid_request");
 }
 
 const NOTE_FIELDS = [
@@ -79,6 +104,49 @@ const FOLDER_DEFAULTS = { name: "", is_default: false, sort_order: 0 };
 
 const CONVERSATION_DEFAULTS = { title: "Untitled", archived_at: null, messages: [] };
 
+// Transcriptions follow the hub's rules (protocol section 7): a create stores
+// the row, so a device's own push comes back on its next delta (#185), and a
+// delete tombstones it.
+const TRANSCRIPTION_FIELDS = [
+  "text",
+  "raw_text",
+  "provider",
+  "model",
+  "audio_duration_ms",
+  "status",
+];
+
+const TRANSCRIPTION_DEFAULTS = {
+  text: "",
+  raw_text: null,
+  provider: null,
+  model: null,
+  audio_duration_ms: null,
+  status: "completed",
+};
+
+// Hub transcription ids are Postgres uuids, whose order is lowercase hex string
+// order. They come from a counter hashed with a seed, so a run's (stamp, id)
+// tie order varies between runs (#165): a failing test prints its seed
+// (reportUuidSeedOnFailure) and FAKE_CLOUD_UUID_SEED=<seed> reruns it with the
+// same ids. The seed pins ids only, not the clock (#209): ties among seeded
+// rows with fixed stamps replay; rows the service pushes take updated_at from
+// the wall clock unless the test pins it with setClock.
+function uuidStream(seed) {
+  let n = 0;
+  return () => {
+    const hex = createHash("sha256").update(`${seed}:${++n}`).digest("hex");
+    const variant = ((parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+  };
+}
+
+function resolveUuidSeed(configured) {
+  if (configured !== undefined && configured !== null) return String(configured);
+  if (process.env.FAKE_CLOUD_UUID_SEED) return process.env.FAKE_CLOUD_UUID_SEED;
+  return String(randomInt(0, 2 ** 32));
+}
+
 function createFakeCloud(config = {}) {
   const cfg = {
     materialPatchGate: true,
@@ -87,16 +155,21 @@ function createFakeCloud(config = {}) {
     updatedAtClamp: true,
     ...config,
   };
+  const uuidSeed = resolveUuidSeed(cfg.uuidSeed);
 
   const notes = new Map();
   const folders = new Map();
   const conversations = new Map();
+  const transcriptions = new Map();
   const log = [];
   const failures = [];
   let seq = 0;
   let clock = () => new Date().toISOString();
 
   const nextId = (prefix) => `${prefix}-${String(++seq).padStart(4, "0")}`;
+  // Varied ids keep the (stamp, id) tie-break honest (#140); seeded ones keep a
+  // failing order replayable (#165).
+  const uuid = uuidStream(uuidSeed);
 
   // The server stores timestamps and serves them back as ISO, whatever format
   // the client sent. Local rows carry SQLite's "YYYY-MM-DD HH:MM:SS", so echoing
@@ -111,6 +184,17 @@ function createFakeCloud(config = {}) {
       return row.updated_at;
     }
     return candidate;
+  }
+
+  // The hub stamps a transcription tombstone strictly after the row's previous
+  // stamp, whatever the clock says: greatest(now, updated_at + 1ms) in
+  // batchDeleteTranscriptions, nextStamp(prev) in softDelete (hub
+  // src/sync/transcriptions.ts, src/sync/common.ts). A delta resuming from the
+  // create's (stamp, id) cursor must still see the delete.
+  function stampAfter(previous) {
+    const next = new Date(Date.parse(toIso(previous)) + 1).toISOString();
+    const now = toIso(clock());
+    return now > next ? now : next;
   }
 
   function applyWrite(collection, row, incoming) {
@@ -151,7 +235,7 @@ function createFakeCloud(config = {}) {
     const clientId = input[collection.clientKey] ?? nextId(`${collection.prefix}-client`);
     const createdAt = toIso(input.created_at ?? clock());
     const row = {
-      id: nextId(collection.prefix),
+      id: collection.makeId ? collection.makeId() : nextId(collection.prefix),
       [collection.clientKey]: clientId,
       ...collection.defaults,
       deleted_at: null,
@@ -182,6 +266,20 @@ function createFakeCloud(config = {}) {
     return applyWrite(collection, existing, input);
   }
 
+  // A retried create (same client id) returns the row the first try made; a new
+  // row's updated_at is the hub clock, not the client's (hub
+  // src/sync/transcriptions.ts createOne).
+  function createTranscription(input) {
+    const existing = findByClientId(transcriptionCollection, input.client_transcription_id);
+    if (existing) return existing;
+    const now = clock();
+    return insertRow(transcriptionCollection, {
+      ...input,
+      created_at: input.created_at ?? now,
+      updated_at: now,
+    });
+  }
+
   function requireLive(collection, id) {
     const row = collection.store.get(id);
     if (!row || row.deleted_at)
@@ -192,7 +290,7 @@ function createFakeCloud(config = {}) {
   function tombstone(collection, id) {
     const row = collection.store.get(id);
     if (!row) throw new HttpError(404, `${collection.prefix} not found`, "not_found");
-    const at = bump(row, clock());
+    const at = collection.stampAfterPrevious ? stampAfter(row.updated_at) : bump(row, clock());
     row.deleted_at = at;
     row.updated_at = at;
     return row;
@@ -219,9 +317,21 @@ function createFakeCloud(config = {}) {
     clientKey: "client_conversation_id",
     prefix: "conv",
   };
+  const transcriptionCollection = {
+    store: transcriptions,
+    fields: TRANSCRIPTION_FIELDS,
+    defaults: TRANSCRIPTION_DEFAULTS,
+    clientKey: "client_transcription_id",
+    stampAfterPrevious: true,
+    prefix: "trans",
+    makeId: uuid,
+    // The hub serves transcription tombstones on the snapshot too (protocol
+    // section 7, "tombstones included").
+    snapshotTombstones: true,
+  };
 
   // Snapshot paging walks created_at backwards from `before` and hides
-  // tombstones; delta paging walks updated_at forwards from `since` and must
+  // tombstones unless the collection says the hub serves them; delta paging walks updated_at forwards from `since` and must
   // carry tombstones, since that is how a delete reaches the other device.
   function page(collection, query, orderKey) {
     const limitRaw = Number(query.get("limit"));
@@ -233,10 +343,12 @@ function createFakeCloud(config = {}) {
     let rows = [...collection.store.values()];
 
     if (since) {
+      // Strict like the hub (hub src/sync/common.ts listPlan): with no since_id
+      // a row stamped exactly at `since` is not served (rtech-whisper#211).
       const bound = normalizeTimestamp(since);
       rows = rows.filter((r) => {
         const timestampOrder = compare(normalizeTimestamp(r.updated_at), bound);
-        return timestampOrder > 0 || (timestampOrder === 0 && (!sinceId || r.id > sinceId));
+        return timestampOrder > 0 || (timestampOrder === 0 && !!sinceId && r.id > sinceId);
       });
       rows.sort(
         (a, b) =>
@@ -244,7 +356,7 @@ function createFakeCloud(config = {}) {
           compare(a.id, b.id)
       );
     } else {
-      rows = rows.filter((r) => !r.deleted_at);
+      if (!collection.snapshotTombstones) rows = rows.filter((r) => !r.deleted_at);
       if (before) {
         const bound = normalizeTimestamp(before);
         rows = rows.filter((r) => {
@@ -344,18 +456,40 @@ function createFakeCloud(config = {}) {
         }
         return { conversations: rows };
       }
-      case "POST /api/transcriptions/batch-create":
-        return {
-          created: (body?.transcriptions ?? []).map((t) => ({ ...t, id: nextId("trans") })),
-        };
+      case "POST /api/transcriptions/batch-create": {
+        const inputs = body?.transcriptions;
+        if (!Array.isArray(inputs)) throw new HttpError(400, "invalid batch", "invalid_request");
+        inputs.forEach(checkTranscriptionInput);
+        return { created: inputs.map((input) => createTranscription(input)) };
+      }
       case "POST /api/transcriptions/create":
-        return { ...body, id: nextId("trans") };
-      case "POST /api/transcriptions/batch-delete":
-        return { deleted: body?.ids ?? [] };
+        checkTranscriptionInput(body);
+        return createTranscription(body);
+      // Deletes are soft (protocol section 8): batch-delete tombstones and
+      // reports only the ids that were live; the single delete 404s an unknown
+      // or already-deleted id.
+      case "POST /api/transcriptions/batch-delete": {
+        const ids = body?.ids;
+        if (
+          !Array.isArray(ids) ||
+          ids.length > MAX_BATCH_DELETE ||
+          ids.some((id) => typeof id !== "string")
+        ) {
+          throw new HttpError(400, "invalid batch-delete", "invalid_request");
+        }
+        const deleted = [...new Set(ids.filter((id) => UUID_PATTERN.test(id)))].filter((id) => {
+          const row = transcriptions.get(id);
+          if (!row || row.deleted_at) return false;
+          tombstone(transcriptionCollection, id);
+          return true;
+        });
+        return { deleted };
+      }
       case "DELETE /api/transcriptions/delete":
+        tombstone(transcriptionCollection, requireLive(transcriptionCollection, body?.id).id);
         return {};
       case "GET /api/transcriptions/list":
-        return { transcriptions: [] };
+        return { transcriptions: page(transcriptionCollection, query, "created_at") };
       case "GET /api/dictionary/list":
         return { entries: [], hasMore: false };
       case "POST /api/dictionary/batch-create":
@@ -437,9 +571,18 @@ function createFakeCloud(config = {}) {
       if (input.deleted_at) row.deleted_at = toIso(input.deleted_at);
       return structuredClone(row);
     },
+    // Seed a transcription (optionally as a tombstone), or tombstone one at the
+    // fake clock, without a device request.
+    seedTranscription: (input = {}) => {
+      const row = insertRow(transcriptionCollection, input);
+      if (input.deleted_at) row.deleted_at = toIso(input.deleted_at);
+      return structuredClone(row);
+    },
+    tombstoneTranscription: (id) => structuredClone(tombstone(transcriptionCollection, id)),
     notes: () => [...notes.values()].map((row) => structuredClone(row)),
     folders: () => [...folders.values()].map((row) => structuredClone(row)),
     conversations: () => [...conversations.values()].map((row) => structuredClone(row)),
+    transcriptions: () => [...transcriptions.values()].map((row) => structuredClone(row)),
     note: (id) => {
       const row = notes.get(id) ?? findByClientId(noteCollection, id);
       return row ? structuredClone(row) : null;
@@ -453,7 +596,18 @@ function createFakeCloud(config = {}) {
       return row ? structuredClone(row) : null;
     },
     config: cfg,
+    uuidSeed,
   };
 }
 
-module.exports = { createFakeCloud, normalizeTimestamp };
+// Prints the seed behind a failing test's transcription ids, so the tie order
+// that failed can be replayed with FAKE_CLOUD_UUID_SEED.
+function reportUuidSeedOnFailure(t, cloud) {
+  t.after(() => {
+    if (!t.passed) {
+      console.error(`fakeCloud transcription ids: FAKE_CLOUD_UUID_SEED=${cloud.uuidSeed}`);
+    }
+  });
+}
+
+module.exports = { createFakeCloud, normalizeTimestamp, reportUuidSeedOnFailure };

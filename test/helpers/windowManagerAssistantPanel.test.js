@@ -14,6 +14,7 @@ Module._load = function loadWindowManagerWithStubs(request, parent, isMain) {
     return {
       app: { on: () => undefined },
       screen: {
+        getCursorScreenPoint: () => ({ x: 0, y: 0 }),
         getPrimaryDisplay: () => ({}),
         getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1440, height: 900 } }),
         getDisplayNearestPoint: () => ({ workArea: { x: 0, y: 0, width: 1440, height: 900 } }),
@@ -36,25 +37,51 @@ Module._load = function loadWindowManagerWithStubs(request, parent, isMain) {
           };
           createdBrowserWindows.push(this);
         }
-        on(event, listener) { this.windowListeners.set(event, listener); }
-        setContentProtection(value) { this.protectionCalls.push(value); }
+        on(event, listener) {
+          this.windowListeners.set(event, listener);
+        }
+        setContentProtection(value) {
+          this.protectionCalls.push(value);
+        }
         setIgnoreMouseEvents() {}
-        loadFile() { return Promise.resolve(); }
-        loadURL() { return Promise.resolve(); }
-        isDestroyed() { return false; }
-        close() { this.closeCalls += 1; this.windowListeners.get("closed")?.(); }
-        getBounds() { return this.bounds; }
-        setBounds(nextBounds) { this.bounds = nextBounds; this.setBoundsCalls += 1; }
-        isVisible() { return this.visible; }
-        showInactive() { this.visible = true; }
-        hide() { this.visible = false; }
+        loadFile() {
+          return Promise.resolve();
+        }
+        loadURL() {
+          return Promise.resolve();
+        }
+        isDestroyed() {
+          return false;
+        }
+        close() {
+          this.closeCalls += 1;
+          this.windowListeners.get("closed")?.();
+        }
+        getBounds() {
+          return this.bounds;
+        }
+        setBounds(nextBounds) {
+          this.bounds = nextBounds;
+          this.setBoundsCalls += 1;
+        }
+        isVisible() {
+          return this.visible;
+        }
+        showInactive() {
+          this.visible = true;
+        }
+        hide() {
+          this.visible = false;
+        }
         moveTop() {}
       },
       Menu: {
         buildFromTemplate: (template) => {
           const menu = {
             popupCalls: [],
-            popup(options) { this.popupCalls.push(options); },
+            popup(options) {
+              this.popupCalls.push(options);
+            },
           };
           builtMenus.push({ template, menu });
           return menu;
@@ -64,15 +91,36 @@ Module._load = function loadWindowManagerWithStubs(request, parent, isMain) {
       dialog: {},
     };
   }
-  if (request === "./debugLogger") return { warn: () => undefined, debug: () => undefined, log: () => undefined };
+  if (request === "./debugLogger")
+    return { warn: () => undefined, debug: () => undefined, log: () => undefined };
   if (request === "./hotkeyManager") {
-    const FakeHotkeyManager = class { unregisterAll() {} isInListeningMode() { return false; } };
+    const FakeHotkeyManager = class {
+      unregisterAll() {}
+      isInListeningMode() {
+        return false;
+      }
+    };
     FakeHotkeyManager.isGlobeLikeHotkey = () => false;
     return FakeHotkeyManager;
   }
-  if (request === "./dragManager") return class { cleanup() {} async startWindowDrag() { return { success: true }; } async stopWindowDrag() { return { success: true }; } };
-  if (request === "./menuManager") return {};
-  if (request === "./devServerManager") return { DEV_SERVER_PORT: 5173, DEV_SERVER_URL: "http://localhost:5173", getAppFilePath: () => ({ path: "/app/index.html", query: {} }), waitForDevServer: async () => undefined };
+  if (request === "./dragManager")
+    return class {
+      cleanup() {}
+      async startWindowDrag() {
+        return { success: true };
+      }
+      async stopWindowDrag() {
+        return { success: true };
+      }
+    };
+  if (request === "./menuManager") return { setupMainMenu: () => undefined };
+  if (request === "./devServerManager")
+    return {
+      DEV_SERVER_PORT: 5173,
+      DEV_SERVER_URL: "http://localhost:5173",
+      getAppFilePath: () => ({ path: "/app/index.html", query: {} }),
+      waitForDevServer: async () => undefined,
+    };
   if (request === "./dockManager") return {};
   if (request === "./i18nMain") return { i18nMain: { t: (key) => key } };
   if (request === "./windowConfig") {
@@ -117,9 +165,18 @@ function fakeWindow({ visible }) {
       isDestroyed: () => false,
       isVisible: () => isVisible,
       isMinimized: () => false,
-      showInactive: () => { isVisible = true; calls.push("showInactive"); },
-      show: () => { isVisible = true; calls.push("show"); },
-      hide: () => { isVisible = false; calls.push("hide"); },
+      showInactive: () => {
+        isVisible = true;
+        calls.push("showInactive");
+      },
+      show: () => {
+        isVisible = true;
+        calls.push("show");
+      },
+      hide: () => {
+        isVisible = false;
+        calls.push("hide");
+      },
       focus: () => calls.push("focus"),
       blur: () => calls.push("blur"),
       setFocusable: (value) => calls.push(`focusable:${value}`),
@@ -182,6 +239,32 @@ test("the Agent companion follows the edge opposite the panel", () => {
 
   assert.deepEqual(positions, [{ x: 0, y: 0, width: 96, height: 96 }]);
   assert.deepEqual(requestedMainWindowPositions, ["bottom-left"]);
+});
+
+test("held, latched, and idle activation state reaches both renderer windows", () => {
+  const manager = new WindowManager();
+  const mainSent = [];
+  const pillSent = [];
+  manager.mainWindow = {
+    isDestroyed: () => false,
+    webContents: { send: (channel, payload) => mainSent.push({ channel, payload }) },
+  };
+  manager.agentDictationPillWindow = {
+    isDestroyed: () => false,
+    webContents: { send: (channel, payload) => pillSent.push({ channel, payload }) },
+  };
+  manager._agentDictationPillReady = true;
+
+  manager.setDictationActivationState("held");
+  manager.setDictationActivationState("latched");
+  manager.setDictationLifecycleState("idle");
+
+  const activationPayloads = (sent) =>
+    sent
+      .filter(({ channel }) => channel === "dictation-activation-state-changed")
+      .map(({ payload }) => payload);
+  assert.deepEqual(activationPayloads(mainSent), ["held", "latched", "idle"]);
+  assert.deepEqual(activationPayloads(pillSent), ["held", "latched", "idle"]);
 });
 
 test("the companion grows for Live Transcript and returns to its pill footprint", () => {
@@ -283,7 +366,7 @@ test("the companion toggles macOS click-through with hover interactivity", () =>
   ]);
 });
 
-test("the Agent companion window is created content-protected", () => {
+test("the Agent companion window is capturable outside an internal screen-context capture", () => {
   createdBrowserWindows.length = 0;
   const manager = new WindowManager();
   manager.setOnboardingActive(false);
@@ -296,7 +379,128 @@ test("the Agent companion window is created content-protected", () => {
   manager.showAgentDictationPill();
 
   assert.equal(createdBrowserWindows.length, 1);
+  assert.deepEqual(createdBrowserWindows[0].protectionCalls, [false]);
+});
+
+test("opening the Assistant panel leaves the main bubble capturable", () => {
+  const manager = new WindowManager();
+  const protectionCalls = [];
+  manager.mainWindow = {
+    isDestroyed: () => false,
+    isVisible: () => true,
+    setFocusable: () => undefined,
+    // Windows/Linux focus the pill on open (windowManager.js); macOS does not.
+    focus: () => undefined,
+    setContentProtection: (value) => protectionCalls.push(value),
+  };
+  manager.enforceMainWindowOnTop = () => undefined;
+  manager.showAgentDictationPill = () => undefined;
+
+  manager.setAssistantPanelOpen(true);
+
+  assert.deepEqual(protectionCalls, [false]);
+});
+
+test("internal screen-context capture protects and restores every bubble window", async () => {
+  const manager = new WindowManager();
+  const mainProtectionCalls = [];
+  const companionProtectionCalls = [];
+  manager.mainWindow = {
+    isDestroyed: () => false,
+    setContentProtection: (value) => mainProtectionCalls.push(value),
+  };
+  manager.agentDictationPillWindow = {
+    isDestroyed: () => false,
+    setContentProtection: (value) => companionProtectionCalls.push(value),
+  };
+
+  const result = await manager.withScreenContextProtection(async () => "captured");
+
+  assert.equal(result, "captured");
+  assert.deepEqual(mainProtectionCalls, [true, false]);
+  assert.deepEqual(companionProtectionCalls, [true, false]);
+});
+
+test("internal screen-context capture restores bubble capture after an error", async () => {
+  const manager = new WindowManager();
+  const protectionCalls = [];
+  manager.mainWindow = {
+    isDestroyed: () => false,
+    setContentProtection: (value) => protectionCalls.push(value),
+  };
+
+  await assert.rejects(
+    manager.withScreenContextProtection(async () => {
+      throw new Error("capture failed");
+    }),
+    /capture failed/
+  );
+
+  assert.deepEqual(protectionCalls, [true, false]);
+});
+
+test("overlapping screen-context captures stay protected until both settle", async () => {
+  const manager = new WindowManager();
+  const protectionCalls = [];
+  const releases = [];
+  manager.mainWindow = {
+    isDestroyed: () => false,
+    setContentProtection: (value) => protectionCalls.push(value),
+  };
+
+  const captures = [0, 1].map(() =>
+    manager.withScreenContextProtection(() => new Promise((resolve) => releases.push(resolve)))
+  );
+  assert.deepEqual(protectionCalls, [true]);
+
+  releases[0]();
+  await captures[0];
+  assert.deepEqual(protectionCalls, [true]);
+
+  releases[1]();
+  await captures[1];
+  assert.deepEqual(protectionCalls, [true, false]);
+});
+
+test("a companion window created during internal capture starts protected", async () => {
+  createdBrowserWindows.length = 0;
+  const manager = new WindowManager();
+  manager.setOnboardingActive(false);
+  manager._assistantPanelOpen = true;
+  manager.mainWindow = {
+    isDestroyed: () => false,
+    getBounds: () => ({ x: 1000, y: 100, width: 400, height: 600 }),
+    setContentProtection: () => undefined,
+  };
+
+  await manager.withScreenContextProtection(async () => manager.showAgentDictationPill());
+
+  assert.equal(createdBrowserWindows.length, 1);
+  assert.deepEqual(createdBrowserWindows[0].protectionCalls, [true, false]);
+});
+
+test("a main window recreated during internal capture stays protected until capture settles", async () => {
+  createdBrowserWindows.length = 0;
+  const manager = new WindowManager();
+  manager.setMainWindowInteractivity = () => undefined;
+  manager.registerMainWindowEvents = () => undefined;
+  manager.registerAssistantSelectionContextMenu = () => undefined;
+  manager.loadMainWindow = async () => undefined;
+  manager.initializeHotkey = async () => undefined;
+  manager.dragManager = { setTargetWindow: () => undefined };
+  let releaseCapture;
+
+  const capture = manager.withScreenContextProtection(
+    () => new Promise((resolve) => (releaseCapture = resolve))
+  );
+  await manager.createMainWindow();
+
+  assert.equal(createdBrowserWindows.length, 1);
   assert.deepEqual(createdBrowserWindows[0].protectionCalls, [true]);
+
+  releaseCapture();
+  await capture;
+  assert.deepEqual(createdBrowserWindows[0].protectionCalls, [true, false]);
 });
 
 test("the companion cancel control routes through the dictation renderer", () => {
@@ -321,6 +525,7 @@ test("live transcript events are mirrored to the companion only for plain dictat
   manager._agentDictationPillReady = true;
   manager.mainWindow = {
     isDestroyed: () => false,
+    isVisible: () => true,
     showInactive: () => undefined,
     webContents: { send: (channel, payload) => mainMessages.push({ channel, payload }) },
   };
@@ -342,6 +547,41 @@ test("live transcript events are mirrored to the companion only for plain dictat
     { channel: "preview-text", payload: "plain" },
   ]);
   assert.deepEqual(companionMessages, [{ channel: "preview-text", payload: "plain" }]);
+});
+
+test("live transcript updates do not restack an already visible dictation window", async () => {
+  const manager = new WindowManager();
+  const calls = [];
+  manager.setOnboardingActive(false);
+  manager.mainWindow = {
+    isDestroyed: () => false,
+    isVisible: () => true,
+    showInactive: () => calls.push("showInactive"),
+    webContents: { send: () => undefined },
+  };
+  manager.enforceMainWindowOnTop = () => calls.push("onTop");
+
+  await manager.showTranscriptionPreview("one");
+  await manager.showTranscriptionPreview("two");
+
+  assert.deepEqual(calls, []);
+});
+
+test("the first live transcript update still surfaces a hidden dictation window", async () => {
+  const manager = new WindowManager();
+  const calls = [];
+  manager.setOnboardingActive(false);
+  manager.mainWindow = {
+    isDestroyed: () => false,
+    isVisible: () => false,
+    showInactive: () => calls.push("showInactive"),
+    webContents: { send: () => undefined },
+  };
+  manager.enforceMainWindowOnTop = () => calls.push("onTop");
+
+  await manager.showTranscriptionPreview("hello");
+
+  assert.deepEqual(calls, ["showInactive", "onTop"]);
 });
 
 // Both platform paths run on every runner: branching the expectation on the
@@ -553,6 +793,7 @@ test("did-finish-load marks the companion ready, pushes state, and shows it", ()
       channel: "agent-dictation-pill-state-changed",
       payload: { lifecycle: "idle", interactive: true, horizontalDirection: "left" },
     },
+    { channel: "dictation-activation-state-changed", payload: "idle" },
   ]);
   assert.equal(pill.visible, true);
 });
@@ -676,15 +917,18 @@ test("display changes reposition the companion pill", () => {
   pill.webContentsListeners.get("did-finish-load")();
   const boundsCallsBefore = pill.setBoundsCalls;
 
-  const metricsListener = screenListeners.find((entry) => entry.event === "display-metrics-changed");
+  const metricsListener = screenListeners.find(
+    (entry) => entry.event === "display-metrics-changed"
+  );
   assert.ok(metricsListener, "display-metrics-changed listener registered");
   metricsListener.listener();
 
   assert.equal(pill.setBoundsCalls, boundsCallsBefore + 1);
-  assert.deepEqual(
-    screenListeners.map((entry) => entry.event).sort(),
-    ["display-added", "display-metrics-changed", "display-removed"]
-  );
+  assert.deepEqual(screenListeners.map((entry) => entry.event).sort(), [
+    "display-added",
+    "display-metrics-changed",
+    "display-removed",
+  ]);
 });
 
 test("onboarding suppresses the companion pill like every popup surface", () => {
@@ -749,4 +993,117 @@ test("entering onboarding hides an already-visible companion pill", () => {
   manager.setOnboardingActive(true);
 
   assert.equal(pill.isVisible(), false);
+});
+
+function fakeControlPanel() {
+  const sent = [];
+  return {
+    sent,
+    window: {
+      isDestroyed: () => false,
+      webContents: { send: (channel, payload) => sent.push({ channel, payload }) },
+    },
+    live: () =>
+      sent
+        .filter(({ channel }) => channel === "dictation-live-changed")
+        .map(({ payload }) => payload),
+  };
+}
+
+test("a held hotkey dictation reaches the control panel as live (#80)", () => {
+  const manager = new WindowManager();
+  const panel = fakeControlPanel();
+  manager.controlPanelWindow = panel.window;
+
+  manager.setDictationActivationState("held");
+  manager.setDictationLifecycleState("recording");
+  manager.setDictationLifecycleState("idle");
+
+  assert.deepEqual(panel.live(), [true, false]);
+  assert.equal(manager.getDictationLive(), false);
+});
+
+test("a tap-mode dictation, which sets no activation state, is live too (#80)", () => {
+  const manager = new WindowManager();
+  const panel = fakeControlPanel();
+  manager.controlPanelWindow = panel.window;
+
+  // Tap/toggle never calls setDictationActivationState; only the renderer's
+  // confirmed lifecycle says a dictation is recording.
+  manager.setDictationLifecycleState("recording");
+  assert.equal(manager.getDictationActivationState(), "idle");
+  assert.equal(manager.getDictationLive(), true);
+  manager.setDictationLifecycleState("processing");
+  manager.setDictationLifecycleState("idle");
+
+  assert.deepEqual(panel.live(), [true, false]);
+});
+
+test("a hybrid stop tap within 400 ms of the recording start is consumed without a stop (#549)", (t) => {
+  let monotonic = 1_000;
+  t.mock.method(performance, "now", () => monotonic);
+  t.mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
+  const manager = new WindowManager();
+  manager._cachedActivationMode = "hybrid";
+  let stops = 0;
+  manager.sendStopDictation = () => {
+    stops += 1;
+  };
+
+  assert.equal(manager.dictationActiveForMs(), Infinity, "idle has no start time");
+  manager.setDictationLifecycleState("recording", "dictation");
+  monotonic += 217;
+  assert.equal(manager.dictationActiveForMs(), 217);
+  assert.equal(manager._consumeHybridStopPress(), true, "the early tap is consumed");
+  assert.equal(stops, 0, "and does not stop the take");
+
+  // A lifecycle report for the same take does not restart the clock, and a
+  // wall-clock step back does not move it.
+  manager.setDictationLifecycleState("recording", "assistant");
+  t.mock.timers.setTime(1_000_000 - 120_000);
+  monotonic += 183;
+  assert.equal(manager.dictationActiveForMs(), 400);
+  assert.equal(manager._consumeHybridStopPress(), true);
+  assert.equal(stops, 1, "a tap at 400 ms stops it");
+
+  manager.setDictationLifecycleState("idle");
+  assert.equal(manager.dictationActiveForMs(), Infinity);
+});
+
+test("a hybrid tap while the take is still preparing is not a second start (#549)", (t) => {
+  let monotonic = 5_000;
+  t.mock.method(performance, "now", () => monotonic);
+  const manager = new WindowManager();
+  manager._cachedActivationMode = "hybrid";
+  let stops = 0;
+  manager.sendStopDictation = () => {
+    stops += 1;
+  };
+
+  // 2.0.22 log: the stop tap 475 ms after the press landed before "Recording
+  // started" and ran as a duplicate start.
+  manager.setDictationLifecycleState("preparing", "dictation");
+  monotonic += 120;
+  assert.equal(manager.dictationActiveForMs(), 120, "the clock starts at preparing");
+  assert.equal(manager.isDictationTakeActive(), true);
+  assert.equal(manager._consumeHybridStopPress(), true, "the early tap is consumed");
+  assert.equal(stops, 0, "and stops nothing");
+
+  // Reaching recording keeps the press-time clock.
+  manager.setDictationLifecycleState("recording", "dictation");
+  monotonic += 355;
+  assert.equal(manager.dictationActiveForMs(), 475);
+  assert.equal(manager._consumeHybridStopPress(), true);
+  assert.equal(stops, 1, "a tap past 400 ms stops the take");
+
+  // A take still preparing past 400 ms stops on the tap rather than restarting.
+  manager.setDictationLifecycleState("idle");
+  manager.setDictationLifecycleState("preparing", "dictation");
+  monotonic += 500;
+  assert.equal(manager._consumeHybridStopPress(), true);
+  assert.equal(stops, 2);
+
+  manager.setDictationLifecycleState("idle");
+  assert.equal(manager.isDictationTakeActive(), false);
+  assert.equal(manager.dictationActiveForMs(), Infinity);
 });

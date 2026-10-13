@@ -248,7 +248,15 @@ test("reopening a pre-v2 database clears microsoft sync tokens once", (t) => {
     .get();
   assert.equal(calendar.sync_token, null);
   assert.equal(calendar.sync_token_expires_at, null);
-  assert.equal(reopened.db.pragma("user_version", { simple: true }), 2);
+  // The grill-folder seed (grillFolders.js, user_version 3) runs after the
+  // v2 reset, so the reopen lands on 3 without duplicating the seeded folders.
+  assert.equal(reopened.db.pragma("user_version", { simple: true }), 3);
+  for (const name of ["Grill", "Life Story"]) {
+    const { n } = reopened.db
+      .prepare("SELECT COUNT(*) AS n FROM folders WHERE name = ? AND deleted_at IS NULL")
+      .get(name);
+    assert.equal(n, 1, `${name} must not be re-seeded`);
+  }
   reopened.db.close();
 });
 

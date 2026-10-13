@@ -90,6 +90,9 @@ class TextEditMonitor extends EventEmitter {
     this._lastValue = null;
     this._stdoutBuffer = "";
     this.lastTargetPid = null;
+    this.lastTargetWindow = null;
+    this.lastTargetBundleId = null;
+    this.captureTargetWindow = false;
     this._captureTargetPromise = null;
     this._lastCaptureAt = 0;
     this._windowBounds = null;
@@ -110,6 +113,10 @@ class TextEditMonitor extends EventEmitter {
    * never overwrite a newer target, and a just-captured result is reused
    * briefly so the press-time and recording-start captures of one dictation
    * cost a single osascript spawn instead of several.
+   *
+   * The PID, its front window number and its bundle id come from one helper
+   * answer and are stored together, so lastTargetPid, lastTargetWindow and
+   * lastTargetBundleId always describe the same read.
    */
   captureTargetPid() {
     if (process.platform !== "darwin") return Promise.resolve(null);
@@ -121,25 +128,83 @@ class TextEditMonitor extends EventEmitter {
       return Promise.resolve(this.lastTargetPid);
     }
     this.lastTargetPid = null;
-    this._captureTargetPromise = this._readFrontmostPid().then((pid) => {
+    this.lastTargetWindow = null;
+    this.lastTargetBundleId = null;
+    this._captureTargetPromise = this._readFrontmostTarget({
+      withWindow: this.captureTargetWindow,
+    }).then(({ pid, window, bundleId }) => {
       this._captureTargetPromise = null;
       this._lastCaptureAt = Date.now();
       this.lastTargetPid = pid;
-      debugLogger.debug("[TextEditMonitor] Captured target PID", { pid });
+      this.lastTargetWindow = window;
+      this.lastTargetBundleId = bundleId;
+      debugLogger.debug("[TextEditMonitor] Captured target PID", { pid, window, bundleId });
       return pid;
     });
     return this._captureTargetPromise;
+  }
+
+  // The window lookup makes accessibility calls into the frontmost app at
+  // every dictation key press, and only auto-submit needs it: off by default.
+  setCaptureTargetWindow(enabled) {
+    this.captureTargetWindow = enabled === true;
   }
 
   /**
    * macOS: resolve the frontmost app's PID, or null if it can't be read.
    */
   _readFrontmostPid() {
+    return this._readFrontmostTarget().then((target) => target.pid);
+  }
+
+  /**
+   * macOS: resolve the frontmost app as `{ pid, window, bundleId }`. `pid` is
+   * null if it can't be read. `window` is that app's front window number and
+   * `bundleId` its bundle identifier, read in the same helper call as the PID;
+   * each is null unless `withWindow` is set, and also when the helper reported
+   * none and on the osascript path. All values travel in the resolved object
+   * only, never through instance state, so concurrent reads cannot mix one
+   * read's PID with another's window or bundle id.
+   */
+  _readFrontmostTarget({ withWindow = false } = {}) {
+    if (process.platform !== "darwin") {
+      return Promise.resolve({ pid: null, window: null, bundleId: null });
+    }
+    const viaOsascript = () =>
+      this._readFrontmostPidViaOsascript().then((pid) => ({ pid, window: null, bundleId: null }));
+    // The native helper answers in one process spawn; the JXA script below
+    // costs ~350 ms per call and sat on both the key-press and paste paths.
+    const resolved = this.resolveBinary();
+    if (!resolved) return viaOsascript();
+    // The helper prints the FRONTMOST_WINDOW and FRONTMOST_BUNDLE lines only
+    // with --with-window; a helper built before the flag ignores it.
+    const args = [...resolved.args, "--frontmost-pid"];
+    if (withWindow) args.push("--with-window");
     return new Promise((resolve) => {
-      if (process.platform !== "darwin") {
-        resolve(null);
-        return;
-      }
+      execFile(resolved.command, args, { timeout: 1000 }, (err, stdout) => {
+        const match = (stdout || "").match(/^FRONTMOST_PID:(\d+)/m);
+        if (match) {
+          // A pid line that came with an error (the timeout included) is still
+          // the press-time pid: a second lookup could return a different app.
+          const windowMatch =
+            !err && withWindow ? (stdout || "").match(/^FRONTMOST_WINDOW:(\d+)$/m) : null;
+          const bundleMatch =
+            !err && withWindow ? (stdout || "").match(/^FRONTMOST_BUNDLE:(\S+)$/m) : null;
+          resolve({
+            pid: parseInt(match[1], 10),
+            window: windowMatch ? parseInt(windowMatch[1], 10) : null,
+            bundleId: bundleMatch ? bundleMatch[1] : null,
+          });
+          return;
+        }
+        // A helper built before this mode existed prints usage and exits 1.
+        viaOsascript().then(resolve);
+      });
+    });
+  }
+
+  _readFrontmostPidViaOsascript() {
+    return new Promise((resolve) => {
       const script =
         'ObjC.import("AppKit"); $.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier';
       execFile(
@@ -156,10 +221,87 @@ class TextEditMonitor extends EventEmitter {
 
   /**
    * macOS: request activation of the app with the given PID, bringing all its
-   * windows forward (AllWindows|IgnoringOtherApps) so one becomes key. Scans
-   * runningApplications because NSRunningApplication's PID lookup returns nil under JXA.
+   * windows forward (AllWindows|IgnoringOtherApps) so one becomes key.
    */
   _activateApp(pid) {
+    const resolved = this.resolveBinary();
+    if (!resolved) return this._activateAppViaOsascript(pid);
+    return new Promise((resolve) => {
+      execFile(
+        resolved.command,
+        [...resolved.args, "--activate", String(pid)],
+        { timeout: 1000 },
+        (err, stdout) => {
+          if (!err && /^ACTIVATE_OK:/m.test(stdout || "")) {
+            resolve();
+            return;
+          }
+          this._activateAppViaOsascript(pid).then(resolve);
+        }
+      );
+    });
+  }
+
+  /**
+   * macOS, auto-submit (#634): paste and press Return in one window of the app
+   * with the given PID. The native helper delivers both keys to that process
+   * only, and only while that window is the app's front window and the app is
+   * frontmost. Resolves with what the helper reported:
+   *   "submitted": pasted and Return pressed.
+   *   "pasted":    pasted, Return withheld (the target changed in between) or
+   *                not confirmed: the helper prints PASTE_SENT right after
+   *                Cmd+V, so a helper killed or failing later still counts.
+   *   "skipped":   nothing was posted (no helper, wrong target, no permission).
+   *   "failed":    unknown outcome; the caller must not send another keystroke.
+   * Never rejects.
+   */
+  async pasteAndReturnForPid(pid, windowNumber) {
+    if (process.platform !== "darwin") return "skipped";
+    if (!Number.isInteger(pid) || pid <= 0) return "skipped";
+    if (!Number.isInteger(windowNumber) || windowNumber <= 0) return "skipped";
+    const finish = (outcome, code) => {
+      debugLogger.debug("[TextEditMonitor] Paste and Return", {
+        pid,
+        windowNumber,
+        outcome,
+        code,
+      });
+      return outcome;
+    };
+    let resolved = null;
+    try {
+      resolved = this.resolveBinary();
+    } catch {
+      resolved = null;
+    }
+    if (!resolved) return finish("skipped", null);
+    return new Promise((resolve) => {
+      try {
+        execFile(
+          resolved.command,
+          [...resolved.args, "--paste-return-to-pid", String(pid), String(windowNumber)],
+          { timeout: 2000 },
+          (err, stdout) => {
+            const output = stdout || "";
+            const code = err?.code ?? null;
+            const forPid = (tag) =>
+              parseInt(output.match(new RegExp(`^${tag}:(\\d+)$`, "m"))?.[1], 10) === pid;
+            let outcome = "failed";
+            if (!err && forPid("PASTE_RETURN_OK")) outcome = "submitted";
+            else if (forPid("PASTE_ONLY") || forPid("PASTE_SENT")) outcome = "pasted";
+            else if (/^PASTE_(SKIPPED|FAILED)$/m.test(output)) outcome = "skipped";
+            resolve(finish(outcome, code));
+          }
+        );
+      } catch {
+        resolve(finish("failed", null));
+      }
+    });
+  }
+
+  // Scans runningApplications because NSRunningApplication's PID lookup returns
+  // nil under JXA.
+  _activateAppViaOsascript(pid) {
     return new Promise((resolve) => {
       const script = `
         ObjC.import("AppKit");

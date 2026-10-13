@@ -20,11 +20,19 @@ function foldCapitalIDot(value: string): string {
   return value.replace(/İ/g, "i");
 }
 
+/**
+ * The canonical lookup key for a trigger: the same key the matcher stores, so
+ * two triggers with one key expand identically (the last one wins).
+ */
+export function snippetKey(trigger: string): string {
+  return foldCapitalIDot(trigger.trim().normalize("NFC")).toLowerCase();
+}
+
 function buildMatcher(snippets: Snippet[]): SnippetMatcher | null {
   const replacements = new Map<string, string>();
   for (const { trigger, replacement } of snippets) {
     const folded = foldCapitalIDot(trigger.trim().normalize("NFC"));
-    const key = folded.toLowerCase();
+    const key = snippetKey(trigger);
     if (!key) continue;
     replacements.set(key, replacement);
     // An uppercase I in the trigger may mean Turkish ı as well as English i,
@@ -74,7 +82,9 @@ export function expandSnippets(text: string, snippets?: Snippet[] | null): strin
 
 /**
  * Dictionary words plus snippet triggers — the hint list fed to the STT
- * prompt and cleanup-model dictionary suffix so triggers survive both.
+ * prompt and cleanup-model dictionary suffix so triggers survive both. A
+ * trigger whose replacement is a dictionary word is a correction of a
+ * misheard spelling (#495), so it is left out instead of taught to the engine.
  */
 export function getDictionaryHintWords(
   settings?: {
@@ -86,7 +96,16 @@ export function getDictionaryHintWords(
   const snippets = Array.isArray(settings?.snippets) ? settings.snippets : [];
   if (snippets.length === 0) return [...dictionary];
 
+  const words = new Set(dictionary.map((word) => String(word).trim().toLowerCase()));
   const triggers = snippets
+    .filter(
+      (s) =>
+        !words.has(
+          String(s?.replacement ?? "")
+            .trim()
+            .toLowerCase()
+        )
+    )
     .map((s) => s?.trigger)
     .filter((t): t is string => typeof t === "string" && t.length > 0);
   return [...dictionary, ...triggers];

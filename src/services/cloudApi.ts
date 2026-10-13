@@ -3,6 +3,7 @@ import {
   invalidateValidatedAuthContext,
   readAuthTokenState,
 } from "../lib/authRequestContext";
+import { noteHubAuthResult } from "../lib/hubMode";
 
 interface CloudApiResponse<T = unknown> {
   success: boolean;
@@ -47,6 +48,7 @@ async function cloudRequest<T = unknown>(
     public: isPublic,
     expectedAuthGeneration,
   })) as (CloudApiResponse<T> & { details?: unknown }) | undefined;
+  if (!isPublic) noteHubAuthResult(result);
 
   if (!result?.success) {
     if (result?.code === "AUTH_CONTEXT_CHANGED" || result?.code === "AUTH_CONTEXT_UNVALIDATED") {

@@ -57,7 +57,7 @@ test("Live Transcript keeps an adaptive surface instead of entering at Agent hei
   const { LIVE_TRANSCRIPT_SURFACE_LIMITS } = await load();
 
   assert.deepEqual(LIVE_TRANSCRIPT_SURFACE_LIMITS, {
-    minHeight: 152,
+    minHeight: 188,
     maxHeight: 538,
   });
   assert.ok(LIVE_TRANSCRIPT_SURFACE_LIMITS.minHeight < LIVE_TRANSCRIPT_SURFACE_LIMITS.maxHeight);
@@ -820,4 +820,78 @@ test("activity handed back at close intent stays visible through the content fad
     }),
     true
   );
+});
+
+test("#563: a dictation start arms the listening pill instead of showing processing", async () => {
+  const { resolveListeningEntrancePresentation } = await load();
+  // Arming already holds the listening footprint, with the static resting
+  // bars standing in for a waveform no audio feeds yet.
+  assert.deepEqual(
+    resolveListeningEntrancePresentation({ isRecording: false, isArming: true, phase: "idle" }),
+    { activeState: "arming", collapseToLogo: false, compactPill: true, waveformVisible: true }
+  );
+});
+
+test("#563: preparing -> recording shows the waveform at once", async () => {
+  const { getListeningEntranceTimeline } = await load();
+  assert.deepEqual(getListeningEntranceTimeline({ fromArming: true }), {
+    expandAtMs: 0,
+    settleAtMs: 0,
+    waveformAtMs: 0,
+  });
+  // Every other recording edge keeps the staged entrance and its timings.
+  assert.deepEqual(
+    getListeningEntranceTimeline({ fromArming: false }),
+    getListeningEntranceTimeline()
+  );
+  assert.ok(getListeningEntranceTimeline().waveformAtMs > 0);
+});
+
+test("a pasted take with the setting on and an idle pill captions the last latency over the average", async () => {
+  const { resolveLatencyCaption } = await load();
+  const idle = { settingOn: true, flashActive: true, pillBusy: false, panelOpen: false };
+
+  assert.deepEqual(
+    resolveLatencyCaption({ ...idle, readout: { lastMs: 532, averageMs: 610, sampleCount: 4 } }),
+    { lastMs: 532, averageMs: 610 }
+  );
+  assert.deepEqual(
+    resolveLatencyCaption({ ...idle, readout: { lastMs: 532, averageMs: 532, sampleCount: 1 } }),
+    { lastMs: 532, averageMs: null }
+  );
+});
+
+test("a queued latency flash waits for the pill to rest, and a new recording or the setting off drops it", async () => {
+  const { resolveLatencyFlashPhase } = await load();
+  const queued = { phase: "pending", atRest: false, recording: false, settingOn: true };
+
+  assert.equal(resolveLatencyFlashPhase(queued), "pending");
+  assert.equal(resolveLatencyFlashPhase({ ...queued, atRest: true }), "showing");
+  assert.equal(resolveLatencyFlashPhase({ ...queued, recording: true }), "idle");
+  assert.equal(resolveLatencyFlashPhase({ ...queued, atRest: true, settingOn: false }), "idle");
+  assert.equal(
+    resolveLatencyFlashPhase({ phase: "showing", atRest: false, recording: true, settingOn: true }),
+    "idle"
+  );
+  // Switching the setting on with nothing queued shows no old figure.
+  assert.equal(
+    resolveLatencyFlashPhase({ phase: "idle", atRest: true, recording: false, settingOn: true }),
+    "idle"
+  );
+});
+
+test("the latency caption yields to a busy pill, an open panel, a finished flash and the setting off", async () => {
+  const { resolveLatencyCaption } = await load();
+  const shown = {
+    settingOn: true,
+    flashActive: true,
+    pillBusy: false,
+    panelOpen: false,
+    readout: { lastMs: 532, averageMs: 610, sampleCount: 4 },
+  };
+
+  assert.equal(resolveLatencyCaption({ ...shown, pillBusy: true }), null);
+  assert.equal(resolveLatencyCaption({ ...shown, panelOpen: true }), null);
+  assert.equal(resolveLatencyCaption({ ...shown, flashActive: false }), null);
+  assert.equal(resolveLatencyCaption({ ...shown, settingOn: false }), null);
 });

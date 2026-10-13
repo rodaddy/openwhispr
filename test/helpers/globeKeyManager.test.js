@@ -5,6 +5,10 @@ const Module = require("node:module");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
 const childProcess = require("node:child_process");
+const {
+  resolveHeldDurationMs,
+  resolveDictationRelease,
+} = require("../../src/helpers/activationMode");
 
 const managerModulePath = require.resolve("../../src/helpers/globeKeyManager");
 const originalLoad = Module._load;
@@ -105,7 +109,8 @@ test("spawn args carry the state path and omit suppression by default", () => {
 });
 
 test("spawn args include mouse buttons, a spaced state path, and the suppression flag", () => {
-  const statePath = "/Users/a b/Library/Application Support/open whispr/globe-preference-state.json";
+  const statePath =
+    "/Users/a b/Library/Application Support/open whispr/globe-preference-state.json";
   const { GlobeKeyManager, spawnCalls } = loadManager();
   const manager = new GlobeKeyManager({ preferenceStatePath: statePath });
 
@@ -230,4 +235,74 @@ test("the listener is not started off macOS", () => {
   manager.start();
 
   assert.equal(spawnCalls.length, 0);
+});
+
+test("timestamped native events preserve hybrid tap and hold decisions across delivery delay", () => {
+  const { GlobeKeyManager, spawnCalls } = loadManager();
+  const manager = new GlobeKeyManager();
+  let receivedAtMs = 20_000;
+  let down;
+  const decisions = [];
+
+  manager.on("right-modifier-down", (modifier, eventTimeMs) => {
+    down = { modifier, eventTimeMs, receivedAtMs };
+  });
+  manager.on("right-modifier-up", (modifier, eventTimeMs) => {
+    const heldMs = resolveHeldDurationMs({
+      pressedEventTimeMs: down.eventTimeMs,
+      releasedEventTimeMs: eventTimeMs,
+      pressedAtMs: down.receivedAtMs,
+      releasedAtMs: receivedAtMs,
+    });
+    decisions.push({
+      modifier,
+      action: resolveDictationRelease({ mode: "hybrid", heldMs, isRecording: true }),
+    });
+  });
+
+  manager.start();
+  const { stdout } = spawnCalls[0].child;
+  stdout.emit("data", "RIGHT_MOD_DOWN:RightControl:10000\n");
+  receivedAtMs = 20_735;
+  stdout.emit("data", "RIGHT_MOD_UP:RightControl:10120\n");
+  receivedAtMs = 30_000;
+  stdout.emit("data", "RIGHT_MOD_DOWN:RightControl:20000\n");
+  receivedAtMs = 30_050;
+  stdout.emit("data", "RIGHT_MOD_UP:RightControl:20700\n");
+  manager.stop();
+
+  assert.deepEqual(decisions, [
+    { modifier: "RightControl", action: "latch" },
+    { modifier: "RightControl", action: "stop" },
+  ]);
+});
+
+test("untimestamped and empty-timestamp native lines preserve modifier and use fallback timing", () => {
+  const { GlobeKeyManager, spawnCalls } = loadManager();
+  const manager = new GlobeKeyManager();
+  const events = [];
+  manager.on("right-modifier-down", (modifier, eventTimeMs) => {
+    events.push({ modifier, eventTimeMs });
+  });
+
+  manager.start();
+  spawnCalls[0].child.stdout.emit(
+    "data",
+    "RIGHT_MOD_DOWN:RightOption\nRIGHT_MOD_DOWN:RightControl:\n"
+  );
+  manager.stop();
+
+  assert.deepEqual(events, [
+    { modifier: "RightOption", eventTimeMs: undefined },
+    { modifier: "RightControl", eventTimeMs: undefined },
+  ]);
+  assert.equal(
+    resolveHeldDurationMs({
+      pressedEventTimeMs: events[0].eventTimeMs,
+      releasedEventTimeMs: undefined,
+      pressedAtMs: 1_000,
+      releasedAtMs: 1_120,
+    }),
+    120
+  );
 });

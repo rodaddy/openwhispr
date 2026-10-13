@@ -1,3 +1,4 @@
+const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
@@ -141,9 +142,27 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function downloadFile(url, dest, retryCount = 0) {
+function clientFor(url) {
+  return new URL(url).protocol === "http:" ? http : https;
+}
+
+// options.resume: continue from the bytes already in dest with a Range request.
+// A 206 whose Content-Range starts at those bytes appends; a 200 (range ignored)
+// starts over; a 206 from another offset is discarded and the file is requested
+// once more without a Range; a 416 (already complete) writes nothing and leaves
+// the verdict to the caller's checksum. Without resume, an existing dest is
+// removed at the start of every attempt.
+// options.maxBytes: reject, without a retry, once the file would grow past it.
+// Any finite number from zero up is a cap; undefined means no cap.
+function downloadFile(url, dest, retryCount = 0, options = {}) {
+  const resume = options.resume === true;
+  const maxBytes =
+    Number.isFinite(options.maxBytes) && options.maxBytes >= 0 ? options.maxBytes : Infinity;
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
+    if (!resume && fs.existsSync(dest)) fs.unlinkSync(dest);
+    const offset = resume && fs.existsSync(dest) ? fs.statSync(dest).size : 0;
+    let sendRange = offset > 0;
+    let file = null;
     let activeRequest = null;
 
     const cleanup = () => {
@@ -151,7 +170,7 @@ function downloadFile(url, dest, retryCount = 0) {
         activeRequest.destroy();
         activeRequest = null;
       }
-      file.close();
+      if (file) file.close();
     };
 
     const request = (currentUrl, redirectCount = 0) => {
@@ -161,7 +180,8 @@ function downloadFile(url, dest, retryCount = 0) {
         return;
       }
 
-      activeRequest = https.get(currentUrl, (response) => {
+      const headers = sendRange ? { Range: `bytes=${offset}-` } : {};
+      activeRequest = clientFor(currentUrl).get(currentUrl, { headers }, (response) => {
         if ([301, 302, 303, 307, 308].includes(response.statusCode)) {
           const location = response.headers.location;
           if (!location) {
@@ -172,21 +192,49 @@ function downloadFile(url, dest, retryCount = 0) {
           const redirectUrl = location.startsWith("/")
             ? new URL(location, currentUrl).href
             : location;
+          response.resume();
           request(redirectUrl, redirectCount + 1);
           return;
         }
 
-        if (response.statusCode !== 200) {
+        if (sendRange && response.statusCode === 416) {
+          response.resume();
+          activeRequest = null;
+          console.log("  Already complete");
+          resolve();
+          return;
+        }
+
+        const appending = sendRange && response.statusCode === 206;
+        if (
+          appending &&
+          !String(response.headers["content-range"] ?? "").startsWith(`bytes ${offset}-`)
+        ) {
+          // The body is a range from another offset: neither the rest of the
+          // file nor the whole of it. Ask once more for the whole file.
+          response.resume();
+          sendRange = false;
+          request(currentUrl, redirectCount);
+          return;
+        }
+        if (response.statusCode !== 200 && !appending) {
           cleanup();
           reject(new Error(`HTTP ${response.statusCode}`));
           return;
         }
 
-        const total = parseInt(response.headers["content-length"], 10);
-        let downloaded = 0;
+        file = fs.createWriteStream(dest, { flags: appending ? "a" : "w" });
+        const length = parseInt(response.headers["content-length"], 10);
+        const total = length ? length + (appending ? offset : 0) : 0;
+        let downloaded = appending ? offset : 0;
 
         response.on("data", (chunk) => {
           downloaded += chunk.length;
+          if (downloaded > maxBytes) {
+            cleanup();
+            reject(new Error(`Download exceeded ${maxBytes} bytes`));
+            return;
+          }
           const pct = total ? Math.round((downloaded / total) * 100) : 0;
           process.stdout.write(`\r  Downloading: ${pct}%`);
         });
@@ -230,10 +278,7 @@ function downloadFile(url, dest, retryCount = 0) {
     if (isTransient && retryCount < MAX_RETRIES) {
       console.log(`\n  Retry ${retryCount + 1}/${MAX_RETRIES}: ${error.message}`);
       await sleep(RETRY_DELAY);
-      if (fs.existsSync(dest)) {
-        fs.unlinkSync(dest);
-      }
-      return downloadFile(url, dest, retryCount + 1);
+      return downloadFile(url, dest, retryCount + 1, options);
     }
     throw error;
   });
