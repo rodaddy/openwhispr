@@ -63,46 +63,65 @@ function fakeGhl(routes = {}) {
   return { calls, fetchImpl };
 }
 
+// The GoHighLevel SDK is an optional install; tests that drive it skip without it.
+const sdkInstalled = import("@rtech/connectors-highlevel").then(
+  () => true,
+  () => false
+);
+
+function sdkTest(name, fn) {
+  test(name, async (t) => {
+    if (!(await sdkInstalled)) return t.skip("@rtech/connectors-highlevel is not installed");
+    return fn(t);
+  });
+}
+
 function connectorFor(store, ghl) {
   return createCrmConnector({ store, fetchImpl: ghl.fetchImpl, now: () => NOW });
 }
 
-test("settings report the rTech location, keep, trim, and remove the token, never return it", async () => {
-  const store = makeStore({ token: "" });
-  const connector = connectorFor(store, fakeGhl());
-  assert.deepEqual(await connector.getSettings(), {
-    configured: false,
-    hasToken: false,
-    locationId: LOCATION,
-  });
-  const saved = await connector.saveSettings({ token: `  ${TOKEN}  ` });
-  assert.deepEqual(saved, { configured: true, hasToken: true, locationId: LOCATION });
-  assert.equal(await store.getToken(), TOKEN);
-  await connector.saveSettings({});
-  assert.equal(await store.getToken(), TOKEN);
-  await connector.saveSettings({ token: null });
-  assert.equal((await connector.getSettings()).hasToken, false);
-  await connector.saveSettings({ token: TOKEN });
-  await connector.saveSettings({ token: "" });
-  assert.equal(await store.getToken(), "");
-});
+sdkTest(
+  "settings report the rTech location, keep, trim, and remove the token, never return it",
+  async () => {
+    const store = makeStore({ token: "" });
+    const connector = connectorFor(store, fakeGhl());
+    assert.deepEqual(await connector.getSettings(), {
+      configured: false,
+      hasToken: false,
+      locationId: LOCATION,
+    });
+    const saved = await connector.saveSettings({ token: `  ${TOKEN}  ` });
+    assert.deepEqual(saved, { configured: true, hasToken: true, locationId: LOCATION });
+    assert.equal(await store.getToken(), TOKEN);
+    await connector.saveSettings({});
+    assert.equal(await store.getToken(), TOKEN);
+    await connector.saveSettings({ token: null });
+    assert.equal((await connector.getSettings()).hasToken, false);
+    await connector.saveSettings({ token: TOKEN });
+    await connector.saveSettings({ token: "" });
+    assert.equal(await store.getToken(), "");
+  }
+);
 
-test("connection test reads the location with the bearer token; no token means no request", async () => {
-  const ghl = fakeGhl({
-    [`GET /locations/${LOCATION}`]: () => json({ location: { id: LOCATION, name: "rTech" } }),
-  });
-  assert.deepEqual(await connectorFor(makeStore(), ghl).testConnection(), {
-    locationName: "rTech",
-  });
-  assert.equal(ghl.calls[0].auth, `Bearer ${TOKEN}`);
-  const empty = fakeGhl();
-  await assert.rejects(connectorFor(makeStore({ token: "" }), empty).testConnection(), {
-    code: "NOT_CONFIGURED",
-  });
-  assert.equal(empty.calls.length, 0);
-});
+sdkTest(
+  "connection test reads the location with the bearer token; no token means no request",
+  async () => {
+    const ghl = fakeGhl({
+      [`GET /locations/${LOCATION}`]: () => json({ location: { id: LOCATION, name: "rTech" } }),
+    });
+    assert.deepEqual(await connectorFor(makeStore(), ghl).testConnection(), {
+      locationName: "rTech",
+    });
+    assert.equal(ghl.calls[0].auth, `Bearer ${TOKEN}`);
+    const empty = fakeGhl();
+    await assert.rejects(connectorFor(makeStore({ token: "" }), empty).testConnection(), {
+      code: "NOT_CONFIGURED",
+    });
+    assert.equal(empty.calls.length, 0);
+  }
+);
 
-test("contact search trims, sends limit 10, and maps names with fallbacks", async () => {
+sdkTest("contact search trims, sends limit 10, and maps names with fallbacks", async () => {
   const ghl = fakeGhl({
     "POST /contacts/search": () =>
       json({
@@ -126,7 +145,7 @@ test("contact search trims, sends limit 10, and maps names with fallbacks", asyn
   assert.equal(ghl.calls[0].body.locationId, LOCATION);
 });
 
-test("opportunities page through every page of the contact's opportunities", async () => {
+sdkTest("opportunities page through every page of the contact's opportunities", async () => {
   const opp = (id) => ({ id, name: id, status: "open", pipelineId: "p", pipelineStageId: "s" });
   const first = Array.from({ length: 50 }, (_, i) => opp(`o${i + 1}`));
   const ghl = fakeGhl({
@@ -147,7 +166,7 @@ test("opportunities page through every page of the contact's opportunities", asy
   assert.equal(ghl.calls[1].query.get("contact_id"), "c1");
 });
 
-test("opportunities paging stops after 10 pages", async () => {
+sdkTest("opportunities paging stops after 10 pages", async () => {
   let n = 0;
   const ghl = fakeGhl({
     "GET /opportunities/search": () => {
@@ -163,7 +182,7 @@ test("opportunities paging stops after 10 pages", async () => {
   assert.equal(listed.length, 500);
 });
 
-test("opportunities ask for every status of the contact, 50 per page", async () => {
+sdkTest("opportunities ask for every status of the contact, 50 per page", async () => {
   const opportunity = {
     id: "o1",
     name: "Web",
@@ -217,7 +236,7 @@ test("activity body renders persisted transcript speaker names instead of serial
   assert.match(body, /Synced from rTech Whisper 2 on 2026-09-09T15:00:00\.000Z$/);
 });
 
-test("first sync creates a note linked to the opportunity and returns the receipt", async () => {
+sdkTest("first sync creates a note linked to the opportunity and returns the receipt", async () => {
   const store = makeStore();
   const ghl = fakeGhl();
   const state = await connectorFor(store, ghl).syncNote(1, {
@@ -242,32 +261,35 @@ test("first sync creates a note linked to the opportunity and returns the receip
   assert.equal(await connectorFor(store, ghl).getSyncState(99), null);
 });
 
-test("repeat and concurrent syncs update the one existing note with the chosen opportunity", async () => {
-  const store = makeStore();
-  const ghl = fakeGhl();
-  const connector = connectorFor(store, ghl);
-  await connector.syncNote(1, { contactId: "c1", opportunityId: "o1" });
-  const [a, b] = await Promise.all([
-    connector.syncNote(1, { contactId: "c1", opportunityId: "o2" }),
-    connector.syncNote(1, { contactId: "c1", opportunityId: "o2" }),
-  ]);
-  assert.equal(a.noteId, "ghl-note-1");
-  assert.equal(b.noteId, "ghl-note-1");
-  assert.deepEqual(
-    ghl.calls.map((call) => `${call.method} ${call.path}`),
-    [
-      "POST /contacts/c1/notes",
-      "GET /contacts/c1/notes/ghl-note-1",
-      "PUT /contacts/c1/notes/ghl-note-1",
-      "GET /contacts/c1/notes/ghl-note-1",
-      "PUT /contacts/c1/notes/ghl-note-1",
-    ]
-  );
-  assert.deepEqual(ghl.calls[2].body.relations, [{ objectKey: "opportunity", recordId: "o2" }]);
-  assert.equal(store.states.get(1).opportunityId, "o2");
-});
+sdkTest(
+  "repeat and concurrent syncs update the one existing note with the chosen opportunity",
+  async () => {
+    const store = makeStore();
+    const ghl = fakeGhl();
+    const connector = connectorFor(store, ghl);
+    await connector.syncNote(1, { contactId: "c1", opportunityId: "o1" });
+    const [a, b] = await Promise.all([
+      connector.syncNote(1, { contactId: "c1", opportunityId: "o2" }),
+      connector.syncNote(1, { contactId: "c1", opportunityId: "o2" }),
+    ]);
+    assert.equal(a.noteId, "ghl-note-1");
+    assert.equal(b.noteId, "ghl-note-1");
+    assert.deepEqual(
+      ghl.calls.map((call) => `${call.method} ${call.path}`),
+      [
+        "POST /contacts/c1/notes",
+        "GET /contacts/c1/notes/ghl-note-1",
+        "PUT /contacts/c1/notes/ghl-note-1",
+        "GET /contacts/c1/notes/ghl-note-1",
+        "PUT /contacts/c1/notes/ghl-note-1",
+      ]
+    );
+    assert.deepEqual(ghl.calls[2].body.relations, [{ objectKey: "opportunity", recordId: "o2" }]);
+    assert.equal(store.states.get(1).opportunityId, "o2");
+  }
+);
 
-test("a synced note refuses another contact before any request", async () => {
+sdkTest("a synced note refuses another contact before any request", async () => {
   const store = makeStore();
   const ghl = fakeGhl();
   const connector = connectorFor(store, ghl);
@@ -278,7 +300,7 @@ test("a synced note refuses another contact before any request", async () => {
   assert.equal(ghl.calls.length, 1);
 });
 
-test("a note deleted in GoHighLevel is recreated", async () => {
+sdkTest("a note deleted in GoHighLevel is recreated", async () => {
   const store = makeStore();
   const ghl = fakeGhl({
     "GET /contacts/c1/notes/ghl-note-1": () => json({ message: "Note not found" }, 404),
@@ -290,55 +312,74 @@ test("a note deleted in GoHighLevel is recreated", async () => {
   assert.equal(store.states.get(1).noteId, "ghl-note-2");
 });
 
-test("invalid input, missing notes, and a token change mid-sync fail with their codes", async () => {
-  const store = makeStore();
-  const connector = connectorFor(store, fakeGhl());
-  await assert.rejects(connector.syncNote(1, { contactId: "c1" }), { code: "INVALID_TARGET" });
-  await assert.rejects(connector.syncNote(2, { contactId: "c1", opportunityId: "o1" }), {
-    code: "NOTE_NOT_FOUND",
-  });
-  const racing = fakeGhl({
-    "POST /contacts/c1/notes": async ({ body }) => {
-      await store.saveToken("replacement-token");
-      return json({ note: { id: "ghl-note-9", contactId: "c1", body: body.body } });
-    },
-  });
-  await assert.rejects(
-    connectorFor(store, racing).syncNote(1, { contactId: "c1", opportunityId: "o1" }),
-    { code: "SETTINGS_CHANGED" }
-  );
-  assert.equal(store.states.size, 0);
-});
-
-test("GoHighLevel failures map to fixed codes and never leak the token or response text", async () => {
-  const { HighLevelTimeoutError } = await import("@rtech/connectors-highlevel");
-  const cases = [
-    [() => json({ message: `bad ${TOKEN}` }, 401), "AUTH_FAILED", 401],
-    [() => json({ message: "scope" }, 403), "AUTH_FAILED", 403],
-    [() => json({ message: "slow down" }, 429), "RATE_LIMITED", 429],
-    [() => json({ message: "boom secret-body" }, 500), "GHL_ERROR", 500],
-    [() => json({ wrong: true }), "GHL_ERROR", undefined],
-    [
-      () => {
-        throw new HighLevelTimeoutError({ method: "POST", path: "/x", timeoutMs: 10000 });
-      },
-      "TIMEOUT",
-      undefined,
-    ],
-  ];
-  for (const [answer, code, status] of cases) {
+sdkTest(
+  "invalid input, missing notes, and a token change mid-sync fail with their codes",
+  async () => {
     const store = makeStore();
-    const ghl = fakeGhl({ "POST /contacts/c1/notes": answer });
-    const error = await connectorFor(store, ghl)
-      .syncNote(1, { contactId: "c1", opportunityId: "o1" })
-      .then(
-        () => assert.fail("sync should fail"),
-        (failure) => failure
-      );
-    assert.equal(error.name, "CrmError");
-    assert.equal(error.code, code);
-    assert.equal(error.status, status);
-    assert.doesNotMatch(error.message, /pit-secret|secret-body|slow down|scope/);
+    const connector = connectorFor(store, fakeGhl());
+    await assert.rejects(connector.syncNote(1, { contactId: "c1" }), { code: "INVALID_TARGET" });
+    await assert.rejects(connector.syncNote(2, { contactId: "c1", opportunityId: "o1" }), {
+      code: "NOTE_NOT_FOUND",
+    });
+    const racing = fakeGhl({
+      "POST /contacts/c1/notes": async ({ body }) => {
+        await store.saveToken("replacement-token");
+        return json({ note: { id: "ghl-note-9", contactId: "c1", body: body.body } });
+      },
+    });
+    await assert.rejects(
+      connectorFor(store, racing).syncNote(1, { contactId: "c1", opportunityId: "o1" }),
+      { code: "SETTINGS_CHANGED" }
+    );
     assert.equal(store.states.size, 0);
   }
+);
+
+sdkTest(
+  "GoHighLevel failures map to fixed codes and never leak the token or response text",
+  async () => {
+    const { HighLevelTimeoutError } = await import("@rtech/connectors-highlevel");
+    const cases = [
+      [() => json({ message: `bad ${TOKEN}` }, 401), "AUTH_FAILED", 401],
+      [() => json({ message: "scope" }, 403), "AUTH_FAILED", 403],
+      [() => json({ message: "slow down" }, 429), "RATE_LIMITED", 429],
+      [() => json({ message: "boom secret-body" }, 500), "GHL_ERROR", 500],
+      [() => json({ wrong: true }), "GHL_ERROR", undefined],
+      [
+        () => {
+          throw new HighLevelTimeoutError({ method: "POST", path: "/x", timeoutMs: 10000 });
+        },
+        "TIMEOUT",
+        undefined,
+      ],
+    ];
+    for (const [answer, code, status] of cases) {
+      const store = makeStore();
+      const ghl = fakeGhl({ "POST /contacts/c1/notes": answer });
+      const error = await connectorFor(store, ghl)
+        .syncNote(1, { contactId: "c1", opportunityId: "o1" })
+        .then(
+          () => assert.fail("sync should fail"),
+          (failure) => failure
+        );
+      assert.equal(error.name, "CrmError");
+      assert.equal(error.code, code);
+      assert.equal(error.status, status);
+      assert.doesNotMatch(error.message, /pit-secret|secret-body|slow down|scope/);
+      assert.equal(store.states.size, 0);
+    }
+  }
+);
+
+test("a missing GoHighLevel SDK reports the connector as not installed", async () => {
+  const missing = Object.assign(new Error("Cannot find package"), { code: "ERR_MODULE_NOT_FOUND" });
+  const connector = createCrmConnector({
+    store: makeStore(),
+    loadSdk: () => Promise.reject(missing),
+  });
+  await assert.rejects(connector.getSettings(), {
+    name: "CrmError",
+    code: "NOT_INSTALLED",
+    message: "CRM connector not installed",
+  });
 });

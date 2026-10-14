@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { loadAudioManager } = require("./harness/audioManager");
 
-// The word trainer (#94) records on an AudioManager built with
+// The word trainer records on an AudioManager built with
 // persistHistory: false; no failed, discarded, or completed take from it may
 // reach history, whatever the retention settings say.
 const retainEverything = {

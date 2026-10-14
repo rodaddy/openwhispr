@@ -89,7 +89,7 @@ export async function runRoundupSlot(slot: RoundupSlot, policyState: PolicyDecis
 }
 
 // Mounted once, in the dictation window (App.jsx), which main.js always creates,
-// so it runs while the app runs, even on a hidden or login launch (#423).
+// so it runs while the app runs, even on a hidden or login launch.
 // Checks on mount and every minute, which also catches up after sleep or a late launch.
 export function useBrainDumpRoundups() {
   const policyState = usePolicySnapshot();

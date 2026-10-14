@@ -1,4 +1,4 @@
-// Per-hub cloud ids (rtech-whisper#126, decision D14). A cloud_id belongs to
+// Per-hub cloud ids (decision D14). A cloud_id belongs to
 // the hub that issued it. Switching hubs relaunches the app, and at startup,
 // before any sync pass, swapHubIds stashes the previous hub's ids and restores
 // the current hub's, so A -> B -> A resumes A from A's own ids instead of
@@ -14,7 +14,7 @@ const SYNCED_TABLES = {
 };
 
 // A row deleted while on another hub is gone locally, but its stashed id for
-// this hub still names a live row here (rtech-whisper#293). It comes back as a
+// this hub still names a live row here. It comes back as a
 // pending tombstone row so the next push deletes it on this hub too. Each
 // kind fills its NOT NULL / unique columns from the cloud id; notes and
 // folders sit in the private space so the account-scoped delete queue sees them.

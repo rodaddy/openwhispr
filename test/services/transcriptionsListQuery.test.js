@@ -1,4 +1,4 @@
-// TranscriptionsService.list query shape (#119): the cursor id rides as
+// TranscriptionsService.list query shape: the cursor id rides as
 // since_id on a delta page and before_id on a snapshot page, and never alone.
 
 const test = require("node:test");

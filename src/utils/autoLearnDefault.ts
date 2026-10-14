@@ -1,5 +1,5 @@
 // Auto-learn from corrections is OFF by default: it kept learning ordinary
-// words (#94). A one-time migration switches an existing ON install OFF and
+// words. A one-time migration switches an existing ON install OFF and
 // records that it ran, so a later manual ON sticks.
 export const AUTO_LEARN_KEY = "autoLearnCorrections";
 export const AUTO_LEARN_MIGRATION_KEY = "autoLearnOffMigrated";

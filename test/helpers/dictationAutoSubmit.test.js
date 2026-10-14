@@ -55,7 +55,7 @@ test("shouldAutoSubmit allows a terminal on the exact bundle-id list", () => {
 });
 
 test("shouldAutoSubmit refuses a bundle id that is not exactly on the list", () => {
-  // #658: an app merely named like a terminal must not get a Return.
+  // An app merely named like a terminal must not get a Return.
   for (const bundleId of ["com.example.TerminalNotes", "com.apple.terminal", null, undefined]) {
     assert.equal(shouldAutoSubmit({ ...allowed, bundleId }), false, String(bundleId));
   }

@@ -1,4 +1,4 @@
-// A fresh Mac joining the hub (rtech-whisper#112, item 3): an empty local
+// A fresh Mac joining the hub (item 3): an empty local
 // database with hub mode on pulls every live hub folder and note, files them,
 // and pushes nothing back as a create. The second pass is a no-op.
 //
@@ -110,7 +110,7 @@ function createHub({ beforeBatchCreate, failFolderListOnce = false, spacesReply 
       });
     };
 
-    // A hub that answers the spaces probe instead of 404ing (review #131).
+    // A hub that answers the spaces probe instead of 404ing.
     if (spacesReply && pathname === "/api/me/spaces") return reply(200, spacesReply);
     // Not in hub v1 (protocol.md 2 and 10): spaces, conversations, analytics.
     if (
@@ -330,7 +330,7 @@ test("a fresh Mac's first hub sync pulls everything, files it, and pushes nothin
   );
 
   // No step of a hub pass may fail: the conversation routes the hub does not
-  // serve (protocol 12) are not called at all (rtech-whisper#132).
+  // serve (protocol 12) are not called at all.
   const errors = [];
   t.mock.method(console, "error", (message) => errors.push(String(message)));
 
@@ -546,7 +546,7 @@ test("a failed folder list holds fresh folders and their notes back for a pass",
   assert.equal(hubNoteFor(hub, projects.note.client_note_id)?.folder_id, seeded.projects.id);
 });
 
-// rtech-whisper#132: the hub has no /api/conversations routes, so hub mode
+// The hub has no /api/conversations routes, so hub mode
 // uploads no agent conversation, not even one with messages waiting.
 test("hub mode never uploads agent conversations", async (t) => {
   resetBrowserGlobals();
@@ -567,7 +567,7 @@ test("hub mode never uploads agent conversations", async (t) => {
   );
 });
 
-// rtech-whisper#131: the live purge path. syncSpaces purges every local team
+// The live purge path. syncSpaces purges every local team
 // space the spaces probe does not list. The hub contract has no spaces, so a
 // hub answering 200 with an empty list must not purge local team content.
 test("a hub answering the spaces probe with an empty list purges no team space", async (t) => {
@@ -603,7 +603,7 @@ test("a hub answering the spaces probe with an empty list purges no team space",
   );
 });
 
-// rtech-whisper#131: the live delete paths in hub mode. A hub tombstone
+// The live delete paths in hub mode. A hub tombstone
 // hard-deletes the local copy on the next delta pull.
 test("a hub tombstone deletes the local note on the next pass", async (t) => {
   resetBrowserGlobals();

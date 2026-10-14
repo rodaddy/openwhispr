@@ -28,7 +28,7 @@ function write(file, content) {
   fs.writeFileSync(file, content);
 }
 
-describe("data folder move (#257 PR B)", () => {
+describe("data folder move", () => {
   let tempRoot;
   let defaultUserData;
   let cacheRoot;
@@ -177,7 +177,7 @@ describe("data folder move (#257 PR B)", () => {
   });
 });
 
-describe("move the data back to the default folder (#257)", () => {
+describe("move the data back to the default folder", () => {
   const STORE_ID = "3f1c2a9e-0000-4000-8000-000000000002";
   let tempRoot;
   let defaultUserData;

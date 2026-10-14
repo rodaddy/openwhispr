@@ -1,10 +1,7 @@
 # Grill live checks
 
-Plan for proving the grill end to end in a real session, per
-openwhispr#52.
-Everything under test is MERGED
-(#47 to
-#51) and has never run
+Plan for proving the grill end to end in a real session.
+Everything under test is MERGED and has never run
 live. Results go in `docs/grill-live-results.md` beside this file.
 
 ## Go
@@ -20,7 +17,7 @@ live. Results go in `docs/grill-live-results.md` beside this file.
 
 - Rico is present for every check. Checks run in order; a FAIL does not stop
   the later checks unless the later check depends on it (noted per check).
-- A FAIL becomes one Forge issue on openwhispr carrying the check id, what was
+- A FAIL becomes one issue carrying the check id, what was
   done, and the log line. No code is fixed inside the run.
 - Evidence per check: the log line(s) from the app's debug log
   (`~/Library/Application Support/open-whispr/logs/debug-<timestamp>.log`,
@@ -110,5 +107,5 @@ One grill, each control in turn:
 
 ## After every check passes
 
-State 4 of the rtech-consulting handover puts the real Grill and Life Story
-blocks back by script. It does not run while any check here is FAIL.
+The real Grill and Life Story blocks are put back by script afterwards. That
+step does not run while any check here is FAIL.

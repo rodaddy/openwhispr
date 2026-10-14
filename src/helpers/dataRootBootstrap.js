@@ -1,4 +1,4 @@
-// Boot-time data-root resolution (#257). Runs synchronously before app ready,
+// Boot-time data-root resolution. Runs synchronously before app ready,
 // so it touches only fs and path; main.js applies the result to Electron.
 //
 // Precedence: --user-data-dir > OPENWHISPR_DATA_DIR > pointer > channel default.

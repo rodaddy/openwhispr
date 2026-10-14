@@ -242,7 +242,7 @@ test("repeated sentences in the merged transcript collapse to one", async () => 
   assert.equal(result.text, "The meeting starts at noon.");
 });
 
-// Away mode (rtech-whisper#112): hub, then the self-hosted server directly, then the local engine.
+// Away mode: hub, then the self-hosted server directly, then the local engine.
 const enotfound = () =>
   Object.assign(new TypeError("fetch failed"), {
     cause: Object.assign(new Error("getaddrinfo ENOTFOUND llama-swap.example.internal"), {

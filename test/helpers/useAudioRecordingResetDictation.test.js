@@ -8,7 +8,7 @@ const {
   installHookDom,
 } = require("../lib/rendererTestHarness");
 
-// rtech-whisper#549: a failed dictation must blank everything out so the next
+// A failed dictation must blank everything out so the next
 // press starts fresh. The fake records resetCapture calls and hands the hook's
 // callbacks back to the test so failure outcomes can be fired directly.
 const FAKE_AUDIO_MANAGER_SOURCE = `

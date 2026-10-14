@@ -8,7 +8,7 @@ const {
   installHookDom,
 } = require("../lib/rendererTestHarness");
 
-// macOS opens the mic before the visual-frame wait (#563); elsewhere the wait
+// macOS opens the mic before the visual-frame wait; elsewhere the wait
 // still keeps a slow driver wake off the paint path.
 const FAKE_AUDIO_MANAGER_SOURCE = `
 export default class FakeAudioManager {

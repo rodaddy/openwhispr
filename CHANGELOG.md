@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-**Versioning (Rico, 2026-09-29):** rTech Whisper has its own version number,
+**Versioning (2026-09-29):** rTech Whisper has its own version number,
 starting at 2.0.0. It is built on OpenWhispr 1.10.1 (upstream is at 1.10.2) and
 no longer follows upstream's numbers. Small fixes and small features raise the
 patch (2.0.1); the minor (2.1.0) is for bigger changes; the major for a new
@@ -21,86 +21,69 @@ never installed.
 
 - Insights: each dictation's latency is stored on this device, and the
   Insights page shows the median of the last 7 days, with a line per model
-  when more than one was used
-  (#701, #699).
+  when more than one was used.
 
 ### Changed
 
 - Dictation: with "Show dictation latency" on, the dictation pill shows the
   last latency and the average of the last 10 for 2.5 s after a paste, and
   the live preview panel shows the same figures at its bottom. This replaces
-  the latency toast
-  (#705, #699).
+  the latency toast.
 
 ## [2.1.0] - 2026-10-11
 
 The minor number rises because this release carries the VoiceStudio adoption
-work (epic #663) and the GoHighLevel connector.
+work and the GoHighLevel connector.
 
 ### Added
 
 - Dictation: on macOS a pasted dictation is formatted for the app it lands in.
   On by default, with a toggle and per-app overrides in Settings. In a
-  terminal the first word is lowercased only when it is a known command
-  (#647, #657, #675, #687, #629, #646).
+  terminal the first word is lowercased only when it is a known command.
 - Dictation: guarded auto-submit. After a paste into a terminal the app can
   press Return. Off by default, with a minimum word count; terminals are
   matched by exact bundle id, and a withheld Return shows a toast saying the
-  text is still on the line
-  (#659, #667, #670, #679, #634, #658).
+  text is still on the line.
 - Dictation: a paste-last hotkey pastes the last dictation again, without
-  Return (#670, #634).
+  Return.
 - Dictation: an optional toast shows the time from releasing the hotkey to the
-  paste. Off by default (#673, #639).
+  paste. Off by default.
 - Skippy's voice: choose where it runs, Hub, Local or Auto. The hub stays the
-  default; Auto tries the hub first and falls back to this computer
-  (#660, #666, #630).
+  default; Auto tries the hub first and falls back to this computer.
 - Skippy's voice: an on-device OmniVoice engine, kept open as a sidecar and
   compiled into the mac build. A Settings button downloads the voice weights,
-  and an interrupted download resumes where it stopped
-  (#644, #654, #656, #662, #676, #685, #686, #693, #630, #636).
+  and an interrupted download resumes where it stopped.
 - Skippy's voice: sound tags such as a sigh or a laugh, and a pinned render
-  (seed, steps, language) on the direct call to the voice server
-  (#671, #635).
+  (seed, steps, language) on the direct call to the voice server.
 - Voice setup: the dialog transcribes the reference clip. A clip up to 20 s is
   used whole, and a longer one is cut to its best 15 s window. A voice can be
-  exported and imported as one bundle file
-  (#669, #674, #678, #632, #641).
-- Models: local model rows show an estimated RAM figure
-  (#672, #637).
+  exported and imported as one bundle file.
+- Models: local model rows show an estimated RAM figure.
 - CRM: a GoHighLevel connector replaces the old CRM connector. A note files as
   one GoHighLevel note, the sync dialog picks a contact and an opportunity,
-  and the AI tools sync to opportunities
-  (#614, #538).
+  and the AI tools sync to opportunities.
 - Database: the app snapshots the database once per app version before it
-  migrates, and a failed migration names the snapshot taken before it
-  (#652, #665, #633).
+  migrates, and a failed migration names the snapshot taken before it.
 
 ### Changed
 
 - Parakeet: the local server stops after 10 idle minutes and restarts on the
-  next use (#648, #680, #640, #653).
-- Security: Chromium permissions are granted to the app's own pages only
-  (#651, #638).
+  next use.
+- Security: Chromium permissions are granted to the app's own pages only.
 - Releases: the mac build makes only the DMG and prunes old builds after it
-  publishes, and the release watcher copies only the DMG
-  (#592, #593, #594, #544).
+  publishes, and the release watcher copies only the DMG.
 
 ### Fixed
 
 - Onboarding: the assistant-hotkey step can be skipped, and a step's content
-  scrolls when it does not fit
-  (#689, #661).
+  scrolls when it does not fit.
 - Dictation: the macOS terminal check matches whole app names, and a sentence
-  that ends inside quotes counts as an end
-  (#664, #690, #645, #646).
+  that ends inside quotes counts as an end.
 - Local voice engine: the next engine process waits for the retired one to
   exit, a stopped engine stays stopped, and a failed transcript write leaves
-  no staged file
-  (#677, #681, #688, #655).
+  no staged file.
 - Build scripts: downloads have a size cap, restart cleanly on a mismatched
-  range, and the engine build takes a lock
-  (#684, #642).
+  range, and the engine build takes a lock.
 
 ## [2.0.24] - 2026-10-07
 
@@ -108,16 +91,14 @@ work (epic #663) and the GoHighLevel connector.
 
 - Dictation hotkey: a press made while the previous take is still finishing
   now starts the next take once that take is done, instead of being dropped;
-  a start the app still drops is logged
-  (#588, #549).
+  a start the app still drops is logged.
 
 ### Added
 
 - Dev tooling: the speech-to-text A/B replay runner, which re-transcribes a
   seeded, duration-stratified sample of saved dictation clips through one or
   more models and reports WER and latency, with atomic WAV conversion and gold
-  candidates drawn from the sample
-  (#580, #584, #550).
+  candidates drawn from the sample.
 
 ## [2.0.23] - 2026-10-07
 
@@ -125,12 +106,10 @@ work (epic #663) and the GoHighLevel connector.
 
 - Dictation pill: a take that starts while the "We didn't catch that" card is
   up keeps its pill on screen; with auto-hide on, the card's dismissal used to
-  hide the window mid-take, so the hotkey looked dead
-  (#586, #549).
+  hide the window mid-take, so the hotkey looked dead.
 - Dictation hotkey: in hybrid mode, a tap while the mic is still starting no
   longer starts the take a second time; within 400 ms of the press it is
-  ignored, after that it stops the take
-  (#586, #549).
+  ignored, after that it stops the take.
 
 ## [2.0.22] - 2026-10-07
 
@@ -139,10 +118,9 @@ work (epic #663) and the GoHighLevel connector.
 - Dictation hotkey: in hybrid mode, a stop tap within 400 ms of the start no
   longer ends the take, so a double tap or a bouncy press keeps recording.
   Applies to the right modifier, Globe, mouse-button and registered-hotkey
-  triggers (#582, #549).
+  triggers.
 - Dev tooling: the speech-to-text A/B scorer no longer splits a word at an
-  acute accent, backtick, oxia or fullwidth-grave apostrophe
-  (#577, #572).
+  acute accent, backtick, oxia or fullwidth-grave apostrophe.
 
 ## [2.0.21] - 2026-10-07
 
@@ -150,87 +128,79 @@ work (epic #663) and the GoHighLevel connector.
 
 - Dictation hotkey: a failed or cancelled take resets dictation and drops the
   held mic and prepared capture, so the next press starts fresh instead of
-  wedging until a restart (#552, #553, #549).
+  wedging until a restart.
 - The last word is no longer cut off: recording keeps going 400 ms after the
   trigger is released, and a press during that tail waits for it instead of
-  being dropped (#571, #564).
-- Dependencies: all 20 npm audit advisories cleared (#555, #548).
-- Releases: the release watcher runs from its own folder on the build Mac, and
-  the release server keeps only the newest 3 releases' assets (#543, #545, #480).
+  being dropped.
+- Dependencies: all 20 npm audit advisories cleared.
+- Releases: the release watcher runs from its own folder, and
+  the release server keeps only the newest 3 releases' assets.
 
 ### Changed
 
 - Dictation starts faster: a capture prepared a moment earlier starts without
   re-resolving the system default mic, and on macOS the mic opens before the
-  frame wait (#568, #563).
+  frame wait.
 - The listening pill arms at the press and shows the waveform as soon as
-  recording starts (#569, #563).
+  recording starts.
 - Paste waits 15 ms instead of 120 ms when the target app is confirmed
-  frontmost (#567, #565).
+  frontmost.
 - At idle the tray no longer spawns the mic helper every 2 s: Lark status is
-  cached for 30 s and the helper path is resolved once
-  (#570, #565).
+  cached for 30 s and the helper path is resolved once.
 - CI: PRs run only the affected tests and main runs the full suite; test
-  selection follows renames and glob-named tests (#560, #566, #551).
+  selection follows renames and glob-named tests.
 
 ### Added
 
 - Dev tooling: a word-error-rate and latency scoring module for the
-  speech-to-text A/B harness (#559, #550).
+  speech-to-text A/B harness.
 
 ## [2.0.20] - 2026-10-02
 
 ### Added
 
 - Data folder: move the data back to the default folder. The model cache
-  stays on the drive (#535, #257).
+  stays on the drive.
 - Corrections: a train-a-word take stops by itself once you stop speaking;
-  Stop still works (#536, #533).
-- Releases: tagged builds are copied to a shared drive by a watcher on
-  the build Mac (#534, #480).
+  Stop still works.
+- Releases: tagged builds are copied to a release folder automatically.
 
 ### Changed
 
 - Erase all data first zips the data folder, and any old copy a move left
   behind, into the Trash, then deletes them. If the backup fails, nothing is
-  erased and the app restarts (#535, #540, #257, #539).
-- Recording fragments and other temp files live under the chosen data folder
-  (#535, #257).
+  erased and the app restarts.
+- Recording fragments and other temp files live under the chosen data folder.
 
 ## [2.0.19] - 2026-10-01
 
 ### Added
 
 - Corrections: train a word. Type the word, say it 3 or 4 times, review the
-  takes, and save (#509, #485, #484, #94).
+  takes, and save.
 
 ### Changed
 
-- Auto-learn is off by default, and is switched off once on existing installs
-  (#483, #94).
-- Corrections no longer feed misheard words to the speech engine
-  (#508, #94).
+- Auto-learn is off by default, and is switched off once on existing installs.
+- Corrections no longer feed misheard words to the speech engine.
 
 ### Removed
 
-- The old browser web recorder (#481, #476, #105, #477).
+- The old browser web recorder.
 
 ## [2.0.18] - 2026-10-01
 
 ### Changed
 
-- Dictionary: the second tab is now called Corrections
-  (#455, #451).
+- Dictionary: the second tab is now called Corrections.
 
 ### Fixed
 
 - Data folder: the startup dialog no longer says moving the data folder is
-  unavailable (#458, #257).
+  unavailable.
 - Hub switch: things you delete while on one hub now also disappear from the
-  other hub after you switch back to it
-  (#454, #293).
-- Grill: a dictation meant for another app no longer becomes a grill answer
-  (#456, #80).
+  other hub after you switch back to it.
+- Grill: a dictation meant for another app no longer becomes a grill answer.
 
 ## [2.0.17] - 2026-09-30
 
@@ -238,13 +208,12 @@ work (epic #663) and the GoHighLevel connector.
 
 - Integrations: a Sync now button on each connected calendar. It re-reads
   the calendars and events right away and shows the provider's error if
-  the sync fails (#434, #433).
+  the sync fails.
 
 ### Changed
 
 - Grilling is now its own section inside Settings (To grill, voices,
-  questions); the sidebar entry added in 2.0.13 is gone
-  (#432, #431).
+  questions); the sidebar entry added in 2.0.13 is gone.
 
 ## [2.0.16] - 2026-09-30
 
@@ -253,7 +222,7 @@ work (epic #663) and the GoHighLevel connector.
 - Google Calendar now signs in through rTech Whisper's own Google app, so
   any Google account can grant calendar
   access with a normal consent screen. Reconnect each Google account once
-  after updating (#429, #428).
+  after updating.
 
 ## [2.0.15] - 2026-09-30
 
@@ -261,50 +230,40 @@ work (epic #663) and the GoHighLevel connector.
 
 - Brain dumps: a new sidebar section. Process sorts each dump from the
   phone into a note (filed in its best folder), a "To grill" topic, or an
-  Apple Reminders to-do, then shows what went where with Undo
-  (#394,
-  #395, #327).
+  Apple Reminders to-do, then shows what went where with Undo.
 - Brain dump roundups: a summary note at 9:30 AM and 11 PM (times
-  editable), which never sorts or files anything
-  (#396, #327).
+  editable), which never sorts or files anything.
 
 ## [2.0.14] - 2026-09-30
 
 ### Added
 
 - Grilling: a "To grill" list. Topics you add (and, soon, brain dumps) are
-  asked first in the next grill, and marked done only once the grill asked them
-  (#358, #327).
-- Apple Reminders bridge for brain-dump to-dos; not wired to any button yet
-  (#356, #327).
+  asked first in the next grill, and marked done only once the grill asked them.
+- Apple Reminders bridge for brain-dump to-dos; not wired to any button yet.
 
 ### Fixed
 
 - A calendar account whose sign-in expired now says "Needs to be reconnected"
   with a Reconnect button, and notifies once, instead of failing silently while
-  meeting reminders ran on stale times
-  (#357, #355, #353).
+  meeting reminders ran on stale times.
 
 ## [2.0.13] - 2026-09-30
 
 ### Added
 
 - Grilling has its own section in the sidebar; the grill voices and question
-  bank moved there out of Settings
-  (#324, #323).
+  bank moved there out of Settings.
 - Settings > Data folder: Remove old copy deletes the copy left behind after a
-  move, keeping the files the app still reads there
-  (#328, #325).
+  move, keeping the files the app still reads there.
 - Debug logs are capped: files older than 7 days go, and the oldest go while
   the total is over 200 MB; a new file starts each day. Settings shows the log
-  size with a Clear button
-  (#326, #258).
+  size with a Clear button.
 
 ### Fixed
 
 - A hub note with no title now reaches the Mac as "Untitled Note" instead of
-  failing on every sync
-  (#322, #320).
+  failing on every sync.
 
 ## [2.0.12] - 2026-09-30
 
@@ -312,16 +271,13 @@ work (epic #663) and the GoHighLevel connector.
 
 - Settings > Data folder: Move… copies the app's data and model cache to a
   folder you pick, checks the copy, and restarts on it. The old folder is kept
-  for you to remove (#259,
-  #295, #257).
+  for you to remove.
 
 ### Fixed
 
 - Switching sync hubs restarts the app and keeps each hub's ids and sync
-  position, so going back to a hub does not duplicate notes
-  (#294, #126).
-- Hub URLs must use https; http is allowed only for localhost
-  (#255, #144).
+  position, so going back to a hub does not duplicate notes.
+- Hub URLs must use https; http is allowed only for localhost.
 
 ## [2.0.11] - 2026-09-30
 
@@ -329,11 +285,10 @@ work (epic #663) and the GoHighLevel connector.
 
 - When the device key state cannot be read, Settings now says "Key state
   unavailable" and keeps Clear key available, instead of claiming the key is
-  saved (#250, #253).
+  saved.
 - A hub rejection (401) stays shown after a Clear key that fails, instead of
-  disappearing (#250, #253).
-- Two devices that add the same dictionary word now keep the same copy
-  (#250, #253).
+  disappearing.
+- Two devices that add the same dictionary word now keep the same copy.
 
 ## [2.0.10] - 2026-09-30
 
@@ -341,43 +296,39 @@ work (epic #663) and the GoHighLevel connector.
 
 - Hub key state: when Clear key fails, Settings now keeps showing the key
   that is still on disk instead of saying it was removed, and Clear key stays
-  available when the key state cannot be read
-  (#227, #231).
+  available when the key state cannot be read.
 - Sync no longer permanently misses a row written on another device during a
   sync pass: every delta cursor now looks back 60 seconds, a one-time rewind
   covers cursors saved by older versions, and a re-sent dictionary or snippet
   row can no longer delete a recreated snippet, flip a word between two cloud
-  rows, or overwrite a pending local edit
-  (#232, #242, #248).
+  rows, or overwrite a pending local edit.
 
 ## [2.0.9] - 2026-09-30
 
 ### Fixed
 
-- Hub key-state simplification (#217): a 401 records the rejection at arrival,
+- Hub key-state simplification: a 401 records the rejection at arrival,
   and a same-generation success clears it.
-- Settings load and URL fixes (#200, #201).
-- Clear-key fixes (#214, #221).
-- Fake-hub validation (#204, #222).
-- Test fixes (#202, #208, #215).
+- Settings load and URL fixes.
+- Clear-key fixes.
+- Fake-hub validation.
+- Test fixes.
 
 ## [2.0.8] - 2026-09-30
 
 ### Fixed
 
-- Settings and hub key-state review P3s (#195: #148, #149, #155, #167, #175,
-  #176, #177, #187, #188, #191).
-- Test harness and test review P3s (#196: #164, #165, #178, #185, #192; tests
+- Settings and hub key-state review P3s.
+- Test harness and test review P3s (tests
   only, no product change).
-- The transcription quarantine (#141) is still open; its skip design is parked.
+- The transcription quarantine is still open; its skip design is parked.
 
 ## [2.0.7] - 2026-09-30
 
 ### Fixed
 
-- Review findings from the hub-mode batch (#147: #125, #129, #130, #131, #132,
-  #133, #134, #135, #136, #139, #140), with follow-up fixes from the review
-  rounds (#166, #182, #190).
+- Review findings from the hub-mode batch, with follow-up fixes from the review
+  rounds.
 - Hub voice: a 2xx reply that is not JSON or times out mid-read falls back
   instead of raising; the Whisper prompt is capped at 1000 UTF-16 units and an
   oversized synthesis body is refused before sending.
@@ -388,7 +339,7 @@ work (epic #663) and the GoHighLevel connector.
 - The hub URL and device-key fields no longer save stale or failed drafts, and
   a failed grill mark write rolls back correctly.
 - Deleting a note deletes its grill marks.
-- The transcription quarantine (#141) was split out of this release and is
+- The transcription quarantine was split out of this release and is
   still open.
 
 ## [2.0.6] - 2026-09-29

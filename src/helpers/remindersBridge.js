@@ -1,4 +1,4 @@
-// Apple Reminders bridge for brain-dump to-dos (#327). Main process only.
+// Apple Reminders bridge for brain-dump to-dos. Main process only.
 // All user text reaches AppleScript through `on run argv`; nothing is ever
 // spliced into the script, and "--" stops osascript reading any of it as a flag.
 const { execFile } = require("child_process");

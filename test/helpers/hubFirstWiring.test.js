@@ -10,7 +10,7 @@ const {
 const { createAssistantSpeechService } = require("../../src/helpers/selfHostedAssistantSpeech");
 const { transcribeSelfHostedChunk } = require("../../src/helpers/selfHostedMeetingTranscription");
 
-// rtech-whisper#104 part 2: dictation and Skippy's voice try the hub first.
+// Dictation and Skippy's voice try the hub first.
 
 function wavWithSeconds(seconds) {
   const data = Buffer.alloc(seconds * 16000 * 2);
@@ -155,7 +155,7 @@ test("speech falls back to direct when the hub answers 503", async () => {
   assert.equal(s.direct.length, 1);
 });
 
-// rtech-whisper#104 part 3: meeting and live-preview chunks, and grill speech.
+// Meeting and live-preview chunks, and grill speech.
 
 function meetingChunk(hubFirst) {
   const direct = [];

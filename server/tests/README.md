@@ -1,11 +1,8 @@
 # Voice server checks
 
 The Safari/browser voice client and the Playwright acceptance harness that
-drove it were retired in
-rtech-whisper#105:
-the native iPhone app
-(rtech-whisper-ios)
-replaces it.
+drove it were retired:
+a native iPhone app replaces it.
 
 What remains here:
 

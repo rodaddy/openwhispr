@@ -37,7 +37,7 @@ export interface GrillMarkWriterDeps {
 /**
  * Optimistic mark writes for one note. A refused write is undone only while it
  * is still the latest write for its question, and then from what the store
- * holds, so an older failure never overwrites a newer write (rtech-whisper#134).
+ * holds, so an older failure never overwrites a newer write.
  */
 export function createGrillMarkWriter(deps: GrillMarkWriterDeps) {
   const latest = new Map<string, number>();

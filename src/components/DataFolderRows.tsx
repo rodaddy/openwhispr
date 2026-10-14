@@ -7,7 +7,7 @@ import type { AlertDialogState, ConfirmDialogState } from "../hooks/useDialogs";
 
 type DataFolderInfo = { current: string; previous: string | null; canMove: boolean };
 
-// Settings > Data folder (#257). The picker, confirm, and restart are native
+// Settings > Data folder. The picker, confirm, and restart are native
 // dialogs in main; this row only shows where the data is and starts the move.
 type Props = {
   showConfirmDialog: (options: Omit<ConfirmDialogState, "open">) => void;
@@ -31,7 +31,7 @@ export default function DataFolderRows({ showConfirmDialog, showAlertDialog }: P
       description: t("settingsPage.developer.dataFolder.removeOldFailed", { reason }),
     });
 
-  // #325: size first so the confirm names what will be freed.
+  // Size first so the confirm names what will be freed.
   const removeOldCopy = async () => {
     const size = await window.electronAPI?.getOldDataCopySize?.();
     if (!size?.ok) return failed(size?.reason);

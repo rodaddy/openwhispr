@@ -1,5 +1,5 @@
 // Question ids ride from the store bank into the session spec and onto the
-// saved turns (openwhispr#53, D-L1-4): a planned session carries text -> gq- id
+// saved turns (D-L1-4): a planned session carries text -> gq- id
 // for every question it puts in the prompt, and a saved note tags the turn that
 // asked one plus the follow-ups that chased it.
 const test = require("node:test");
@@ -163,7 +163,7 @@ test("a saved note tags bank questions, feed questions and their follow-ups", as
   assert.equal(segments[4].follow_up_of, "fq-1");
 });
 
-// openwhispr#55 L4: the closing feedback question is tagged "feedback", and a
+// The closing feedback question is tagged "feedback", and a
 // follow-up after it chases "feedback".
 test("a saved note tags the feedback question and its follow-up", async () => {
   const { buildGrillSessionNote } = await loadSession();

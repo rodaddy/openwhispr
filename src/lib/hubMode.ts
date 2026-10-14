@@ -1,4 +1,4 @@
-// Hub mode (rtech-whisper#101 step 4): sync runs against the rTech Whisper hub
+// Hub mode: sync runs against the rTech Whisper hub
 // exactly when a hub URL AND a device key are set. The device key replaces the
 // sign-in session, so hub mode never has a user id and never goes near the
 // account-scope reconcile (authAccountScope), whose "purge" deletes local rows.
@@ -49,11 +49,11 @@ export async function refreshHubMode(): Promise<boolean> {
   return isHubMode();
 }
 
-// A hub 401 (revoked or mistyped device key, rtech-whisper#129) is recorded
+// A hub 401 (revoked or mistyped device key) is recorded
 // in localStorage so every window sees it, against the renderer's current key
 // generation (Test passes the generation it sent). A late 401 for an old key
 // cannot land on a new one only because the main process fences it
-// (cloudApiRequest.js assertCurrent) before replying (rtech-whisper#155).
+// (cloudApiRequest.js assertCurrent) before replying.
 // Ambient sync passes back off while it stands, and the settings page says the
 // key was rejected. A new key is a new generation, which clears it.
 const AUTH_REJECTED_KEY = "hubSync.authRejected";
@@ -77,7 +77,7 @@ function readHubAuthRejection(): HubAuthRejection | null {
   }
 }
 
-// Listeners for a change to the rejection record (rtech-whisper#129): the
+// Listeners for a change to the rejection record: the
 // settings page reads it live instead of once on mount.
 const rejectionListeners = new Set<() => void>();
 
@@ -109,7 +109,7 @@ export function subscribeHubAuthRejection(listener: () => void): () => void {
 }
 
 // Recording a rejection is bookkeeping: a storage failure (quota, security)
-// must not turn the hub's answer into a different error (rtech-whisper#176).
+// must not turn the hub's answer into a different error.
 function writeRejection(value: HubAuthRejection | null): void {
   try {
     if (value) storage()?.setItem(AUTH_REJECTED_KEY, JSON.stringify(value));
@@ -121,8 +121,8 @@ function writeRejection(value: HubAuthRejection | null): void {
 }
 
 /**
- * Records a hub answer for a key generation. The rule is deliberately simple
- * (stop rule on the #217 review): a 401 records the rejection at its arrival
+ * Records a hub answer for a key generation. The rule is deliberately simple:
+ * a 401 records the rejection at its arrival
  * time, always; a success clears the record when it is for the same key
  * generation. Responses are not ordered by send time, so two races are
  * accepted: a stale 200 arriving after a newer 401 clears it (costing at most
@@ -154,8 +154,8 @@ export function clearHubAuthRejection(): void {
 }
 
 /**
- * Moves a rejection from one key generation to another, keeping its time
- * (rtech-whisper#233): a failed clear bumps the generation of a key that did
+ * Moves a rejection from one key generation to another, keeping its time:
+ * a failed clear bumps the generation of a key that did
  * not change, and the hub's verdict on that key must follow it.
  */
 export function carryHubAuthRejection(from: number | null, to: number): void {
@@ -174,7 +174,7 @@ export function isHubAuthRejected(generation: number | null = getHubModeGenerati
 export function isHubAuthBackingOff(now = Date.now()): boolean {
   const rejection = readHubAuthRejection();
   if (!isHubAuthRejected() || rejection == null) return false;
-  // A record from the future (the clock stepped back) counts as expired (#177).
+  // A record from the future (the clock stepped back) counts as expired.
   const age = now - rejection.at;
   return age >= 0 && age < HUB_AUTH_BACKOFF_MS;
 }

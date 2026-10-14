@@ -1,7 +1,7 @@
 // Which pages may hold Chromium permissions (microphone, media, clipboard, ...).
 // Pure and Electron-free so it can be unit-tested; permissionHandlers.js wires
 // it into a session. The app's own pages keep everything, every other origin
-// gets nothing (#638).
+// gets nothing.
 
 function isAppUrl(url, { devServerUrl } = {}) {
   if (typeof url !== "string" || url === "") return false;

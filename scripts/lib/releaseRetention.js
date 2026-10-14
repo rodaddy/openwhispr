@@ -13,7 +13,7 @@ function compareVersionDesc(a, b) {
 }
 
 /**
- * Pick which releases to keep and which to drop (#544).
+ * Pick which releases to keep and which to drop.
  * Keeps the newest build plus the builds before it, up to `keep`; a build
  * superseded by a newer build on the same calendar day (in `timeZone`) goes
  * at once. Non-version tags are dropped. `current` is never dropped.

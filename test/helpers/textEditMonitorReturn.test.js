@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 
 const TextEditMonitor = require("../../src/helpers/textEditMonitor");
 
-// #634: auto-submit goes through the native helper's --paste-return-to-pid
+// Auto-submit goes through the native helper's --paste-return-to-pid
 // mode, which delivers Cmd+V and Return to one window of one process. A shell
 // stands in for the helper here: the arguments appended after the script arrive
 // as $0, $1 and $2, so the script can prove what argv ended with.

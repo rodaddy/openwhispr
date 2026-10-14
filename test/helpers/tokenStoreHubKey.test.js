@@ -61,7 +61,7 @@ test("the hub device key persists in its own file across restarts", () => {
   fs.rmSync(userData, { recursive: true, force: true });
 });
 
-// rtech-whisper#143 #225: a clear that reaches neither the unlink nor the
+// A clear that reaches neither the unlink nor the
 // empty-value fallback leaves the key on disk, so the store keeps reporting it
 // to every reader (not only the clear reply) and the user can retry.
 test("a failed clear keeps reporting the key that is still on disk", () => {
@@ -93,8 +93,8 @@ test("a failed clear keeps reporting the key that is still on disk", () => {
   fs.rmSync(userData, { recursive: true, force: true });
 });
 
-// A guard, not a regression proof for #231: it passes without that fix too
-// (#234). The proof is the test above.
+// A guard, not a regression proof for the failed-clear fix: it passes without that fix too.
+// The proof is the test above.
 test("guard: a failed clear with no key stored reports no key", () => {
   const userData = freshUserData("failed-clear-empty");
   const store = loadStore(userData);

@@ -3,7 +3,7 @@ import { GrillVoicesSettings } from "./GrillVoicesSettings";
 import { GrillQuestionsSettings } from "./GrillQuestionsSettings";
 import { GrillTopicsCard } from "../GrillTopicsCard";
 
-// The Grilling section of Settings (#431): the "To grill" card, the grill
+// The Grilling section of Settings: the "To grill" card, the grill
 // voices and the grill questions. Stored keys and behaviour are unchanged.
 export default function GrillingSettings() {
   const { grillVoices, setGrillVoices, grillVoiceId, setGrillVoiceId } = useSettings();

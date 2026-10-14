@@ -1,7 +1,7 @@
 // Hub settings and key rejection (review of the hub-mode merges):
-// #129 a hub 401 is recorded for the key and backs ambient passes off,
-// #133 blurring the URL field never saves before load or without a change,
-// #136 a failed key save keeps the draft.
+// a hub 401 is recorded for the key and backs ambient passes off,
+// blurring the URL field never saves before load or without a change,
+// a failed key save keeps the draft.
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -115,7 +115,7 @@ test("#136: a refused or failed key save reports not saved", async (t) => {
 });
 
 // A stand-in for the main process's device-key store, numbering generations
-// as tokenStore does (rtech-whisper#208): saving a different key or clearing
+// as tokenStore does: saving a different key or clearing
 // is a new generation; re-saving the stored key keeps it.
 function keyStore(generation) {
   const state = { hasKey: true, generation };
@@ -140,9 +140,9 @@ function keyStore(generation) {
   };
 }
 
-// rtech-whisper#164: the save and clear paths the settings page runs
+// The save and clear paths the settings page runs
 // (saveHubDeviceKey or clearHubDeviceKey, then onHubSettingsChanged). Both
-// clear the rejection directly (#215): saveHubDeviceKey when the generation
+// clear the rejection directly: saveHubDeviceKey when the generation
 // changed, clearHubDeviceKey when no key is left. The generation check pins the
 // fence that re-reads hub mode.
 test("#129: saving a new key lifts the old key's rejection through its new generation", async (t) => {
@@ -195,7 +195,7 @@ test("#129: clearHubAuthRejection drops the record and notifies subscribers", as
   assert.equal(changes, 1);
 });
 
-// rtech-whisper#178: another window's 401 or success reaches this one only
+// Another window's 401 or success reaches this one only
 // through the storage event.
 test("#129: a storage event for the rejection key notifies subscribers; others do not", (t) => {
   enterHubMode(t);
@@ -420,7 +420,7 @@ test("#201: re-entering the stored URL after a load failure keeps the rejection"
   assert.equal(hubMode.isHubAuthRejected(), false, "a new hub has not rejected the key");
 });
 
-// The simplified rule (stop rule on the #217 review): a 401 records the
+// The simplified rule: a 401 records the
 // rejection at arrival, a same-generation success clears it. Stale-response
 // races are accepted (bounded by one pass or one backoff window).
 test("#217: a 401 records the rejection at its arrival time", (t) => {
@@ -472,7 +472,7 @@ test("#221: clearing the key keeps the rejection while a key is still stored", a
   enterHubMode(t, 25);
   hubMode.noteHubAuthResult({ success: false, status: 401 });
   windowStub.electronAPI = {
-    // A failed clear still bumps the generation of the unchanged key (#233).
+    // A failed clear still bumps the generation of the unchanged key.
     hubClearDeviceKey: async () => ({ success: false, hasKey: true, generation: 26 }),
     hubGetUrl: async () => "https://hub.example",
     hubGetDeviceKeyState: async () => ({ hasKey: true, generation: 26 }),
@@ -489,7 +489,7 @@ test("#221: clearing the key keeps the rejection while a key is still stored", a
   assert.equal(hubMode.isHubAuthRejected(), true, "a failed clear keeps the verdict");
 });
 
-test("#220 #229: a failed key-state read keeps Clear key and says the state is unknown", async (t) => {
+test("a failed key-state read keeps Clear key and says the state is unknown", async (t) => {
   enterHubMode(t);
   windowStub.electronAPI = {
     hubGetUrl: async () => "https://hub.example",

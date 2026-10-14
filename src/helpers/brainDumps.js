@@ -1,4 +1,4 @@
-// Brain-dump Process engine (#327). Main process only. The phone saves each
+// Brain-dump Process engine. Main process only. The phone saves each
 // dump as a note in "Brain dumps"; Process files each one as a note, a
 // "To grill" topic, or an Apple Reminder, and records an undoable action.
 // notes/topics/reminders are injected so tests never touch the real apps.

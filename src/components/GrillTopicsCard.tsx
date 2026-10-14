@@ -9,7 +9,7 @@ import type { GrillTopicRow } from "../types/electron";
 const failed = (result: { success: boolean }): result is { success: false; error: string } =>
   !result.success;
 
-// The "To grill" list (desktop#327): pending topics the next daily grill asks
+// The "To grill" list: pending topics the next daily grill asks
 // first. Brain dumps land here through Process; Rico can add or drop one by hand.
 export function GrillTopicsCard() {
   const { t } = useTranslation();

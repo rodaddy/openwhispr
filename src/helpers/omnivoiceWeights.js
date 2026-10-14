@@ -3,7 +3,7 @@ const nodeFs = require("fs");
 const path = require("path");
 
 // The pinned Q8_0 weights of scripts/download-omnivoice-gguf.js. Nothing here
-// is bundled: the files download only when the user asks (#630).
+// is bundled: the files download only when the user asks.
 const OMNIVOICE_WEIGHTS_REVISION = "017094167b5c9ed565a5076ac9b3b93c5ecf5c73";
 const OMNIVOICE_WEIGHTS_BASE_URL = `https://huggingface.co/Serveurperso/OmniVoice-GGUF/resolve/${OMNIVOICE_WEIGHTS_REVISION}`;
 

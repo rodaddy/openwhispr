@@ -6,7 +6,7 @@ const { createCloudApiRequestHandler } = require("./cloudApiRequest");
 // it never opens the sync consent gate.
 
 // The hub URL is https:// (protocol section 1). Plain http:// is accepted only
-// for a hub on this machine (rtech-whisper#144, decision D13).
+// for a hub on this machine (decision D13).
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 function parseHubUrl(value) {
@@ -45,7 +45,7 @@ function normalizeHubUrl(value) {
   return `${url.origin}${url.pathname}`.replace(/\/+$/, "");
 }
 
-// Saving a different, non-empty hub URL is a hub switch (rtech-whisper#126):
+// Saving a different, non-empty hub URL is a hub switch:
 // the app relaunches so the startup swap moves the local cloud ids and cursors
 // to the new hub before any pass runs. Turning the hub off is not a switch.
 function isHubSwitch(before, after) {
@@ -54,7 +54,7 @@ function isHubSwitch(before, after) {
 
 function createHubBridge({ getHubUrl, saveHubUrl, tokenStore, getAppVersion, proxyFetch, logger }) {
   const getUrl = () => normalizeHubUrl(getHubUrl()) || "";
-  // A stored non-loopback http URL (saved before #144) is hub off; this names
+  // A stored non-loopback http URL (saved by an older build) is hub off; this names
   // it so Settings can say why. "" when the stored URL is not one.
   const getInsecureUrl = () => {
     const stored = getHubUrl();
@@ -97,8 +97,8 @@ function createHubBridge({ getHubUrl, saveHubUrl, tokenStore, getAppVersion, pro
       const result = tokenStore.set(key.trim());
       return { success: Boolean(result?.success), ...keyState() };
     },
-    // tokenStore.clear() keeps the key when it could not be removed from disk
-    // (#143 #225), so keyState() stays truthful for this reply and every later read.
+    // tokenStore.clear() keeps the key when it could not be removed from disk,
+    // so keyState() stays truthful for this reply and every later read.
     clearKey() {
       const result = tokenStore.clear();
       return { success: Boolean(result?.success), ...keyState() };

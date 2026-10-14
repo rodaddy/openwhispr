@@ -1,6 +1,8 @@
 const REQUEST_TIMEOUT_MS = 10000;
 const OPPORTUNITY_PAGE_SIZE = 50;
 const OPPORTUNITY_MAX_PAGES = 10;
+// The GoHighLevel SDK is an optional install (see README, "CRM connector").
+const SDK_PACKAGE = "@rtech/connectors-highlevel";
 
 class CrmError extends Error {
   constructor(message, code, status) {
@@ -76,21 +78,26 @@ function createCrmConnector({
   store,
   fetchImpl = fetch,
   now = () => new Date(),
-  loadSdk = () => import("@rtech/connectors-highlevel"),
+  loadSdk = () => import(SDK_PACKAGE),
 }) {
   const noteQueues = new Map();
   let sdkPromise = null;
+  // Which of the SDK's ACCOUNTS profiles to use (see README, "CRM connector").
+  const account = process.env.GHL_ACCOUNT || "rtech";
 
   async function run(fn) {
     sdkPromise ||= Promise.resolve()
       .then(loadSdk)
-      .catch(() => {
+      .catch((error) => {
         sdkPromise = null;
+        if (error?.code === "ERR_MODULE_NOT_FOUND") {
+          throw new CrmError("CRM connector not installed", "NOT_INSTALLED");
+        }
         throw new CrmError("GoHighLevel library failed to load", "GHL_ERROR");
       });
     const sdk = await sdkPromise;
     try {
-      return await fn(sdk, sdk.ACCOUNTS.rtech.locationId);
+      return await fn(sdk, sdk.ACCOUNTS[account]?.locationId);
     } catch (error) {
       throw toCrmError(error, sdk);
     }
@@ -99,7 +106,7 @@ function createCrmConnector({
   function clientFor(sdk, token) {
     if (!token) throw new CrmError("Add a GoHighLevel token first", "NOT_CONFIGURED");
     return sdk.createClient({
-      account: "rtech",
+      account,
       token: String(token),
       allowWrites: true,
       timeoutMs: REQUEST_TIMEOUT_MS,

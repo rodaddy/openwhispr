@@ -1,4 +1,4 @@
-// Transcription pull paging (#119): the real SyncService over a real
+// Transcription pull paging: the real SyncService over a real
 // DatabaseManager, with only the hub faked. A run of more than one page of rows
 // sharing one timestamp must resume by (stamp, id) — `since` + `since_id` on the
 // delta, `before` + `before_id` on the snapshot — or the rows past the first
@@ -68,7 +68,7 @@ function seedRun(cloud, count, stamp) {
   for (let i = 0; i < count; i++) {
     rows.push(cloud.seedTranscription({ text: `row ${i}`, created_at: stamp, updated_at: stamp }));
   }
-  // Hub ids are varied uuids from a seeded stream (#140, #165); a run sharing
+  // Hub ids are varied uuids from a seeded stream; a run sharing
   // one stamp pages in id order, which for Postgres uuids is lowercase hex
   // string order.
   return rows.sort((a, b) => (a.id < b.id ? -1 : 1));
@@ -286,7 +286,7 @@ test("a snapshot cursor does not pass a mid-walk row when a later page serves an
   });
 });
 
-// rtech-whisper#139: the paths the paging tests above do not reach.
+// The paths the paging tests above do not reach.
 test("an empty delta pull still saves the pass-start clock minus the lookback and drops a legacy id", async (t) => {
   const ctx = await setup(t);
   if (!ctx) return;
@@ -333,7 +333,7 @@ test("the stall guard ends a pull when the hub ignores since_id and repeats a fu
   assert.equal(localClientIds(db).length, 100, "the first page still lands");
 });
 
-// rtech-whisper#185: the hub stores a device's own push, so the same pass's
+// The hub stores a device's own push, so the same pass's
 // pull (push, delete-push, then pull since the old cursor) serves it back. The echo must match the local row by client id and leave it
 // alone: no duplicate, no second push.
 test("a device's own push is echoed by the pass's delta and does not duplicate locally", async (t) => {
@@ -349,7 +349,7 @@ test("a device's own push is echoed by the pass's delta and does not duplicate l
   assert.equal(pushed.length, 1, "the hub stores the pushed row");
   assert.equal(pushed[0].client_transcription_id, local.client_transcription_id);
   assert.equal(db.getTranscriptionByClientId(local.client_transcription_id).cloud_id, pushed[0].id);
-  // #205: pass 1 pulls from EARLIER after its push, so the echo arrives there;
+  // Pass 1 pulls from EARLIER after its push, so the echo arrives there;
   // pass 2 pulls from pass 1's start, after the push stamp.
   assert.ok(served.includes(pushed[0].id), "the pass's own delta serves the device's push");
   assert.equal(localClientIds(db).length, 1, "the echo must not add a second local row");
@@ -379,7 +379,7 @@ test("a pushed delete tombstones the hub row and its echo keeps the row gone", a
   db.deleteTranscription(local.id);
   const servedBefore = servedRows.length;
   await service.syncAll(true);
-  // #206: the tombstone is stamped after the push, so the delete pass's pull
+  // The tombstone is stamped after the push, so the delete pass's pull
   // serves it back.
   const [deleted] = cloud.transcriptions();
   const echo = servedRows.slice(servedBefore).find((r) => r.id === cloudId);
@@ -387,7 +387,7 @@ test("a pushed delete tombstones the hub row and its echo keeps the row gone", a
   assert.equal(echo.deleted_at, deleted.deleted_at);
   await service.syncAll(true);
 
-  // #230: judge the hub as it stands after the third pass.
+  // Judge the hub as it stands after the third pass.
   const after = cloud.transcriptions();
   assert.equal(after.length, 1, "the hub still holds exactly one row");
   assert.ok(after[0].deleted_at, "batch-delete leaves a tombstone on the hub");

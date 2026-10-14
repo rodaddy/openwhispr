@@ -1,4 +1,4 @@
-// STT A/B replay (#550): re-transcribe a fixed, duration-stratified sample of
+// STT A/B replay: re-transcribe a fixed, duration-stratified sample of
 // dictation clips through an OpenAI-compatible endpoint, one request at a
 // time, and score each model. See README.md in this folder.
 import fs from "node:fs";

@@ -147,7 +147,6 @@
     "@radix-ui/react-select": "^2.2.5",
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-tabs": "^1.1.12",
-    "@rtech/connectors-highlevel": "0.1.0",
     "@tanstack/react-virtual": "^3.13.2",
     "@tiptap/core": "3.31.3",
     "@tiptap/extension-mention": "3.31.3",

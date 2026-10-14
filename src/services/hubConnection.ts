@@ -1,4 +1,4 @@
-// Renderer side of the rTech Whisper hub connection check (rtech-whisper#101).
+// Renderer side of the rTech Whisper hub connection check.
 // Calls GET /api/whoami through the cloud-api-request bridge with the stored
 // device key. It reads only whether a key exists and its generation; the key
 // itself never reaches the renderer. Nothing here touches sync consent.
@@ -26,7 +26,7 @@ export async function onHubSettingsChanged(sync: {
 }
 
 /**
- * Whether the hub rejected the stored device key (rtech-whisper#129). Reads
+ * Whether the hub rejected the stored device key. Reads
  * the key generation fresh each call, so a key saved since mount is judged by
  * its own generation. Any failure reads as not rejected.
  */
@@ -44,16 +44,16 @@ export async function readHubKeyRejected(): Promise<boolean> {
 }
 
 /**
- * Whether the stored URL is unknown because its load failed (rtech-whisper#200):
+ * Whether the stored URL is unknown because its load failed:
  * "untouched" until the user edits the field, then "edited".
  */
 export type HubUrlUnknown = "untouched" | "edited" | null;
 
 /**
- * Whether leaving the hub URL field should save it (rtech-whisper#133): never
+ * Whether leaving the hub URL field should save it: never
  * before the stored URL has loaded (null), and only when the user changed it,
  * so a blur alone can never store "off". When the load failed, any edit counts
- * as a change, so an emptied field can still store "off" (#200).
+ * as a change, so an emptied field can still store "off".
  */
 export function hubUrlNeedsSave(
   savedUrl: string | null,
@@ -64,8 +64,8 @@ export function hubUrlNeedsSave(
 }
 
 /**
- * Whether saving this draft switches hubs, which restarts the app
- * (rtech-whisper#126): a non-empty URL other than the saved one. Clearing the
+ * Whether saving this draft switches hubs, which restarts the app:
+ * a non-empty URL other than the saved one. Clearing the
  * URL turns the hub off and restarts nothing. The main process decides the
  * relaunch on the normalized URL; this only decides whether to ask first.
  */
@@ -77,12 +77,12 @@ export function isHubSwitchDraft(savedUrl: string | null, draft: string): boolea
 /**
  * Reads the stored hub URL and key presence for the settings page. A failed
  * URL read returns failed=true with an empty URL, so the field unlocks instead
- * of staying disabled with no message (rtech-whisper#148). The two reads settle
- * apart, so a key state that did load still shows Clear key (#200). A failed
+ * of staying disabled with no message. The two reads settle
+ * apart, so a key state that did load still shows Clear key. A failed
  * key-state read leaves the key unknown and reads as a key, so Clear key stays
- * available while sync may still be using one (#220); keyUnknown lets the page
- * say the state is unavailable instead of claiming a saved key (#229).
- * A stored non-loopback http:// URL is hub off (#144): the field shows it with
+ * available while sync may still be using one; keyUnknown lets the page
+ * say the state is unavailable instead of claiming a saved key.
+ * A stored non-loopback http:// URL is hub off: the field shows it with
  * insecure=true, so the page says it must be https://.
  */
 export async function loadHubSettings(): Promise<{
@@ -111,9 +111,9 @@ export async function loadHubSettings(): Promise<{
 
 /**
  * Saves the hub URL. A successful move to a different hub forgets the auth
- * rejection: the new hub has not judged the key yet (rtech-whisper#175).
+ * rejection: the new hub has not judged the key yet.
  * savedUrl null means the stored URL is unknown (its load failed): it is read
- * fresh before the save, and an unreadable one keeps the rejection (#201).
+ * fresh before the save, and an unreadable one keeps the rejection.
  */
 export async function saveHubUrl(
   draft: string,
@@ -135,10 +135,10 @@ export async function saveHubUrl(
 }
 
 /**
- * Saves a pasted device key (rtech-whisper#136). saved=false means the key was
+ * Saves a pasted device key. saved=false means the key was
  * not stored and the caller keeps the draft so the user can retry. The auth
  * rejection is forgotten only when the key actually changed: re-saving the
- * same key keeps its generation and its verdict (rtech-whisper#187).
+ * same key keeps its generation and its verdict.
  */
 export async function saveHubDeviceKey(
   draft: string
@@ -155,10 +155,10 @@ export async function saveHubDeviceKey(
 }
 
 /**
- * Clears the stored device key and forgets its rejection (rtech-whisper#214).
+ * Clears the stored device key and forgets its rejection.
  * The rejection goes only when the answer says no key is stored: a key that
- * is still there keeps its verdict and its backoff (#221), carried to the
- * generation the failed clear bumped it to (#233). An IPC failure throws to
+ * is still there keeps its verdict and its backoff, carried to the
+ * generation the failed clear bumped it to. An IPC failure throws to
  * the caller. Returns whether a key is still stored.
  */
 export async function clearHubDeviceKey(): Promise<boolean> {
@@ -172,17 +172,17 @@ export async function clearHubDeviceKey(): Promise<boolean> {
   return hasKey;
 }
 
-/** The hub settings form (rtech-whisper#148 #149 #167). */
+/** The hub settings form. */
 export interface HubSettingsForm {
   hubUrl: string;
   /** The stored URL; null until it has loaded, which keeps the field disabled. */
   savedUrl: string | null;
   urlError: "invalid" | "insecure" | "loadFailed" | null;
-  /** Set when the stored URL failed to load; cleared once a save stores one (#200). */
+  /** Set when the stored URL failed to load; cleared once a save stores one. */
   urlUnknown: HubUrlUnknown;
   keyDraft: string;
   hasKey: boolean;
-  /** The key state failed to load; hasKey is then true so Clear key shows (#229). */
+  /** The key state failed to load; hasKey is then true so Clear key shows. */
   keyUnknown: boolean;
   keyError: boolean;
 }
@@ -198,7 +198,7 @@ export type HubSettingsEvent =
 
 /**
  * The reducer event for a loadHubSettings() result. The page dispatches this
- * as is, so every field the load returns, insecure included (#144), reaches
+ * as is, so every field the load returns, insecure included, reaches
  * the reducer and a stored http:// URL shows why sync is off.
  */
 export function hubSettingsLoadEvent(
@@ -300,7 +300,7 @@ export async function testHubConnection(): Promise<HubConnectionResult> {
     path: "/api/whoami",
     expectedAuthGeneration: keyState.generation,
   })) as { success: boolean; data?: unknown; status?: number; error?: string } | undefined;
-  // Test's whoami answer counts like any hub answer (rtech-whisper#129): a 401
+  // Test's whoami answer counts like any hub answer: a 401
   // marks the key rejected, a success lifts the rejection and its backoff.
   noteHubAuthResult(result, Number.isSafeInteger(keyState.generation) ? keyState.generation : null);
 

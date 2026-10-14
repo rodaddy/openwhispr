@@ -1,4 +1,4 @@
-// Hub-first voice helper (rtech-whisper#104 part 1): hub protocol 10.7 says the
+// Hub-first voice helper: hub protocol 10.7 says the
 // desktop falls back to the self-hosted server only on a network error, a timeout (including a
 // hub 408 request_timeout), or 502/503/504.
 
@@ -241,7 +241,7 @@ test("Retry-After as an HTTP date is honored", () => {
   assert.equal(rateLimitWaitMs("garbage", 1, now), 2000);
 });
 
-// rtech-whisper#125: a 2xx whose body is not JSON (a proxy or login page) is a
+// A 2xx whose body is not JSON (a proxy or login page) is a
 // hub failure and falls back, not a raw SyntaxError.
 test("a 2xx HTML body falls back to direct", async () => {
   const s = setup({
@@ -271,7 +271,7 @@ test("a 2xx body that stalls past the timeout falls back to direct", async () =>
   assert.deepEqual(result, { text: "from direct", via: "direct" });
 });
 
-// rtech-whisper#130: the hub rejects a prompt over 1000 chars with a final 400
+// The hub rejects a prompt over 1000 chars with a final 400
 // and a synthesis body over 4 MB with a final 413.
 test("the transcription prompt is capped at 1000 UTF-16 units", async () => {
   const s = setup({ fetchImpl: async () => jsonResponse(200, { text: "ok" }) });

@@ -163,7 +163,7 @@ test("native event time preserves a normal hold and invalid native time falls ba
   );
 });
 
-test("a hybrid stop tap right after the start is ignored, not a stop (#549)", () => {
+test("a hybrid stop tap right after the start is ignored, not a stop", () => {
   const press = (activeForMs) =>
     resolveDictationPress({ mode: "hybrid", isRecording: true, activeForMs });
   // Rico's double tap on 2.0.21: the second press came 217 ms after the start.

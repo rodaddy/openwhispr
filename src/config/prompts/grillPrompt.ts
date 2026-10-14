@@ -45,7 +45,7 @@ export const GRILL_INTERVIEWER_PROMPT: string =
 
 /**
  * The one question every grill closes with, asked word for word so the answer
- * can be tagged and fed back into the bank (openwhispr#55).
+ * can be tagged and fed back into the bank.
  */
 export const GRILL_FEEDBACK_QUESTION: string =
   "Before we stop: which question today got your best answer, and which one fell flat?";

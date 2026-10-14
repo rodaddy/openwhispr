@@ -589,7 +589,7 @@ test("bank question ids and follow_up_of are not sent; an fq- id still is", () =
   assert.equal(JSON.stringify(payload).includes("gq-"), false);
 });
 
-// openwhispr#55 L4: the closing feedback question is tagged locally as
+// The closing feedback question is tagged locally as
 // "feedback"; SMP knows only "fq-" ids until pipeline lane L5 widens the
 // contract, so it is sent as null.
 test("a feedback question_id is sent as null", () => {

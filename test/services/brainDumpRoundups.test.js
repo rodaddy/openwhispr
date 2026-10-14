@@ -143,7 +143,7 @@ test("a run passes the arrival cursor and returns the next one", async () => {
   assert.equal(outcome.lastNoteId, 57);
 });
 
-test("a stored time that is not HH:MM falls back to the default (#424)", async () => {
+test("a stored time that is not HH:MM falls back to the default", async () => {
   const { resolveRoundupTimes, isRoundupTime } = await load();
   assert.deepEqual(resolveRoundupTimes({ morning: "", night: "25:00" }), {
     morning: "09:30",
@@ -159,7 +159,7 @@ test("a stored time that is not HH:MM falls back to the default (#424)", async (
   }
 });
 
-test("roundup input keeps the newest 100 dumps and says how many were left out (#425)", async () => {
+test("roundup input keeps the newest 100 dumps and says how many were left out", async () => {
   const { runRoundup } = await load();
   const dumps = Array.from({ length: 130 }, (_, i) => ({
     title: "",
@@ -176,7 +176,7 @@ test("roundup input keeps the newest 100 dumps and says how many were left out (
   assert.match(api.calls.save[0][1], /^SUMMARY\n\n.*30 older dumps not included/s);
 });
 
-test("roundup input is capped at 20,000 characters, newest first (#425)", async () => {
+test("roundup input is capped at 20,000 characters, newest first", async () => {
   const { runRoundup } = await load();
   const dumps = Array.from({ length: 5 }, (_, i) => ({
     title: "",
@@ -192,7 +192,7 @@ test("roundup input is capped at 20,000 characters, newest first (#425)", async 
   assert.match(api.calls.save[0][1], /2 older dumps not included/);
 });
 
-test("nothing left out: no note about older dumps (#425)", async () => {
+test("nothing left out: no note about older dumps", async () => {
   const { runRoundup } = await load();
   const api = fakes({ dumps: [{ title: "", content: "x", createdAt: "2026-09-30 14:00:00" }] });
   await runRoundup("night", api.deps);

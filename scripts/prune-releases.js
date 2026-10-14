@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Prune old builds (#544): keep the current build plus two, drop the rest.
+// Prune old builds: keep the current build plus two, drop the rest.
 // A dropped build goes entirely: its Forge release entry with its assets, and
 // its folder in the runner's artifacts dir. Git tags stay (Forgejo's release
 // DELETE keeps the tag).

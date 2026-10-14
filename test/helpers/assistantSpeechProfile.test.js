@@ -576,7 +576,7 @@ test("exporting an oversize clip reports too-large without reading it or asking 
   assert.equal(asked, 0);
 });
 
-// --- render settings (rtech-whisper#635) ---
+// --- render settings ---
 
 test("the seed is stored on import, defaulted on read, and refused out of range", async () => {
   const files = new Map([["/chosen/reference.wav", "wav-bytes"]]);

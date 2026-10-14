@@ -1,9 +1,7 @@
 # Shared voice server contract
 
-This directory defines the first server/browser slice tracked by
-openwhispr#32. It does
-not replace desktop dictation or settle the backend notes/CRM ownership tracked
-by openwhispr#28.
+This directory defines the first server/browser slice. It does
+not replace desktop dictation or settle the backend notes/CRM ownership.
 
 ## Frozen deployment boundary
 

@@ -1,4 +1,4 @@
-// Hub transport (rtech-whisper#101 part 1): the real preload bridge wired to the
+// Hub transport: the real preload bridge wired to the
 // real main-process hub bridge and cloud request handler, with only the network
 // and the on-disk token file faked.
 
@@ -39,7 +39,7 @@ test("hub URL normalization keeps a path prefix and rejects unusable URLs", () =
   assert.equal(normalizeHubUrl(42), null);
 });
 
-// D13 (#144): the hub URL is https://; plain http:// only for this machine.
+// D13: the hub URL is https://; plain http:// only for this machine.
 test("#144: an https hub URL and a loopback http URL are accepted", () => {
   assert.equal(normalizeHubUrl("https://hub.example.test"), "https://hub.example.test");
   assert.equal(normalizeHubUrl("http://localhost:8787/"), "http://localhost:8787");
@@ -412,12 +412,12 @@ test("the hub mode re-read is throttled: two triggers within 5 s read once", asy
   assert.equal(urlReads(), 1);
 });
 
-// rtech-whisper#143 #225: tokenStore.clear() keeps the key when the key file
+// TokenStore.clear() keeps the key when the key file
 // could not be removed or overwritten, and the bridge reports the store's
 // state, so the reply and every later read agree (the real store is covered in
 // tokenStoreHubKey.test.js).
-// A guard on the bridge reply, not a regression proof for #231: the fake store
-// hard-codes clear() and getState() (#234).
+// A guard on the bridge reply, not a regression proof for the failed-clear fix: the fake store
+// hard-codes clear() and getState().
 test("guard: a failed key clear reports the key as still stored", () => {
   const bridge = createHubBridge({
     getHubUrl: () => "https://hub.example.test",

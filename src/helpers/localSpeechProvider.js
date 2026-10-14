@@ -1,4 +1,4 @@
-// Pure rules for the on-device assistant voice (rtech-whisper#630): which provider
+// Pure rules for the on-device assistant voice: which provider
 // speaks, and the names of the sidecar binary and of its model files.
 
 // Same files scripts/download-omnivoice-gguf.js fetches for its default quant.

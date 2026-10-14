@@ -1,4 +1,4 @@
-// Pure grouping/ordering for the grill question editor (openwhispr#54). The
+// Pure grouping/ordering for the grill question editor. The
 // stored rows arrive flat; the editor renders them as three groups, with the
 // chapter group split per chapter and retired rows parked at the end.
 import type {

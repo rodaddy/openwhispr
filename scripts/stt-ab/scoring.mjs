@@ -1,4 +1,4 @@
-// Pure scoring and sampling helpers for the STT A/B replay (#550).
+// Pure scoring and sampling helpers for the STT A/B replay.
 // No I/O here, so test/scripts/sttAb.test.js can cover every function.
 
 export const BUCKETS = ["under-3s", "3-15s", "over-15s"];

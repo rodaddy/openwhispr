@@ -1,8 +1,6 @@
 # Share service plan
 
-Plan for openwhispr#63:
-note sharing on our own service instead of `notes.openwhispr.com`, part of
-openwhispr#62.
+Plan for note sharing on our own service instead of `notes.openwhispr.com`.
 State: PROPOSED. Nothing here is built. Rico's decisions below were given on
 2026-09-28; building starts on his go on this plan.
 
@@ -65,4 +63,4 @@ Each lane is one PR with tests, merged before a lane that depends on it.
 ## Not in this plan
 
 Email invites and per-person access (D2), expiring links (D4), cross-machine
-note sync (the local-first decision on #62), and OpenWhispr account sign-in.
+note sync (the local-first decision), and OpenWhispr account sign-in.

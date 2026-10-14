@@ -1,6 +1,6 @@
 const { normalizeHubUrl } = require("./hubSync");
 
-// Hub-first voice calls (rtech-whisper#104, hub protocol section 10). The hub
+// Hub-first voice calls (hub protocol section 10). The hub
 // is tried first; the self-hosted server is called directly only when the hub is unreachable
 // (network error, client timeout) or answers 408/502/503/504 (protocol 10.7;
 // 408 is the hub's request_timeout, and 10.7 falls back on "a timeout").

@@ -895,7 +895,7 @@ test("a late answer in a new grill before it saves logs noteId null", async () =
   assert.deepEqual(logs.at(-1)[1], { noteId: null, chars: 4 });
 });
 
-test("a take overlapping a global-hotkey dictation is never a grill answer (#80)", async () => {
+test("a take overlapping a global-hotkey dictation is never a grill answer", async () => {
   const { createGrillVoiceLoop } = await load();
   const dictation = { active: false, count: 0 };
   const h = harness({ dictation: () => ({ ...dictation }) });

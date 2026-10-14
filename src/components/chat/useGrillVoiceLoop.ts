@@ -194,7 +194,7 @@ export function useGrillVoiceLoop(options: UseGrillVoiceLoopOptions): GrillVoice
   }, []);
 
   // Whether a global dictation is live (any activation mode, tap included),
-  // so a take it overlapped is dropped (#80).
+  // so a take it overlapped is dropped.
   const dictationRef = useRef({ active: false, count: 0 });
   useEffect(() => {
     const apply = (active: boolean) => {

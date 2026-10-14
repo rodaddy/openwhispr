@@ -68,7 +68,7 @@ test("progress counts each dump as it starts, out of the total", async () => {
   ]);
 });
 
-test("every model call failing surfaces the first error, not an all-Not-classified run (#406)", async () => {
+test("every model call failing surfaces the first error, not an all-Not-classified run", async () => {
   const { processDumps } = await load();
   let n = 0;
   const api = fakeApi(() => {

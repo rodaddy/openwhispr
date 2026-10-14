@@ -21,7 +21,7 @@ const toErrorCode = (code: string | undefined): LocalVoiceWeightsError | null =>
 
 /**
  * The local voice weights (945 MB) for the Settings page: what is installed,
- * and a download that runs only when `start` is called (#630).
+ * and a download that runs only when `start` is called.
  */
 export function useLocalVoiceWeights() {
   const [status, setStatus] = useState<LocalVoiceStatus | undefined>(undefined);

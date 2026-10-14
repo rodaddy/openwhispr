@@ -1,4 +1,4 @@
-// Delta cursors per hub URL (rtech-whisper#126): stashed on a switch,
+// Delta cursors per hub URL: stashed on a switch,
 // restored on the way back, with the D12 cursorVersion marker alongside.
 
 const test = require("node:test");

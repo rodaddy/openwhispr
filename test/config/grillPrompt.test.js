@@ -68,7 +68,7 @@ test("chat without a grill session still gets the chat agent prompt", async () =
   assert.match(getAgentSystemPrompt(), /Skippy/);
 });
 
-// openwhispr#55 L4: every grill closes by asking the same feedback question.
+// Every grill closes by asking the same feedback question.
 test("daily and lifetime session sections carry the feedback question verbatim", async () => {
   const { buildGrillSessionSection, GRILL_FEEDBACK_QUESTION } =
     await import("../../src/config/prompts/grillPrompt.ts");

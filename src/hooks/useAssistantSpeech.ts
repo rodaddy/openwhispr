@@ -16,7 +16,7 @@ export function useAssistantSpeech(eligible: boolean, ownerId = "assistant-panel
     if (!active) return;
     active.audio?.pause();
     // Main gates dictation preview audio on this flag, so a stop must clear it
-    // or preview capture stays deaf for as long as the app runs (#78).
+    // or preview capture stays deaf for as long as the app runs.
     window.electronAPI.setAssistantSpeechPlaying?.(false);
     if (active.url) URL.revokeObjectURL(active.url);
     void window.electronAPI.cancelAssistantSpeech(ownerId, active.requestId).catch(() => {});
@@ -148,7 +148,7 @@ export function useAssistantSpeech(eligible: boolean, ownerId = "assistant-panel
   useEffect(() => {
     if (!eligible) stop();
   }, [eligible, stop]);
-  // Barge-in: a dictation recording started in any window silences us (#78).
+  // Barge-in: a dictation recording started in any window silences us.
   useEffect(() => window.electronAPI.onAssistantSpeechStop?.(() => stop()), [stop]);
   useEffect(() => stop, [stop]);
   return {

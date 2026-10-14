@@ -1,4 +1,4 @@
-# STT A/B replay (#550)
+# STT A/B replay
 
 Re-transcribes a fixed sample of past dictation clips through an
 OpenAI-compatible `/v1/audio/transcriptions` endpoint (a self-hosted llama-swap server by
