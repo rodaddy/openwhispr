@@ -1,4 +1,4 @@
-// WAV conversion for the STT A/B replay (#550). ffmpeg writes to a temp path
+// WAV conversion for the STT A/B replay. ffmpeg writes to a temp path
 // beside the target and the file is renamed into place only on success, so a
 // failed or interrupted conversion never leaves a partial WAV for the next
 // model to reuse.

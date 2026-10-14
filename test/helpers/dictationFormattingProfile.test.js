@@ -245,7 +245,7 @@ test("abbreviations keep their period and do not split a sentence", () => {
   }
 });
 
-// #629: the override list comes from the renderer, so the main process keeps
+// The override list comes from the renderer, so the main process keeps
 // only what the resolver can use.
 test("the override sanitizer keeps valid pairs, drops the rest and caps the list", () => {
   assert.deepEqual(

@@ -30,7 +30,7 @@ async function zipEntries(zipPath) {
   return dir.files.map((f) => f.path);
 }
 
-describe("erase data folder (#257)", () => {
+describe("erase data folder", () => {
   let tempRoot;
   let trashDir;
   let trashItem;
@@ -172,7 +172,7 @@ describe("erase data folder (#257)", () => {
     assert.ok(fs.existsSync(pending));
   });
 
-  describe("pointer mode removes the old copy too (#539)", () => {
+  describe("pointer mode removes the old copy too", () => {
     function pointTo(defaultUserData, dataRoot, previousDataRoot) {
       write(
         path.join(defaultUserData, POINTER_FILE),

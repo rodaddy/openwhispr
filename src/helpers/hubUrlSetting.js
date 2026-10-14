@@ -1,4 +1,4 @@
-// The stored SYNC_HUB_URL setting (rtech-whisper#112). A Mac that never set it
+// The stored SYNC_HUB_URL setting. A Mac that never set it
 // uses the build's default hub, RTECH_WHISPER_HUB_URL from the environment or
 // the bundled .env (empty means no default: sync stays off until a URL is
 // saved). Nothing talks to the hub until a device key is saved. The env store drops empty values,

@@ -137,7 +137,7 @@ function createService(options) {
   return loadService().createAssistantSpeechService(options);
 }
 
-// --- provider switch (rtech-whisper#630) ---
+// --- provider switch ---
 
 const HUB_WAV = Uint8Array.from([82, 73, 70, 70, 1, 2, 3]);
 const LOCAL_WAV = Buffer.from([82, 73, 70, 70, 9, 8, 7, 6]);
@@ -377,7 +377,7 @@ test("auto provider never falls back for a request cancelled while the hub call 
   assert.equal(local.calls.length, 0);
 });
 
-// --- speech tags (rtech-whisper#635) ---
+// --- speech tags ---
 
 test("the direct path sends known tags and drops unknown ones", async () => {
   const bodies = [];
@@ -405,7 +405,7 @@ test("the local engine receives no tags, and a tag-only reply is refused", async
   assert.equal(local.calls.length, 1);
 });
 
-// --- review fixes for the provider switch (rtech-whisper#630) ---
+// --- review fixes for the provider switch ---
 
 const hubFailure = () => fakeHub(async () => response({}, false));
 
@@ -646,7 +646,7 @@ test("auto provider: a cancel during the fallback engine call is an AbortError w
   });
 });
 
-// --- render settings (rtech-whisper#635) ---
+// --- render settings ---
 
 test("the direct request is pinned by the config's render settings, and the hub request is not", async () => {
   const bodies = [];

@@ -1,4 +1,4 @@
-// rtech-whisper#134: a failed mark write must not roll the UI back over a
+// A failed mark write must not roll the UI back over a
 // newer write that already succeeded.
 
 const test = require("node:test");

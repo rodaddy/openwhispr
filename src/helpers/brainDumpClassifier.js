@@ -1,4 +1,4 @@
-// Brain-dump classifier (#327): the prompt the renderer sends to the app's
+// Brain-dump classifier: the prompt the renderer sends to the app's
 // configured model, and the strict parser main runs on the model's reply.
 // Pure: no I/O, and parseDecision never throws.
 

@@ -27,7 +27,7 @@ function fakeApp() {
   return { paths, setPath: (name, value) => (paths[name] = value) };
 }
 
-describe("data-root boot resolver (#257)", () => {
+describe("data-root boot resolver", () => {
   let tempRoot;
   let defaultUserData;
   let dataRoot;
@@ -226,7 +226,7 @@ describe("data-root boot resolver (#257)", () => {
   });
 });
 
-describe("OPENWHISPR_DATA_DIR is checked before it is trusted (review of #259)", () => {
+describe("OPENWHISPR_DATA_DIR is checked before it is trusted", () => {
   let tempRoot;
   let defaultUserData;
 
@@ -275,7 +275,7 @@ describe("OPENWHISPR_DATA_DIR is checked before it is trusted (review of #259)",
   });
 });
 
-describe("blocked-boot dialog (review of #259)", () => {
+describe("blocked-boot dialog", () => {
   let tempRoot;
   let defaultUserData;
   let storeDir;
@@ -429,7 +429,7 @@ describe("blocked-boot dialog (review of #259)", () => {
   });
 });
 
-describe("boot gate (review of #259)", () => {
+describe("boot gate", () => {
   function gate(resolution, { throwInBlocked = null } = {}) {
     const calls = { blocked: 0, move: 0, start: 0, errors: [] };
     const outcome = runBootGate({

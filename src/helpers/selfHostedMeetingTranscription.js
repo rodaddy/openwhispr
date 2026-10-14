@@ -3,7 +3,7 @@
 // caller injects the fetch implementation (Electron's proxyFetch in the main
 // process, a fake in tests).
 //
-// hubFirst (rtech-whisper#104) is optional: when set and configured, the chunk
+// hubFirst is optional: when set and configured, the chunk
 // goes to the hub first and this direct POST is the fallback. Meeting and live
 // preview chunks are only RMS-gated, never trimmed, so the hub trims them
 // (clientTrimmed: false).

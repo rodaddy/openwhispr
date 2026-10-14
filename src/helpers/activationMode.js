@@ -29,7 +29,7 @@ export function toHotkeyRegistrationMode(mode) {
 }
 
 // A hybrid stop tap this soon after the take began is a double tap, not a
-// stop: the take keeps recording instead of collapsing empty (#549).
+// stop: the take keeps recording instead of collapsing empty.
 export const MIN_LATCHED_STOP_MS = 400;
 
 // What a hotkey press does, before any press state exists.

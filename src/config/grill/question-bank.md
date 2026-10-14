@@ -1,18 +1,17 @@
 <!--
 grill-question-bank provenance
-source-repo: rtech/rtech-consulting
-source-path: docs/playbooks/grill-question-bank.md
-source-commit: f122e2cef492f5c33af6999fd68ce7a796158ad7
-sha256: 10b7632ba8498b58c36db3079054444d66c3d88b102d8d3f60cf1b7dd5249d0f
-Frozen seed for the app's grill question store (openwhispr#53). The live
-bank is the store; edit questions there, not here.
+source-repo: unpublished
+source-path: unpublished
+source-commit: unpublished
+sha256: unpublished
+Frozen seed for the app's grill question store, copied from the author's
+private planning notes. The live bank is the store; edit questions there, not
+here.
 -->
 
 # Grill question bank
 
-**Status:** WRITTEN 2026-09-26 (G1). A draft for Rico to edit. Nothing runs
-it yet: grill mode in rtech-whisper is lane G2. Plan and decisions: S10-S14 in
-[`planning/social-playbook.md`](../../planning/social-playbook.md).
+**Status:** WRITTEN 2026-09-26. A draft for Rico to edit.
 
 The grill interviews Rico by voice, one question at a time, and follows each
 answer up until it is concrete (Matt Pocock's grill-me pattern). It exists

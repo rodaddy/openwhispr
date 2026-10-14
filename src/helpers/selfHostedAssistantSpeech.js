@@ -6,9 +6,9 @@ const SYNTHESIS_PATH = "/upstream/omnivoice/synthesize";
 const abortError = () =>
   Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
 
-// hubFirst (rtech-whisper#104) is optional: when set and configured, speech goes
+// hubFirst is optional: when set and configured, speech goes
 // to the hub first and the direct request below is the fallback.
-// local (rtech-whisper#630) is optional: it picks the provider ("hub" | "local" |
+// local is optional: it picks the provider ("hub" | "local" |
 // "auto") and carries the on-device engine. Without it every request is "hub".
 function createAssistantSpeechService({ fetchImpl, getConfig, hubFirst, local }) {
   const active = new Map();

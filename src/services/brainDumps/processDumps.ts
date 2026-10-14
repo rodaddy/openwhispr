@@ -10,7 +10,7 @@ export interface ProcessDumpsDeps {
   onProgress?: (current: number, total: number) => void;
 }
 
-// Brain-dump Process, renderer side (#327): list the dumps, run each through
+// Brain-dump Process, renderer side: list the dumps, run each through
 // the model one at a time, then hand the raw replies to the engine. A dump
 // whose model call fails gets no reply; the engine reports it "Not classified".
 export async function processDumps(deps: ProcessDumpsDeps) {
@@ -28,7 +28,7 @@ export async function processDumps(deps: ProcessDumpsDeps) {
       failures += 1;
     }
   }
-  // Every call failed (#406): the cause is shared (no model set up, offline),
+  // Every call failed: the cause is shared (no model set up, offline),
   // so say it once instead of a list of "Not classified" rows.
   if (dumps.length > 0 && failures === dumps.length) {
     throw firstError instanceof Error ? firstError : new Error(String(firstError));

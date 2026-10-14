@@ -5,7 +5,7 @@ const { installMicCaptureGlobals } = require("../lib/rendererTestHarness");
 
 // The start path used to re-resolve the system default mic (a helper process
 // spawn, p50 122 ms) on every press, even for a capture prepared a moment
-// earlier. A fresh prepared capture now starts on its own constraints (#563).
+// earlier. A fresh prepared capture now starts on its own constraints.
 
 async function load(t) {
   installMicCaptureGlobals(t);

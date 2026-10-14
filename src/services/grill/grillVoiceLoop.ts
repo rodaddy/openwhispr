@@ -104,7 +104,7 @@ export interface GrillVoiceLoopDeps<A> {
   /**
    * The global dictation hotkey's state: whether a dictation is live, and how
    * many have started. A take that overlaps one heard speech meant for another
-   * app, so it is never a grill answer (#80).
+   * app, so it is never a grill answer.
    */
   dictation?: () => { active: boolean; count: number };
   transcribe: (audio: A, take: GrillTakeState) => Promise<GrillTranscribeOutcome<A>>;

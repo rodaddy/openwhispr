@@ -8,7 +8,7 @@ const { removeOldCopy } = require("../../src/helpers/dataFolderMove");
 
 const ROOT = path.join(require("os").tmpdir(), "openwhispr-test-325");
 
-describe("planOldCopyRemoval (#325)", () => {
+describe("planOldCopyRemoval", () => {
   let old;
   let live;
   let base;
@@ -110,7 +110,7 @@ describe("planOldCopyRemoval (#325)", () => {
   });
 });
 
-describe("removeOldCopy on disk (#325 review)", () => {
+describe("removeOldCopy on disk", () => {
   const DISK = path.join(ROOT, "disk");
   const write = (p, body = "x") => {
     fs.mkdirSync(path.dirname(p), { recursive: true });

@@ -213,7 +213,7 @@ test("a Reminders permission error leaves the dump untouched", async (t) => {
   );
   assert.equal(s.folderOf(10), "Brain dumps");
   assert.equal(rows(s.db).length, 0);
-  // Processed is resolved before the reminder (#404); the dump is not moved.
+  // Processed is resolved before the reminder; the dump is not moved.
   assert.deepEqual(s.created, ["Brain dumps - Processed"]);
 });
 
@@ -306,7 +306,7 @@ test("saveRoundup: creates the Roundups folder once and saves the note there", (
   assert.throws(() => s.engine.saveRoundup("", "x"));
 });
 
-test("folder names match ignoring case and keep the stored name (#405)", async (t) => {
+test("folder names match ignoring case and keep the stored name", async (t) => {
   const s = setup(t, { folderNames: ["brain dumps", "Work", "BRAIN DUMPS - processed"] });
   if (!s) return;
   assert.deepEqual(
@@ -329,7 +329,7 @@ test("folder names match ignoring case and keep the stored name (#405)", async (
   assert.deepEqual(s.created, []);
 });
 
-test("a second Process while one runs is refused (#403)", async () => {
+test("a second Process while one runs is refused", async () => {
   const guard = createInFlightGuard({ success: false, error: "Already processing" });
   let release;
   const first = guard(() => new Promise((resolve) => (release = resolve)));
@@ -342,7 +342,7 @@ test("a second Process while one runs is refused (#403)", async () => {
   assert.equal(await guard(async () => "again"), "again");
 });
 
-test("a dump moved out of Brain dumps mid-run is skipped (#403)", async (t) => {
+test("a dump moved out of Brain dumps mid-run is skipped", async (t) => {
   const s = setup(t, {
     onAddReminder: ({ notes }) => {
       notes.find((n) => n.id === 10).folder_id = 2;
@@ -361,7 +361,7 @@ test("a dump moved out of Brain dumps mid-run is skipped (#403)", async (t) => {
   );
 });
 
-test("a dump moved during its own reminder is left alone and the reminder removed (#403)", async (t) => {
+test("a dump moved during its own reminder is left alone and the reminder removed", async (t) => {
   const s = setup(t, {
     onAddReminder: ({ notes }) => {
       notes.find((n) => n.id === 10).deleted_at = "2026-09-30 11:00:00";
@@ -375,7 +375,7 @@ test("a dump moved during its own reminder is left alone and the reminder remove
   assert.equal(rows(s.db).length, 0);
 });
 
-test("a folder failure creates no topic or reminder (#404)", async (t) => {
+test("a folder failure creates no topic or reminder", async (t) => {
   const s = setup(t, { createFolderError: new Error("A folder with that name already exists") });
   if (!s) return;
   for (const kind of ["grill", "todo"]) {
@@ -389,7 +389,7 @@ test("a folder failure creates no topic or reminder (#404)", async (t) => {
   assert.equal(rows(s.db).length, 0);
 });
 
-test("undo on a deleted note refuses and keeps the reminder (#402)", async (t) => {
+test("undo on a deleted note refuses and keeps the reminder", async (t) => {
   const s = setup(t);
   if (!s) return;
   const r = await s.engine.applyDecision(s.notes[0], { kind: "todo", title: "t", text: "x" });
@@ -401,7 +401,7 @@ test("undo on a deleted note refuses and keeps the reminder (#402)", async (t) =
   assert.equal(rows(s.db)[0].undone_at, null);
 });
 
-test("undo moves the note back before removing the topic or reminder (#402)", async (t) => {
+test("undo moves the note back before removing the topic or reminder", async (t) => {
   const s = setup(t);
   if (!s) return;
   const a = await s.engine.applyDecision(s.notes[0], { kind: "grill", title: "t", text: "x" });
@@ -412,7 +412,7 @@ test("undo moves the note back before removing the topic or reminder (#402)", as
   assert.deepEqual(s.calls, ["move:10", "removeTopic:gt-1", "move:11", "removeReminder:rem-1"]);
 });
 
-test("undo keeps the reminder when the move back fails (#402)", async (t) => {
+test("undo keeps the reminder when the move back fails", async (t) => {
   const s = setup(t);
   if (!s) return;
   const r = await s.engine.applyDecision(s.notes[0], { kind: "todo", title: "t", text: "x" });

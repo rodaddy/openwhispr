@@ -41,8 +41,9 @@ OpenWhispr 1.10.1.
   (`ASSISTANT_SPEECH_ENDPOINT`) or an on-device engine. The interview prompts
   and question bank are written for the author; edit
   `src/config/grill/question-bank.md` and `src/config/prompts/` for your own.
-- **GoHighLevel CRM connector.** File a note as a GoHighLevel note on a
-  contact or opportunity.
+- **GoHighLevel CRM connector** (optional install, see "CRM connector" below).
+  File a note as a GoHighLevel note on a contact or opportunity, in one
+  GoHighLevel sub-account you configure.
 - **Note sharing** through a small self-hosted share service
   (`server/share/`, with `apps/share/Dockerfile`).
 - **`rtw` CLI and MCP server** (`tools/rtw/`) that talks to the running app over
@@ -51,7 +52,8 @@ OpenWhispr 1.10.1.
   them), since builds are distributed by hand.
 
 `patches/` holds an early snapshot of the fork delta as `git format-patch`
-files; `CHANGELOG.md` is the full record from 2.0.0 onward.
+files and is not kept current: this branch itself is the source of truth for
+the fork's code. `CHANGELOG.md` is the full record from 2.0.0 onward.
 
 ## How to run it
 
@@ -71,16 +73,40 @@ Electron with `npm run test:db`.
 
 A packaged build: `node scripts/write-build-env.js` (reads your Google Calendar
 OAuth client and optional service settings from the environment into `.env`),
-then `npm run build:mac`. Signing and notarization need your own Apple
-Developer ID.
+then `npm run build:mac`. `electron-builder.json` still carries upstream's
+`appId` (`com.gizmolabs.openwhispr`) and upstream's Apple signing identity
+(`mac.identity`): set your own app id and Developer ID there before building.
+Signing and notarization need your own Apple Developer ID.
 
-### Private dependency
+### CRM connector (optional)
 
-The GoHighLevel connector imports `@rtech/connectors-highlevel`, which is not on
-the public npm registry. `.npmrc` and `package-lock.json` point at a
-placeholder registry (`npm.example.internal`). Until that package is published
-somewhere public, either point `.npmrc` at a registry that hosts it, or remove
-the dependency and the CRM connector, before `npm install` will succeed.
+The GoHighLevel connector is optional and is not installed by `npm install`.
+Without it the app runs normally; the CRM settings and the agent's CRM tools
+report "CRM connector not installed".
+
+The connector loads its SDK at runtime under the name
+`@rtech/connectors-highlevel`. The SDK's source is public at
+[github.com/rodaddy/connectors](https://github.com/rodaddy/connectors)
+(`packages/highlevel`, published there as `@rodaddy/connectors-highlevel`,
+MIT, not on npm). To enable it, build that package (`npm run build` in
+`packages/highlevel`) and install it into this checkout under the name the app
+imports:
+
+```bash
+npm install --no-save --install-links \
+  @rtech/connectors-highlevel@file:<path-to-connectors>/packages/highlevel
+```
+
+A later `npm install` or `npm ci` removes it again; repeat the step after one.
+
+The connector talks to one GoHighLevel sub-account. The SDK keeps its
+sub-accounts in `ACCOUNTS` (`packages/highlevel/src/accounts.ts`, placeholder
+location ids under the keys `primary` and `secondary`); put your own location
+id there, rebuild, and set `GHL_ACCOUNT` to that key (for example
+`GHL_ACCOUNT=primary`) before starting the app. Unset, the app asks for the
+author's `rtech` account, which the public SDK does not list. The token is
+that sub-account's Private Integration token, pasted in Settings >
+Integrations > GoHighLevel.
 
 ## What it does not do
 

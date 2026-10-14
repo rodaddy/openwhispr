@@ -1,4 +1,4 @@
-// Guards for auto-submit (#634): pressing Return after a dictation was pasted
+// Guards for auto-submit: pressing Return after a dictation was pasted
 // into a terminal. A wrong Return runs a command, so every condition here is
 // required and anything unexpected means "do not submit".
 
@@ -15,8 +15,8 @@ function countWords(text) {
 }
 
 // Exact bundle ids of the terminals auto-submit may press Return in. Only
-// terminals checked live are listed (#634). A name match let an app merely
-// named like a terminal get a Return (#658).
+// terminals checked live are listed. A name match let an app merely
+// named like a terminal get a Return.
 const AUTO_SUBMIT_TERMINAL_BUNDLE_IDS = Object.freeze([
   "com.apple.Terminal",
   "com.googlecode.iterm2",

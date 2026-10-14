@@ -1,4 +1,4 @@
-// Result -> UI state for the calendar "Sync now" button (#433).
+// Result -> UI state for the calendar "Sync now" button.
 
 export const SYNC_NOW_ERROR_MAX_LENGTH = 200;
 

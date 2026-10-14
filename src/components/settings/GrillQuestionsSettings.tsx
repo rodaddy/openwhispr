@@ -23,7 +23,7 @@ const MARK_KINDS: GrillQuestionMarkValue[] = ["good", "weak", "retire"];
 const failed = (result: { success: boolean }): result is { success: false; error: string } =>
   !result.success;
 
-// The grill question bank editor (openwhispr#54). The live bank is SQLite in the
+// The grill question bank editor. The live bank is SQLite in the
 // main process; every write goes through the preload API and is followed by a
 // re-list, so the rendered order is always the stored order.
 export function GrillQuestionsSettings() {

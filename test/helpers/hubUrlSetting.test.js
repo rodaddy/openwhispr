@@ -1,4 +1,4 @@
-// Hub by default (rtech-whisper#112): a Mac that never set a hub URL uses the
+// Hub by default: a Mac that never set a hub URL uses the
 // build's RTECH_WHISPER_HUB_URL; an explicit empty save still means off.
 
 const test = require("node:test");

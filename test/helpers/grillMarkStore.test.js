@@ -160,7 +160,7 @@ test("the marks migration is idempotent and keeps existing marks", (t) => {
   assert.deepEqual(indexes, ["idx_grill_question_marks_note", "idx_grill_question_marks_slot"]);
 });
 
-// rtech-whisper#135: note_id has no foreign key, so a hard-deleted note (a hub
+// Note_id has no foreign key, so a hard-deleted note (a hub
 // tombstone) must take its marks with it or they stay in the tallies.
 test("deleting a note removes its marks from the counts", (t) => {
   const db = createDb(t);

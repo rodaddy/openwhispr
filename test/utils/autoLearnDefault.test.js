@@ -14,7 +14,7 @@ const memStorage = (init = {}) => {
   };
 };
 
-test("auto-learn defaults to OFF when nothing is stored (#94)", async () => {
+test("auto-learn defaults to OFF when nothing is stored", async () => {
   const { parseAutoLearn, AUTO_LEARN_DEFAULT } = await load();
   assert.equal(AUTO_LEARN_DEFAULT, false);
   assert.equal(parseAutoLearn(null), false);
@@ -22,7 +22,7 @@ test("auto-learn defaults to OFF when nothing is stored (#94)", async () => {
   assert.equal(parseAutoLearn("false"), false);
 });
 
-test("migration switches an existing ON install OFF once (#94)", async () => {
+test("migration switches an existing ON install OFF once", async () => {
   const { migrateAutoLearnOff, AUTO_LEARN_KEY, AUTO_LEARN_MIGRATION_KEY } = await load();
   const s = memStorage({ [AUTO_LEARN_KEY]: "true" });
   migrateAutoLearnOff(s);
@@ -30,7 +30,7 @@ test("migration switches an existing ON install OFF once (#94)", async () => {
   assert.equal(s.data[AUTO_LEARN_MIGRATION_KEY], "true");
 });
 
-test("a manual ON after the migration sticks (#94)", async () => {
+test("a manual ON after the migration sticks", async () => {
   const { migrateAutoLearnOff, AUTO_LEARN_KEY } = await load();
   const s = memStorage({ [AUTO_LEARN_KEY]: "true" });
   migrateAutoLearnOff(s);
@@ -39,7 +39,7 @@ test("a manual ON after the migration sticks (#94)", async () => {
   assert.equal(s.data[AUTO_LEARN_KEY], "true");
 });
 
-test("migration on a fresh install only records that it ran (#94)", async () => {
+test("migration on a fresh install only records that it ran", async () => {
   const { migrateAutoLearnOff, AUTO_LEARN_KEY, AUTO_LEARN_MIGRATION_KEY } = await load();
   const s = memStorage();
   migrateAutoLearnOff(s);

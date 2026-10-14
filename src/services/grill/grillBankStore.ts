@@ -1,6 +1,6 @@
 // The grill question store: the live question bank lives in SQLite (main
 // process), and the compiled bank in src/config/grill/questionBank.ts is only
-// its frozen seed (openwhispr#53). This module is the renderer half: it turns
+// its frozen seed. This module is the renderer half: it turns
 // the compiled bank into seed rows, turns stored rows back into a GrillBank,
 // and loads the bank through the preload API, seeding once on an empty store.
 import { GRILL_BANK, type GrillBank, type GrillChapter } from "../../config/grill/questionBank";

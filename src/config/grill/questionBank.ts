@@ -1,6 +1,6 @@
 // Parses the grill question bank (src/config/grill/question-bank.md, a verbatim
-// copy of rtech-consulting docs/playbooks/grill-question-bank.md). The compiled
-// bank is the frozen seed for the app's grill question store (openwhispr#53);
+// copy of the author's planning notes). The compiled
+// bank is the frozen seed for the app's grill question store;
 // the live bank is the store. Grill mode still reads its interviewer rules,
 // day-question templates, standard questions and lifetime chapters from a
 // GrillBank rather than restating them.

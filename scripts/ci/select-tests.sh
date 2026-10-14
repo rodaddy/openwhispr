@@ -10,7 +10,7 @@
 # Partial selection is for test-only changes: a PR that changes nothing but
 # test files (and docs) runs exactly the changed tests. Any other change runs
 # FULL. A filename match is not coverage: a shared helper's own test can pass
-# while a consumer's test, never selected, breaks (review on #560). Docs are
+# while a consumer's test, never selected, breaks. Docs are
 # top-level *.md, docs/, _DOCS/ and LICENSE only; Markdown elsewhere can be a
 # runtime input and runs FULL.
 set -euo pipefail
@@ -19,7 +19,7 @@ base="${1:?base sha}"
 head="${2:?head sha}"
 
 # --no-renames lists both sides of a rename, so a file moved into docs/ or
-# test/ is still seen at its old path (review on #560)
+# test/ is still seen at its old path
 changed="$(git diff --name-only --no-renames "$base...$head")"
 
 full() { echo "FULL"; exit 0; }

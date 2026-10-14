@@ -27,7 +27,7 @@ const ROUNDUPS_FOLDER = "Brain dumps - Roundups";
 
 const KIND_ICONS = { note: NotebookPen, grill: Flame, todo: CheckSquare } as const;
 
-// Brain dumps (desktop#327): the phone's dumps waiting in the Brain dumps
+// Brain dumps: the phone's dumps waiting in the Brain dumps
 // folder, a Process button that sorts them with the configured model, and the
 // last run's results with Undo.
 export default function BrainDumpsView() {

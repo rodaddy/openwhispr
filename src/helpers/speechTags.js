@@ -1,4 +1,4 @@
-// Non-verbal tags OmniVoice performs instead of reading (rtech-whisper#635).
+// Non-verbal tags OmniVoice performs instead of reading.
 // ESM named exports with no imports, like the other helpers the renderer
 // loads through Vite; main-process CJS callers use Node's require(esm).
 

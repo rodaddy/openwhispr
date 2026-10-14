@@ -1,4 +1,4 @@
-// Delta cursors belong to one hub (rtech-whisper#126, decision D14). A hub
+// Delta cursors belong to one hub (decision D14). A hub
 // switch relaunches the app; the first hub-mode read after that moves the old
 // hub's cursors (and the D12 cursorVersion marker) aside and brings back the
 // new hub's, or none, which makes the first pass a full snapshot.

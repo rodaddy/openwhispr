@@ -42,7 +42,7 @@ test("the blocked-boot data folder dialog is translated in all 10 locales", () =
   }
 });
 
-test("the no-marker refusal no longer says moving is not available yet (#257)", () => {
+test("the no-marker refusal no longer says moving is not available yet", () => {
   for (const lang of SUPPORTED_UI_LANGUAGES) {
     const text = dialogStrings(lang)["refused.noMarker"];
     assert.ok(!text.includes("not available yet"), `${lang}: refused.noMarker is stale`);

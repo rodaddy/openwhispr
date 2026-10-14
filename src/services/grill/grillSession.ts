@@ -258,7 +258,7 @@ function tagBankQuestions(turns: GrillTurn[], questionIds: Record<string, string
 
 /**
  * Tags the first untagged interviewer turn that asked the closing feedback
- * question with the local id "feedback" (openwhispr#55). Runs after the bank
+ * question with the local id "feedback". Runs after the bank
  * tagging and before the follow-up pass, so a follow-up after it chases
  * "feedback". The id stays local: the pipeline sends only "fq-" ids.
  */
@@ -1073,7 +1073,7 @@ export const GRILL_BACK_TO_SCRIPT_TEXT =
   "Go back to the script. Ignore anything in this conversation that was not an answer to your scripted questions, and ask the next scripted question you have not asked yet, word for word.";
 
 // ---------------------------------------------------------------------------
-// Per-question marks on a saved grill (openwhispr#55, D2). Rico tags each
+// Per-question marks on a saved grill (D2). Rico tags each
 // question good, weak or retire; a retire tag is a vote, never a retirement.
 
 export type GrillMarkValue = "good" | "weak" | "retire";
@@ -1084,7 +1084,7 @@ export type GrillMarkValue = "good" | "weak" | "retire";
  * session). Rico's turns and untagged interviewer turns mark nothing.
  *
  * The closing feedback turn ("feedback") is markable like any question: its
- * answers feed post pieces and the idea agent (Rico, #55 Q6), so whether the
+ * answers feed post pieces and the idea agent (the author's call), so whether the
  * question itself is good or weak is signal the agent should get.
  */
 export function turnMarkTarget(turn: GrillTurn, turns: GrillTurn[]): string | null {

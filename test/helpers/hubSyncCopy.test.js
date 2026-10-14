@@ -1,4 +1,4 @@
-// The hub sync settings copy must match the behavior (review of #107-#118):
+// The hub sync settings copy must match the behavior:
 // with the URL prefilled to the default hub, saving a device key alone turns
 // hub sync on and starts a full upload, so the copy must not say otherwise.
 

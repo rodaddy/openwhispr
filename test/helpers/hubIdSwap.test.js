@@ -1,4 +1,4 @@
-// Per-hub cloud ids (rtech-whisper#126, decision D14): A -> B -> A resumes A
+// Per-hub cloud ids (decision D14): A -> B -> A resumes A
 // from A's own ids, and A never gets its own rows pushed back as new.
 
 const test = require("node:test");
@@ -134,7 +134,7 @@ test("hub off and back on to the same URL changes nothing", (t) => {
   assert.equal(db.db.prepare("SELECT COUNT(*) AS n FROM hub_ids").get().n, 0);
 });
 
-// rtech-whisper#293: a row deleted on B (tombstone pushed to B, local row
+// A row deleted on B (tombstone pushed to B, local row
 // hard-deleted) still has its stashed A id. Back on A, that id comes back as a
 // pending tombstone, so the next push deletes the row on A too.
 test("A -> B -> A: a row deleted on B is queued as a delete for A", (t) => {

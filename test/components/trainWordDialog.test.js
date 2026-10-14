@@ -8,7 +8,7 @@ const {
   installHookDom,
 } = require("../lib/rendererTestHarness");
 
-// Train a word dialog (#94): useTrainerTake and useSettings are mocked, so each
+// Train a word dialog: useTrainerTake and useSettings are mocked, so each
 // take resolves to the next queued result and every settings write is recorded.
 async function setup(t, results) {
   let root = null;
@@ -25,7 +25,7 @@ async function setup(t, results) {
     stopGate: null,
     // The running take's single result (useTrainerTake's waitTake).
     pending: null,
-    // The take ends by itself, as auto-stop does (desktop#533).
+    // The take ends by itself, as auto-stop does.
     autoEnd() {
       if (!this.running) return;
       this.running = false;

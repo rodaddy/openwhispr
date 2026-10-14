@@ -28,7 +28,7 @@ interface TrainWordDialogProps {
 }
 
 /**
- * Train a word (#94): record 3-4 takes of one word, review the corrections
+ * Train a word: record 3-4 takes of one word, review the corrections
  * they would make, drop any bad one, and only then save. Cancel saves nothing.
  */
 export default function TrainWordDialog({ open, onOpenChange }: TrainWordDialogProps) {
@@ -65,7 +65,7 @@ export default function TrainWordDialog({ open, onOpenChange }: TrainWordDialogP
       setTake(index, { state: "error", error: started.error });
       return;
     }
-    // The take stops by itself once the speech has ended (desktop#533), or
+    // The take stops by itself once the speech has ended, or
     // through Stop; either way its one result lands here.
     const ended: TrainerTakeResult = await waitTake();
     if (id !== session.current) return;

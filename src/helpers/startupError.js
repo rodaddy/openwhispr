@@ -1,5 +1,5 @@
 // Text for the startup error dialog. A failed database migration carries
-// the path of the snapshot taken before it (#633), and the dialog names it.
+// the path of the snapshot taken before it, and the dialog names it.
 function startupErrorMessage(error, t) {
   const message = String(error?.message ?? error);
   const backupPath = error?.backupPath;

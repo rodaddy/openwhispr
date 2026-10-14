@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-// Regression guard for openwhispr#63: the Share button and dialog mount were
+// Regression guard: the Share button and dialog mount were
 // dropped with the OpenWhispr cloud and never came back when sharing moved to
 // the rTech share service. Rendering NoteEditor needs electronAPI, auth, and
 // store doubles this suite does not have, so this asserts the wiring in source.

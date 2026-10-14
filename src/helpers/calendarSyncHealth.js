@@ -1,4 +1,4 @@
-// Per-account calendar sync health (#355): last successful sync and the
+// Per-account calendar sync health: last successful sync and the
 // current failure streak, so a broken sync is visible instead of only logged.
 const AUTH_ERROR_PATTERN = /unauthorized|invalid_grant/i;
 

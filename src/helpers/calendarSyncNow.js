@@ -1,4 +1,4 @@
-// "Sync now" from Settings > Integrations (#433): re-read the calendar list,
+// "Sync now" from Settings > Integrations: re-read the calendar list,
 // then the events, and hand the first failure back to the caller. The periodic
 // path only logs these failures; this path is the one that returns them.
 

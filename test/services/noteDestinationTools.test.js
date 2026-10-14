@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-// RED contract for issue #27.
+// RED contract.
 //
 // The current production modules export static ToolDefinition objects. The
 // implementation for this issue should refactor those exports into factories

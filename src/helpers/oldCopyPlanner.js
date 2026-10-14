@@ -1,4 +1,4 @@
-// Remove old copy (#325): decides what to delete after a data folder move.
+// Remove old copy: decides what to delete after a data folder move.
 // Pure: no fs access, so the refusals and the KEEP set are unit-testable.
 // The caller passes realpaths and says whether the old folder is a store of
 // this app; the planner only compares, case-insensitively where the

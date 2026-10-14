@@ -11,7 +11,7 @@ const {
 } = require("../../src/helpers/dataRootBootstrap");
 
 // With no pointer and no env override, boot must land on the same profile
-// folder as before #257; --user-data-dir now wins in every channel.
+// folder as before the data-folder setting; --user-data-dir now wins in every channel.
 for (const [channel, override, expected] of [
   ["production", false, "open-whispr"],
   ["production", true, "explicit-profile"],

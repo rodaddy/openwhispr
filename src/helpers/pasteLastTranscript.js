@@ -1,4 +1,4 @@
-// The paste-last hotkey (#634): paste the most recent dictation again at the
+// The paste-last hotkey: paste the most recent dictation again at the
 // caret, for a paste that was lost. The text goes to `pasteText` as it was
 // spoken and with no options at all, so this path cannot press Return, cannot
 // format for an app and cannot bring another app forward. The text is never

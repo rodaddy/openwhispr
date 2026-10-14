@@ -43,4 +43,4 @@ npm run check   # typecheck + tests
 ## Deploy
 
 Not in this lane. Building and deploying the image (and the public hostname) is
-lane S3 of openwhispr#63.
+left to the operator.

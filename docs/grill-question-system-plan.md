@@ -1,10 +1,6 @@
 # Grill question system plan
 
-Plan for question ids, the question and flow editor, and the feedback loop:
-openwhispr#53,
-openwhispr#54,
-openwhispr#55, and
-smp#267.
+Plan for question ids, the question and flow editor, and the feedback loop.
 State: PROPOSED. Nothing here is built. Building starts on Rico's approval of
 this plan; no agent changes a live question without his approval.
 
@@ -60,5 +56,5 @@ with its decision row, in L2 and L5.
 
 - Flows as editable data (rejected in D2).
 - Any agent change that goes live without Rico's approval.
-- The live grill run (openwhispr#52),
+- The live grill run,
   which is a separate lane.

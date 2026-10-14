@@ -68,19 +68,19 @@ function select(changes, renames = {}) {
   }
 }
 
-// Regression (#551): a changed test filled the selection, so a source change no
+// Regression: a changed test filled the selection, so a source change no
 // test matched never reached the FULL fallback and ran untested.
 test("a changed test plus an unmatched source change runs the full suite", () => {
   assert.deepEqual(select({ "test/a.test.js": "a test v2\n", "lib/zzz.js": "zzz\n" }), ["FULL"]);
 });
 
-// Review on #560: a filename match is not coverage. A changed shared helper
+// A filename match is not coverage. A changed shared helper
 // matched only its own test while a consumer's test, never selected, broke.
 test("a source change runs the full suite even when a test matches its name", () => {
   assert.deepEqual(select({ "src/a.js": "a v2\n" }), ["FULL"]);
 });
 
-// Review on #560: Markdown under src/ can be a runtime input (a seed file).
+// Markdown under src/ can be a runtime input (a seed file).
 test("a Markdown file outside the docs paths runs the full suite", () => {
   assert.deepEqual(select({ "src/config/bank.md": "q\n" }), ["FULL"]);
 });
@@ -97,7 +97,7 @@ test("a docs-only change selects nothing", () => {
   assert.deepEqual(select({ "README.md": "readme v2\n" }), ["NONE"]);
 });
 
-// Review on #560: git diff lists only the new path of a rename, so a file
+// Git diff lists only the new path of a rename, so a file
 // moved into docs/ or test/ was classified by where it landed.
 test("runtime Markdown renamed into docs/ runs the full suite", () => {
   assert.deepEqual(select({}, { "src/a.js": "docs/a.md" }), ["FULL"]);

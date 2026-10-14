@@ -875,7 +875,7 @@ test("after a discard a new grill starts (no draft refusal)", async () => {
   assert.ok(controller.session());
 });
 
-// --- Per-question marks on a saved grill (#55, D2) -------------------------
+// --- Per-question marks on a saved grill (D2) -------------------------
 
 const MARK_TURNS = [
   { role: "assistant", text: "What surprised you?", questionId: "gq-1" },
@@ -909,7 +909,7 @@ test("turnMarkTarget: Rico's turns and untagged interviewer turns mark nothing",
   assert.equal(turnMarkTarget({ role: "user", text: "x", questionId: "gq-1" }, MARK_TURNS), null);
 });
 
-// Rico (#55 Q6): feedback answers feed post pieces and the idea agent, so the
+// The author's call: feedback answers feed post pieces and the idea agent, so the
 // feedback question's own quality is signal worth marking.
 test("turnMarkTarget: the closing feedback turn is markable as 'feedback'", async () => {
   const { turnMarkTarget, GRILL_FEEDBACK_QUESTION_ID } = await load();

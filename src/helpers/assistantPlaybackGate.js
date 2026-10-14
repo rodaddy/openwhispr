@@ -1,4 +1,4 @@
-// The dictation mic runs with echo cancellation OFF by design (#476, #472), so
+// The dictation mic runs with echo cancellation OFF by design, so
 // while the assistant is speaking out loud the mic hears the assistant. Preview
 // audio captured then is the assistant's own voice, never the user's, so it is
 // dropped outright rather than buffered — buffering would only transcribe it

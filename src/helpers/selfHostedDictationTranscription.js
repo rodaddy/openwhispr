@@ -91,7 +91,7 @@ const defaultTrimAudio = (wav, options) => require("./silenceTrim").trimSilence(
 // (away from home, a LAN-only server name does not resolve), a
 // dropped connection, or a timeout never retries, so the away-mode chain moves
 // on to the local engine at once instead of spending 3 x requestTimeoutMs per
-// chunk on a host it cannot reach (rtech-whisper#112).
+// chunk on a host it cannot reach.
 const retryable = (error) =>
   error.status ? error.status === 429 || error.status >= 500 : !isConnectionError(error);
 
@@ -195,10 +195,10 @@ async function transcribeSelfHostedDictation(options) {
     trimAudio = defaultTrimAudio,
     transcribeChunk = transcribeSelfHostedChunk,
     sleep = defaultSleep,
-    // Hub-first (rtech-whisper#104): when set and configured, each trimmed
+    // Hub-first: when set and configured, each trimmed
     // chunk goes to the hub first; the direct request below is the fallback.
     hubFirst,
-    // Away mode (rtech-whisper#112): { name, transcribe(audioBuffer, opts) }
+    // Away mode: { name, transcribe(audioBuffer, opts) }
     // for the configured local engine, or null when none is installed.
     localEngine = null,
   } = options;

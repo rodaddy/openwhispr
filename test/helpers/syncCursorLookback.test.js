@@ -1,4 +1,4 @@
-// Delta cursor lookback (rtech-whisper#228, protocol section 8). The hub stamps
+// Delta cursor lookback (protocol section 8). The hub stamps
 // a row before its write commits and serves a delta with no since_id as
 // `updated_at > since`, so a row stamped at or below a stored cursor that
 // commits after the pass read past it would never be served again. Every
@@ -170,7 +170,7 @@ for (const k of LATE_KINDS) {
   });
 }
 
-// rtech-whisper#239: the notes and folders team cursors. A full pass keeps
+// The notes and folders team cursors. A full pass keeps
 // the team cursor current; a backup-off pass is team-only and reads and
 // writes only the team cursor.
 test("notes and folders: full and team-only passes store the team cursor as the pass-start clock minus 60 s, with no id", async (t) => {
@@ -656,8 +656,8 @@ const liveSnippets = (db) =>
 
 // The negative assertions below also hold for a pull that threw part-way
 // (pullSnippets/pullDictionary swallow errors), so each test also proves the
-// pull ran to the end: the cursor moved and the hub served the seeded rows
-// (rtech-whisper#247). The clock is frozen, so every pass writes the same
+// pull ran to the end: the cursor moved and the hub served the seeded rows.
+// The clock is frozen, so every pass writes the same
 // cursor; a multi-pass test calls resetCursor() before its LAST pass, so the
 // cursor check proves that pass, not an earlier one, reached its write.
 function resetCursor(kind) {

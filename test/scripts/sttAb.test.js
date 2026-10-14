@@ -284,7 +284,7 @@ test("run.mjs rejects bad arguments before touching data", () => {
       ["--models", "m", "--sample", "0"],
       ["--models", "m", "--seed", "x"],
       ["--models", "m", "--gold-candidates", "-1"],
-      // review on #562: the timeout is a whole number of milliseconds
+      // The timeout is a whole number of milliseconds
       ["--models", "m", "--timeout-ms", "100.5"],
       ["--models", "m", "--timeout-ms", "4294967296"],
       // Number() reads these as numbers; the runner takes decimal integers only
@@ -574,7 +574,7 @@ globalThis.fetch = async (...a) => {
 };
 `;
 
-// Review on #557: fetch resolves on the headers, so a clock stopped there
+// Fetch resolves on the headers, so a clock stopped there
 // misses the time the server spends sending the transcript.
 test("run.mjs latency includes reading the response body", async () => {
   const fs = require("fs");

@@ -1,4 +1,4 @@
-// Move the data folder (#257, PR B). Settings validates the target, writes
+// Move the data folder (PR B). Settings validates the target, writes
 // pending-move.json into the default userData and relaunches. The next boot
 // resolves to kind "move" and runs runPendingMove before any store opens:
 // copy, verify, then switch the pointer. The old folder is never deleted.

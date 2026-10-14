@@ -19,11 +19,11 @@ function newTake(): Take {
 }
 
 /**
- * Records one word-trainer take at a time (#94) on its own AudioManager.
+ * Records one word-trainer take at a time on its own AudioManager.
  * It never pastes and never saves history: the take only resolves to the
  * pre-cleanup text. A take does not start while global dictation is live,
  * and global dictation starting mid-take discards it so the UI asks for a redo.
- * A take stops by itself once the speech has ended (desktop#533); stopTake is
+ * A take stops by itself once the speech has ended; stopTake is
  * the manual fallback.
  */
 export function useTrainerTake() {
@@ -54,7 +54,7 @@ export function useTrainerTake() {
     // persistHistory: false — no failed, discarded, or completed row ever
     // reaches history from a trainer take.
     // autoStopOnSilence: true — the take ends by itself once the speech has
-    // ended, or after a stretch with no speech at all (desktop#533).
+    // ended, or after a stretch with no speech at all.
     const manager = new AudioManager({ persistHistory: false, autoStopOnSilence: true });
     managerRef.current = manager;
     manager.setCallbacks({
@@ -62,7 +62,7 @@ export function useTrainerTake() {
       onError: (error: { description?: string; title?: string } | undefined) =>
         finish({ error: error?.description || error?.title || "The take failed" }),
       // A silent take (the speech gate's silence skip, or a recording too short
-      // to keep) completes with empty text; it ends as "No speech heard" (#533).
+      // to keep) completes with empty text; it ends as "No speech heard".
       onTranscriptionComplete: (result: TranscriptionResult) => {
         const rawText = result?.rawText ?? result?.text ?? "";
         finish(rawText.trim() ? { rawText } : { error: "No speech heard" });

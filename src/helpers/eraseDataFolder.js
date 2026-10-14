@@ -1,10 +1,10 @@
-// Erase all data (#257). Rico's decision: first a zip backup of the data
+// Erase all data. Rico's decision: first a zip backup of the data
 // folder, the zip goes to the Trash, then the folder is deleted, so the
 // erase is recoverable from the Trash. The backup leaves out the top-level
 // `cache` (models download again) and `tmp` folders. Nothing is deleted
 // unless the zip was written and trashed.
 //
-// Pointer mode (#539): the default folder never holds the live store, so it
+// Pointer mode: the default folder never holds the live store, so it
 // is always an old copy: its entries are backed up under `default-folder/`
 // and deleted. The copy the data moved from (previousDataRoot), when it is
 // somewhere else, is backed up under `old-copy/` and deleted too. Otherwise

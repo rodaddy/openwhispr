@@ -8,7 +8,7 @@ const {
   installHookDom,
 } = require("../lib/rendererTestHarness");
 
-// rtech-whisper#564: a normal stop keeps recording for a short tail so the
+// A normal stop keeps recording for a short tail so the
 // last word is not cut; cancel and reset stop at once. The fake records each
 // stop with the chunks it saw, so a chunk that lands during the tail must be
 // in the stopped take.
@@ -326,7 +326,7 @@ test("a mic status change during the tail keeps main on processing", async (t) =
   await React.act(async () => stop);
 });
 
-// rtech-whisper#549 (2.0.23 log, 20:42:06.640): once the tail ended, a
+// From a 2.0.23 log (20:42:06.640): once the tail ended, a
 // recording-state change from the stopping take (the manager re-emits
 // isRecording:true on a mic status change) reported `recording`. Main read
 // processing -> recording as "processing ended" and replayed the parked press

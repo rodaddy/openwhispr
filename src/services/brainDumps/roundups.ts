@@ -1,6 +1,6 @@
 import type { BrainDumpRoundupContext } from "../../types/electron";
 
-// Daily brain-dump roundups (desktop#327): SUMMARY ONLY. A roundup never
+// Daily brain-dump roundups: SUMMARY ONLY. A roundup never
 // sorts, moves, or creates reminders or topics; it saves one note.
 
 export type RoundupSlot = "morning" | "night";
@@ -18,7 +18,7 @@ export const ROUNDUP_RETRY_DELAYS_MS = [5 * 60_000, 30 * 60_000];
 export const ROUNDUP_SLOTS: RoundupSlot[] = ["morning", "night"];
 export const DEFAULT_ROUNDUP_TIMES: RoundupTimes = { morning: "09:30", night: "23:00" };
 
-/** Roundup input caps (#425): the newest dumps only, and this many characters in all. */
+/** Roundup input caps: the newest dumps only, and this many characters in all. */
 export const MAX_ROUNDUP_DUMPS = 100;
 export const MAX_ROUNDUP_CHARS = 20_000;
 
@@ -26,7 +26,7 @@ export const MAX_ROUNDUP_CHARS = 20_000;
 export const isRoundupTime = (value: unknown): value is string =>
   typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 
-/** The times to use: a stored value that is not HH:MM falls back to its default (#424). */
+/** The times to use: a stored value that is not HH:MM falls back to its default. */
 export function resolveRoundupTimes(stored: Partial<Record<RoundupSlot, unknown>>): RoundupTimes {
   const pick = (slot: RoundupSlot) => {
     const value = stored[slot];
@@ -114,7 +114,7 @@ const localDate = (d: Date) =>
 const dumpText = (dump: BrainDumpRoundupContext["dumps"][number]) => dump.content || dump.title;
 
 /**
- * The dumps a roundup reads (#425): the newest MAX_ROUNDUP_DUMPS, then newest
+ * The dumps a roundup reads: the newest MAX_ROUNDUP_DUMPS, then newest
  * first while they fit in MAX_ROUNDUP_CHARS. Dumps arrive oldest first. The
  * newest dump is always kept, cut to the limit if it alone is too long.
  */
